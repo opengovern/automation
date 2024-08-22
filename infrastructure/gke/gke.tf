@@ -11,7 +11,7 @@ variable "gke_password" {
   description = "gke password"
 }
 
-variable "gke_num_nodes" {
+variable "gke_num_of_nodes" {
   default     = 3
   description = "number of gke nodes"
 }
@@ -55,6 +55,7 @@ resource "google_container_cluster" "primary" {
   network    = google_compute_network.vpc.name
   subnetwork = google_compute_subnetwork.subnet.name
   min_master_version = "1.30"
+  deletion_protection = false
 }
 
 # Separately Managed Node Pool
@@ -64,7 +65,7 @@ resource "google_container_node_pool" "primary_nodes" {
   cluster    = google_container_cluster.primary.name
   
   #version = data.google_container_cluster.primary.latest_node_version
-  node_count = var.gke_num_nodes
+  node_count = var.gke_num_of_nodes
 
   node_config {
     oauth_scopes = [

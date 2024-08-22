@@ -15,7 +15,7 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  cluster_name = "education-eks-${random_string.suffix.result}"
+  cluster_name = "kaytu-eks-${random_string.suffix.result}"
 }
 
 resource "random_string" "suffix" {
@@ -27,7 +27,7 @@ module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.8.1"
 
-  name = "education-vpc"
+  name = "kaytu-vpc"
 
   cidr = "10.0.0.0/16"
   azs  = slice(data.aws_availability_zones.available.names, 0, 3)
@@ -62,6 +62,15 @@ module "eks" {
     aws-ebs-csi-driver = {
       service_account_role_arn = module.irsa-ebs-csi.iam_role_arn
     }
+    coredns = {
+      most_recent = true
+    }
+    kube-proxy = {
+      most_recent = true
+    }
+    vpc-cni = {
+      most_recent = true
+    }
   }
 
   vpc_id     = module.vpc.vpc_id
@@ -76,11 +85,11 @@ module "eks" {
     one = {
       name = "node-group-1"
 
-      instance_types = ["m5n.xlarge"]
+      instance_types = var.instance_type
 
       min_size     = 1
-      max_size     = 5
-      desired_size = 3
+      max_size     = var.eks_max_nodes
+      desired_size = var.eks_nodes
     }
 
   }
@@ -91,6 +100,7 @@ module "eks" {
 data "aws_iam_policy" "ebs_csi_policy" {
   arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
+
 
 module "irsa-ebs-csi" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-assumable-role-with-oidc"
