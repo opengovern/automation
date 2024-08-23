@@ -1,0 +1,106 @@
+2024-08-22T14:49:07.341-0400 [INFO]  Terraform version: 1.9.2
+2024-08-22T14:49:07.341-0400 [DEBUG] using github.com/hashicorp/go-tfe v1.51.0
+2024-08-22T14:49:07.341-0400 [DEBUG] using github.com/hashicorp/hcl/v2 v2.20.0
+2024-08-22T14:49:07.341-0400 [DEBUG] using github.com/hashicorp/terraform-svchost v0.1.1
+2024-08-22T14:49:07.341-0400 [DEBUG] using github.com/zclconf/go-cty v1.14.4
+2024-08-22T14:49:07.341-0400 [INFO]  Go runtime version: go1.22.4
+2024-08-22T14:49:07.341-0400 [INFO]  CLI args: []string{"terraform", "destroy"}
+2024-08-22T14:49:07.341-0400 [DEBUG] Attempting to open CLI config file: /Users/crito/.terraformrc
+2024-08-22T14:49:07.341-0400 [DEBUG] File doesn't exist, but doesn't need to. Ignoring.
+2024-08-22T14:49:07.341-0400 [DEBUG] ignoring non-existing provider search directory terraform.d/plugins
+2024-08-22T14:49:07.341-0400 [DEBUG] ignoring non-existing provider search directory /Users/crito/.terraform.d/plugins
+2024-08-22T14:49:07.341-0400 [DEBUG] ignoring non-existing provider search directory /Users/crito/Library/Application Support/io.terraform/plugins
+2024-08-22T14:49:07.341-0400 [DEBUG] ignoring non-existing provider search directory /Library/Application Support/io.terraform/plugins
+2024-08-22T14:49:07.342-0400 [INFO]  CLI command args: []string{"destroy"}
+2024-08-22T14:49:07.652-0400 [DEBUG] checking for provisioner in "."
+2024-08-22T14:49:07.653-0400 [DEBUG] checking for provisioner in "/opt/homebrew/bin"
+2024-08-22T14:49:07.654-0400 [INFO]  backend/local: starting Apply operation
+2024-08-22T14:49:07.655-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:07.655-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:07.660-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5"]
+2024-08-22T14:49:07.675-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5 pid=90366
+2024-08-22T14:49:07.675-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5
+2024-08-22T14:49:07.866-0400 [INFO]  provider.terraform-provider-aws_v5.63.1_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:07.866-0400
+2024-08-22T14:49:07.871-0400 [DEBUG] provider.terraform-provider-aws_v5.63.1_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin3980854377 network=unix timestamp=2024-08-22T14:49:07.871-0400
+2024-08-22T14:49:07.871-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:08.250-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:08.253-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5 id=90366
+2024-08-22T14:49:08.253-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:08.253-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:08.253-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:08.255-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5"]
+2024-08-22T14:49:08.258-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5 pid=90367
+2024-08-22T14:49:08.258-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5
+2024-08-22T14:49:08.299-0400 [INFO]  provider.terraform-provider-kubernetes_v2.32.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:08.299-0400
+2024-08-22T14:49:08.304-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:08.304-0400 [DEBUG] provider.terraform-provider-kubernetes_v2.32.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin3972936065 network=unix timestamp=2024-08-22T14:49:08.304-0400
+2024-08-22T14:49:08.350-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:08.351-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5 id=90367
+2024-08-22T14:49:08.351-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:08.352-0400 [DEBUG] Building and walking validate graph
+2024-08-22T14:49:08.353-0400 [DEBUG] adding implicit provider configuration provider["terraform.io/builtin/terraform"], implied first by data.terraform_remote_state.eks
+2024-08-22T14:49:08.353-0400 [DEBUG] ProviderTransformer: "kubernetes_namespace.example" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:08.353-0400 [DEBUG] ProviderTransformer: "kubernetes_deployment.nginx" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:08.353-0400 [DEBUG] ProviderTransformer: "data.terraform_remote_state.eks" (*terraform.NodeValidatableResource) needs provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:08.353-0400 [DEBUG] ProviderTransformer: "data.aws_eks_cluster.cluster" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:08.353-0400 [ERROR] AttachSchemaTransformer: No provider config schema available for provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:08.353-0400 [DEBUG] ReferenceTransformer: "kubernetes_namespace.example" references: []
+2024-08-22T14:49:08.354-0400 [DEBUG] ReferenceTransformer: "kubernetes_deployment.nginx" references: []
+2024-08-22T14:49:08.354-0400 [DEBUG] ReferenceTransformer: "data.terraform_remote_state.eks" references: []
+2024-08-22T14:49:08.354-0400 [DEBUG] ReferenceTransformer: "data.aws_eks_cluster.cluster" references: [data.terraform_remote_state.eks]
+2024-08-22T14:49:08.354-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/kubernetes\"]" references: [data.aws_eks_cluster.cluster data.aws_eks_cluster.cluster data.aws_eks_cluster.cluster]
+2024-08-22T14:49:08.354-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/aws\"]" references: [data.terraform_remote_state.eks]
+2024-08-22T14:49:08.354-0400 [DEBUG] ReferenceTransformer: "provider[\"terraform.io/builtin/terraform\"]" references: []
+2024-08-22T14:49:08.354-0400 [DEBUG] Starting graph walk: walkValidate
+2024-08-22T14:49:08.354-0400 [DEBUG] Initializing remote state backend: local
+2024-08-22T14:49:08.355-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:08.355-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:08.357-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5"]
+2024-08-22T14:49:08.369-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5 pid=90368
+2024-08-22T14:49:08.369-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5
+2024-08-22T14:49:08.478-0400 [INFO]  provider.terraform-provider-aws_v5.63.1_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:08.478-0400
+2024-08-22T14:49:08.484-0400 [DEBUG] provider.terraform-provider-aws_v5.63.1_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin3200645663 network=unix timestamp=2024-08-22T14:49:08.484-0400
+2024-08-22T14:49:08.484-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:08.552-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:08.554-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/5.63.1/darwin_arm64/terraform-provider-aws_v5.63.1_x5 id=90368
+2024-08-22T14:49:08.554-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:08.555-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:08.555-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:08.557-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5"]
+2024-08-22T14:49:08.559-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5 pid=90369
+2024-08-22T14:49:08.559-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5
+2024-08-22T14:49:08.578-0400 [INFO]  provider.terraform-provider-kubernetes_v2.32.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:08.578-0400
+2024-08-22T14:49:08.584-0400 [DEBUG] provider.terraform-provider-kubernetes_v2.32.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin481301554 network=unix timestamp=2024-08-22T14:49:08.583-0400
+2024-08-22T14:49:08.584-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:08.596-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:08.597-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.32.0/darwin_arm64/terraform-provider-kubernetes_v2.32.0_x5 id=90369
+2024-08-22T14:49:08.597-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:08.597-0400 [INFO]  backend/local: apply calling Plan
+2024-08-22T14:49:08.597-0400 [DEBUG] Building and walking plan graph for DestroyMode
+2024-08-22T14:49:08.597-0400 [DEBUG] pruning unused provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:08.597-0400 [DEBUG] pruning unused provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:08.597-0400 [DEBUG] Starting graph walk: walkPlanDestroy
+2024-08-22T14:49:08.597-0400 [DEBUG] no planned changes, skipping apply graph check
+2024-08-22T14:49:08.628-0400 [INFO]  backend/local: apply calling Apply
+2024-08-22T14:49:08.628-0400 [DEBUG] Building and walking apply graph for DestroyMode plan
+2024-08-22T14:49:08.628-0400 [DEBUG] adding implicit provider configuration provider["terraform.io/builtin/terraform"], implied first by data.terraform_remote_state.eks (expand)
+2024-08-22T14:49:08.628-0400 [DEBUG] ProviderTransformer: "kubernetes_deployment.nginx (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:08.628-0400 [DEBUG] ProviderTransformer: "data.terraform_remote_state.eks (expand)" (*terraform.nodeExpandApplyableResource) needs provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:08.628-0400 [DEBUG] ProviderTransformer: "data.aws_eks_cluster.cluster (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:08.628-0400 [DEBUG] ProviderTransformer: "kubernetes_namespace.example (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:08.628-0400 [ERROR] AttachSchemaTransformer: No provider config schema available for provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "data.terraform_remote_state.eks (expand)" references: []
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "data.aws_eks_cluster.cluster (expand)" references: [data.terraform_remote_state.eks (expand)]
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/aws\"]" references: [data.terraform_remote_state.eks (expand)]
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/kubernetes\"]" references: [data.aws_eks_cluster.cluster (expand) data.aws_eks_cluster.cluster (expand) data.aws_eks_cluster.cluster (expand)]
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "provider[\"terraform.io/builtin/terraform\"]" references: []
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "kubernetes_namespace.example (expand)" references: []
+2024-08-22T14:49:08.628-0400 [DEBUG] ReferenceTransformer: "kubernetes_deployment.nginx (expand)" references: []
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: kubernetes_namespace.example (expand) is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: kubernetes_deployment.nginx (expand) is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: data.aws_eks_cluster.cluster (expand) is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: provider["registry.terraform.io/hashicorp/kubernetes"] is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: data.terraform_remote_state.eks (expand) is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: provider["terraform.io/builtin/terraform"] is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] pruneUnusedNodes: provider["registry.terraform.io/hashicorp/aws"] is no longer needed, removing
+2024-08-22T14:49:08.628-0400 [DEBUG] Starting graph walk: walkDestroy

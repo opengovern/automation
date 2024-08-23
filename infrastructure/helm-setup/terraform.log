@@ -1,0 +1,196 @@
+2024-08-22T14:49:22.236-0400 [INFO]  Terraform version: 1.9.2
+2024-08-22T14:49:22.236-0400 [DEBUG] using github.com/hashicorp/go-tfe v1.51.0
+2024-08-22T14:49:22.236-0400 [DEBUG] using github.com/hashicorp/hcl/v2 v2.20.0
+2024-08-22T14:49:22.236-0400 [DEBUG] using github.com/hashicorp/terraform-svchost v0.1.1
+2024-08-22T14:49:22.236-0400 [DEBUG] using github.com/zclconf/go-cty v1.14.4
+2024-08-22T14:49:22.236-0400 [INFO]  Go runtime version: go1.22.4
+2024-08-22T14:49:22.236-0400 [INFO]  CLI args: []string{"terraform", "destroy"}
+2024-08-22T14:49:22.236-0400 [DEBUG] Attempting to open CLI config file: /Users/crito/.terraformrc
+2024-08-22T14:49:22.236-0400 [DEBUG] File doesn't exist, but doesn't need to. Ignoring.
+2024-08-22T14:49:22.236-0400 [DEBUG] ignoring non-existing provider search directory terraform.d/plugins
+2024-08-22T14:49:22.236-0400 [DEBUG] ignoring non-existing provider search directory /Users/crito/.terraform.d/plugins
+2024-08-22T14:49:22.236-0400 [DEBUG] ignoring non-existing provider search directory /Users/crito/Library/Application Support/io.terraform/plugins
+2024-08-22T14:49:22.236-0400 [DEBUG] ignoring non-existing provider search directory /Library/Application Support/io.terraform/plugins
+2024-08-22T14:49:22.237-0400 [INFO]  CLI command args: []string{"destroy"}
+2024-08-22T14:49:22.496-0400 [DEBUG] checking for provisioner in "."
+2024-08-22T14:49:22.497-0400 [DEBUG] checking for provisioner in "/opt/homebrew/bin"
+2024-08-22T14:49:22.498-0400 [INFO]  backend/local: starting Apply operation
+2024-08-22T14:49:22.499-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:22.499-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:22.504-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5"]
+2024-08-22T14:49:22.513-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5 pid=90445
+2024-08-22T14:49:22.513-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5
+2024-08-22T14:49:22.659-0400 [INFO]  provider.terraform-provider-aws_v4.52.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:22.659-0400
+2024-08-22T14:49:22.667-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:22.668-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin3118103929 network=unix timestamp=2024-08-22T14:49:22.667-0400
+2024-08-22T14:49:22.823-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:22.825-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5 id=90445
+2024-08-22T14:49:22.825-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:22.825-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:22.825-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:22.827-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5"]
+2024-08-22T14:49:22.830-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5 pid=90446
+2024-08-22T14:49:22.830-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5
+2024-08-22T14:49:22.862-0400 [INFO]  provider.terraform-provider-helm_v2.8.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:22.862-0400
+2024-08-22T14:49:22.870-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:22.870-0400 [DEBUG] provider.terraform-provider-helm_v2.8.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin1848557218 network=unix timestamp=2024-08-22T14:49:22.870-0400
+2024-08-22T14:49:22.879-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:22.880-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5 id=90446
+2024-08-22T14:49:22.880-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:22.880-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:22.880-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:22.882-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5"]
+2024-08-22T14:49:22.884-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5 pid=90447
+2024-08-22T14:49:22.885-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5
+2024-08-22T14:49:22.931-0400 [INFO]  provider.terraform-provider-kubernetes_v2.17.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:22.931-0400
+2024-08-22T14:49:22.940-0400 [DEBUG] provider.terraform-provider-kubernetes_v2.17.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin3827457272 network=unix timestamp=2024-08-22T14:49:22.940-0400
+2024-08-22T14:49:22.940-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:22.974-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:22.974-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5 id=90447
+2024-08-22T14:49:22.975-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:22.975-0400 [DEBUG] Building and walking validate graph
+2024-08-22T14:49:22.975-0400 [DEBUG] adding implicit provider configuration provider["terraform.io/builtin/terraform"], implied first by data.terraform_remote_state.eks
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "helm_release.cert_manager" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/helm"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "data.aws_eks_cluster_auth.cluster" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "data.kubernetes_service.nginx" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "kubernetes_namespace.cert_manager_namespace" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "data.aws_eks_cluster.cluster" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "data.terraform_remote_state.eks" (*terraform.NodeValidatableResource) needs provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ProviderTransformer: "helm_release.nginx" (*terraform.NodeValidatableResource) needs provider["registry.terraform.io/hashicorp/helm"]
+2024-08-22T14:49:22.975-0400 [ERROR] AttachSchemaTransformer: No provider config schema available for provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "var.helm_release_name" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/helm\"]" references: [data.aws_eks_cluster.cluster data.aws_eks_cluster.cluster data.aws_eks_cluster.cluster]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "helm_release.nginx" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "var.replica_count" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "var.region" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "helm_release.cert_manager" references: [kubernetes_namespace.cert_manager_namespace var.helm_repository_url var.helm_release_name var.namespace var.replica_count var.helm_chart_name]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "data.kubernetes_service.nginx" references: [helm_release.nginx]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "var.helm_chart_name" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "var.namespace" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "output.nginx_endpoint (expand)" references: [data.kubernetes_service.nginx]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/kubernetes\"]" references: [data.aws_eks_cluster.cluster data.aws_eks_cluster.cluster data.aws_eks_cluster.cluster]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "kubernetes_namespace.cert_manager_namespace" references: [var.namespace]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "data.aws_eks_cluster.cluster" references: [data.terraform_remote_state.eks]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "data.aws_eks_cluster_auth.cluster" references: [data.terraform_remote_state.eks]
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "provider[\"terraform.io/builtin/terraform\"]" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "data.terraform_remote_state.eks" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "var.helm_repository_url" references: []
+2024-08-22T14:49:22.975-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/aws\"]" references: [var.region]
+2024-08-22T14:49:22.976-0400 [DEBUG] Starting graph walk: walkValidate
+2024-08-22T14:49:22.976-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:22.977-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:22.981-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5"]
+2024-08-22T14:49:22.990-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5 pid=90448
+2024-08-22T14:49:22.990-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5
+2024-08-22T14:49:23.092-0400 [INFO]  provider.terraform-provider-aws_v4.52.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:23.092-0400
+2024-08-22T14:49:23.100-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:23.100-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin906138067 network=unix timestamp=2024-08-22T14:49:23.100-0400
+2024-08-22T14:49:23.105-0400 [DEBUG] Initializing remote state backend: local
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: @module=sdk.framework tf_attribute_path=shared_config_files tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: tf_mux_provider="*proto5server.Server" tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 @module=sdk.framework tf_attribute_path=shared_config_files tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: tf_rpc=PrepareProviderConfig @module=sdk.framework tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_mux_provider="*proto5server.Server" @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 tf_attribute_path=allowed_account_ids timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 @module=sdk.framework tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig tf_attribute_path=allowed_account_ids tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: tf_attribute_path=shared_credentials_files tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 @module=sdk.framework tf_provider_addr=registry.terraform.io/hashicorp/aws timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 tf_attribute_path=shared_credentials_files tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws @module=sdk.framework tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 tf_attribute_path=forbidden_account_ids tf_provider_addr=registry.terraform.io/hashicorp/aws @module=sdk.framework timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 @module=sdk.framework tf_attribute_path=forbidden_account_ids tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: tf_attribute_path=max_retries tf_provider_addr=registry.terraform.io/hashicorp/aws @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @module=sdk.framework timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 tf_attribute_path=max_retries tf_mux_provider="*proto5server.Server" @module=sdk.framework tf_rpc=PrepareProviderConfig timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: @module=sdk.framework tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @module=sdk.framework tf_provider_addr=registry.terraform.io/hashicorp/aws timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined validator.List: tf_attribute_path=region tf_rpc=PrepareProviderConfig @module=sdk.framework description="list must contain at most 1 elements" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:214 tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined validator.List: tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f @module=sdk.framework description="list must contain at most 1 elements" tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:224 timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 @module=sdk.framework tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_rpc=PrepareProviderConfig tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 @module=sdk.framework timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined validator.List: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:214 tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws tf_rpc=PrepareProviderConfig @module=sdk.framework description="list must contain at most 1 elements" tf_attribute_path=region tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined validator.List: tf_provider_addr=registry.terraform.io/hashicorp/aws @module=sdk.framework description="list must contain at most 1 elements" tf_attribute_path=region tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:224 tf_mux_provider="*proto5server.Server" timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @module=sdk.framework tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 tf_mux_provider="*proto5server.Server" @module=sdk.framework tf_attribute_path=region tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined validator.List: @module=sdk.framework tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig description="list must contain at most 1 elements" tf_provider_addr=registry.terraform.io/hashicorp/aws @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:214 timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined validator.List: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:224 @module=sdk.framework tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f description="list must contain at most 1 elements" tf_attribute_path=region tf_provider_addr=registry.terraform.io/hashicorp/aws tf_rpc=PrepareProviderConfig timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws tf_attribute_path=region tf_rpc=PrepareProviderConfig @module=sdk.framework timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.202-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 tf_mux_provider="*proto5server.Server" @module=sdk.framework tf_attribute_path=region tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig timestamp=2024-08-22T14:49:23.202-0400
+2024-08-22T14:49:23.203-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined Type Validate: tf_attribute_path=region tf_rpc=PrepareProviderConfig tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:78 @module=sdk.framework tf_mux_provider="*proto5server.Server" timestamp=2024-08-22T14:49:23.203-0400
+2024-08-22T14:49:23.203-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined Type Validate: @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwschemadata/data_value.go:80 tf_attribute_path=region tf_provider_addr=registry.terraform.io/hashicorp/aws tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_rpc=PrepareProviderConfig @module=sdk.framework tf_mux_provider="*proto5server.Server" timestamp=2024-08-22T14:49:23.203-0400
+2024-08-22T14:49:23.203-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Calling provider defined validator.List: @module=sdk.framework description="list must contain at most 1 elements" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_provider_addr=registry.terraform.io/hashicorp/aws tf_rpc=PrepareProviderConfig @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:214 timestamp=2024-08-22T14:49:23.203-0400
+2024-08-22T14:49:23.203-0400 [DEBUG] provider.terraform-provider-aws_v4.52.0_x5: Called provider defined validator.List: tf_provider_addr=registry.terraform.io/hashicorp/aws tf_rpc=PrepareProviderConfig description="list must contain at most 1 elements" tf_attribute_path=region tf_mux_provider="*proto5server.Server" tf_req_id=fedaff05-ed68-bc48-79b4-8c1537c52c4f @caller=github.com/hashicorp/terraform-plugin-framework@v1.1.1/internal/fwserver/block_validation.go:224 @module=sdk.framework timestamp=2024-08-22T14:49:23.203-0400
+2024-08-22T14:49:23.204-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:23.204-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:23.206-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5"]
+2024-08-22T14:49:23.209-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5 pid=90449
+2024-08-22T14:49:23.209-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5
+2024-08-22T14:49:23.234-0400 [INFO]  provider.terraform-provider-kubernetes_v2.17.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:23.234-0400
+2024-08-22T14:49:23.242-0400 [DEBUG] provider.terraform-provider-kubernetes_v2.17.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin4088248398 network=unix timestamp=2024-08-22T14:49:23.242-0400
+2024-08-22T14:49:23.242-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:23.247-0400 [DEBUG] created provider logger: level=debug
+2024-08-22T14:49:23.247-0400 [INFO]  provider: configuring client automatic mTLS
+2024-08-22T14:49:23.249-0400 [DEBUG] provider: starting plugin: path=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5 args=[".terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5"]
+2024-08-22T14:49:23.251-0400 [DEBUG] provider: plugin started: path=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5 pid=90450
+2024-08-22T14:49:23.251-0400 [DEBUG] provider: waiting for RPC address: plugin=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5
+2024-08-22T14:49:23.271-0400 [INFO]  provider.terraform-provider-helm_v2.8.0_x5: configuring server automatic mTLS: timestamp=2024-08-22T14:49:23.271-0400
+2024-08-22T14:49:23.278-0400 [DEBUG] provider: using plugin: version=5
+2024-08-22T14:49:23.279-0400 [DEBUG] provider.terraform-provider-helm_v2.8.0_x5: plugin address: address=/var/folders/wg/6mn508q11tdd20c5sb_y4lrc0000gn/T/plugin3471627984 network=unix timestamp=2024-08-22T14:49:23.278-0400
+2024-08-22T14:49:23.286-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:23.288-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/aws/4.52.0/darwin_arm64/terraform-provider-aws_v4.52.0_x5 id=90448
+2024-08-22T14:49:23.288-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:23.293-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:23.294-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/kubernetes/2.17.0/darwin_arm64/terraform-provider-kubernetes_v2.17.0_x5 id=90449
+2024-08-22T14:49:23.294-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:23.295-0400 [DEBUG] provider.stdio: received EOF, stopping recv loop: err="rpc error: code = Unavailable desc = error reading from server: EOF"
+2024-08-22T14:49:23.295-0400 [INFO]  provider: plugin process exited: plugin=.terraform/providers/registry.terraform.io/hashicorp/helm/2.8.0/darwin_arm64/terraform-provider-helm_v2.8.0_x5 id=90450
+2024-08-22T14:49:23.296-0400 [DEBUG] provider: plugin exited
+2024-08-22T14:49:23.296-0400 [INFO]  backend/local: apply calling Plan
+2024-08-22T14:49:23.296-0400 [DEBUG] Building and walking plan graph for DestroyMode
+2024-08-22T14:49:23.296-0400 [DEBUG] pruning unused provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:23.296-0400 [DEBUG] pruning unused provider["registry.terraform.io/hashicorp/helm"]
+2024-08-22T14:49:23.296-0400 [DEBUG] pruning unused provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "output.nginx_endpoint (expand)" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "var.namespace" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "var.replica_count" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "var.helm_release_name" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "var.helm_chart_name" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "var.region" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] ReferenceTransformer: "var.helm_repository_url" references: []
+2024-08-22T14:49:23.296-0400 [DEBUG] Starting graph walk: walkPlanDestroy
+2024-08-22T14:49:23.296-0400 [DEBUG] no planned changes, skipping apply graph check
+2024-08-22T14:49:23.309-0400 [INFO]  backend/local: apply calling Apply
+2024-08-22T14:49:23.309-0400 [DEBUG] Building and walking apply graph for DestroyMode plan
+2024-08-22T14:49:23.309-0400 [DEBUG] adding implicit provider configuration provider["terraform.io/builtin/terraform"], implied first by data.terraform_remote_state.eks (expand)
+2024-08-22T14:49:23.309-0400 [DEBUG] ProviderTransformer: "kubernetes_namespace.cert_manager_namespace (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:23.309-0400 [DEBUG] ProviderTransformer: "data.aws_eks_cluster_auth.cluster (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:23.309-0400 [DEBUG] ProviderTransformer: "helm_release.nginx (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/helm"]
+2024-08-22T14:49:23.309-0400 [DEBUG] ProviderTransformer: "helm_release.cert_manager (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/helm"]
+2024-08-22T14:49:23.309-0400 [DEBUG] ProviderTransformer: "data.terraform_remote_state.eks (expand)" (*terraform.nodeExpandApplyableResource) needs provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:23.309-0400 [DEBUG] ProviderTransformer: "data.aws_eks_cluster.cluster (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/aws"]
+2024-08-22T14:49:23.310-0400 [DEBUG] ProviderTransformer: "data.kubernetes_service.nginx (expand)" (*terraform.nodeExpandApplyableResource) needs provider["registry.terraform.io/hashicorp/kubernetes"]
+2024-08-22T14:49:23.310-0400 [ERROR] AttachSchemaTransformer: No provider config schema available for provider["terraform.io/builtin/terraform"]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "kubernetes_namespace.cert_manager_namespace (expand)" references: [var.namespace]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "var.helm_repository_url" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "data.aws_eks_cluster_auth.cluster (expand)" references: [data.terraform_remote_state.eks (expand)]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "var.region" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "var.helm_chart_name" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/helm\"]" references: [data.aws_eks_cluster.cluster (expand) data.aws_eks_cluster.cluster (expand) data.aws_eks_cluster.cluster (expand)]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "var.namespace" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "var.replica_count" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "provider[\"terraform.io/builtin/terraform\"]" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "data.kubernetes_service.nginx (expand)" references: [helm_release.nginx (expand)]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "var.helm_release_name" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "output.nginx_endpoint (expand)" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/kubernetes\"]" references: [data.aws_eks_cluster.cluster (expand) data.aws_eks_cluster.cluster (expand) data.aws_eks_cluster.cluster (expand)]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "helm_release.nginx (expand)" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "helm_release.cert_manager (expand)" references: [kubernetes_namespace.cert_manager_namespace (expand) var.namespace var.replica_count var.helm_release_name var.helm_chart_name var.helm_repository_url]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "data.terraform_remote_state.eks (expand)" references: []
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "data.aws_eks_cluster.cluster (expand)" references: [data.terraform_remote_state.eks (expand)]
+2024-08-22T14:49:23.310-0400 [DEBUG] ReferenceTransformer: "provider[\"registry.terraform.io/hashicorp/aws\"]" references: [var.region]
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: helm_release.cert_manager (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: data.aws_eks_cluster.cluster (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: data.kubernetes_service.nginx (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: kubernetes_namespace.cert_manager_namespace (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: provider["registry.terraform.io/hashicorp/kubernetes"] is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: helm_release.nginx (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: provider["registry.terraform.io/hashicorp/helm"] is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: data.aws_eks_cluster_auth.cluster (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: provider["registry.terraform.io/hashicorp/aws"] is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: data.terraform_remote_state.eks (expand) is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] pruneUnusedNodes: provider["terraform.io/builtin/terraform"] is no longer needed, removing
+2024-08-22T14:49:23.310-0400 [DEBUG] Starting graph walk: walkDestroy
