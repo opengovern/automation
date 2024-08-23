@@ -1,22 +1,10 @@
-# Copyright (c) HashiCorp, Inc.
-# SPDX-License-Identifier: MPL-2.0
-
-output "cluster_endpoint" {
-  description = "Endpoint for EKS control plane"
-  value       = module.eks.cluster_endpoint
+output "configure_kubectl" {
+  description = "Configure kubectl: make sure you're logged in with the correct AWS profile and run the following command to update your kubeconfig"
+  value       = "aws eks --region ${local.region} update-kubeconfig --name ${module.eks.cluster_name}"
 }
-
-output "cluster_security_group_id" {
-  description = "Security group ids attached to the cluster control plane"
-  value       = module.eks.cluster_security_group_id
+/*
+output "velero_s3_backup_location" {
+  description = "S3 backup location"
+  value       = local.velero_s3_backup_location
 }
-
-output "region" {
-  description = "AWS region"
-  value       = var.region
-}
-
-output "cluster_name" {
-  description = "Kubernetes Cluster Name"
-  value       = module.eks.cluster_name
-}
+*/
