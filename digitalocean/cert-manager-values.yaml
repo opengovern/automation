@@ -1,0 +1,7 @@
+# cert-manager-values.yaml
+namespace: opengovernance
+crds:
+  enabled: true
+prometheus:
+  enabled: false
+
