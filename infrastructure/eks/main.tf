@@ -1,29 +1,6 @@
 ################################################################################
-# Terraform Configuration
+# Providers
 ################################################################################
-
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 4.0.0"  # Ensure this is updated to the latest stable version
-    }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 2.0.0"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = ">= 2.0.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = ">= 3.0.0"
-    }
-  }
-
-  required_version = ">= 1.0.0"
-}
 
 provider "aws" {
   region = var.region
@@ -66,7 +43,6 @@ data "aws_availability_zones" "available" {
   }
 }
 
-# RDS Engine Version Data Source
 data "aws_rds_engine_version" "postgresql" {
   engine             = "postgres"
   preferred_versions = ["15.5", "15.4", "15.3", "15.2", "15.1"]
@@ -85,15 +61,6 @@ resource "random_string" "suffix" {
 }
 
 resource "random_password" "rds_password" {
-  length  = 16
-  special = true
-  upper   = true
-  numeric = true
-  lower   = true
-}
-
-# OpenSearch Master Password
-resource "random_password" "opensearch_master_password" {
   length  = 16
   special = true
   upper   = true
@@ -120,6 +87,8 @@ locals {
 
   db_username = var.rds_master_username
   db_password = random_password.rds_password.result
+
+  ebs_kms_key_id = var.existing_kms_key_id != "" ? var.existing_kms_key_id : (module.ebs_kms_key[0].key_id)
 }
 
 ################################################################################
@@ -194,7 +163,7 @@ module "eks" {
   }
 
   eks_managed_node_groups = {
-    instance-store = {
+    opengovernance-main = {
       instance_types = var.eks_instance_types
       min_size       = 1
       max_size       = 5
@@ -208,29 +177,35 @@ module "eks" {
             volume_type           = "gp3"
             iops                  = 3000
             encrypted             = true
-            kms_key_id            = module.ebs_kms_key.key_arn
+            kms_key_id            = local.ebs_kms_key_id
             delete_on_termination = true
           }
         }
       }
+    }
+    # Conditionally add the "scaled-workers" node group if the environment is not "dev"
+    scaled-workers = {
+      instance_types = var.scaled_workers_instance_type
+      min_size       = 1
+      max_size       = 5
+      desired_size   = 1
 
-      cloudinit_pre_nodeadm = [
-        {
-          content_type = "application/node.eks.aws"
-          content      = <<-EOT
-            ---
-            apiVersion: node.eks.aws/v1alpha1
-            kind: NodeConfig
-            spec:
-              instance:
-                localStorage:
-                  strategy: RAID0
-          EOT
+      # Use the count parameter to conditionally create this node group
+      count = var.environment != "dev" ? 1 : 0
+
+      block_device_mappings = {
+        xvda = {
+          device_name = "/dev/xvda"
+          ebs = {
+            volume_size           = 8
+            volume_type           = "gp3"
+            encrypted             = true
+            delete_on_termination = true
+          }
         }
-      ]
+      }
     }
   }
-
   tags = local.tags
 }
 
@@ -250,9 +225,22 @@ module "ebs_kms_key" {
     module.eks.cluster_iam_role_arn,
   ]
 
-  aliases = ["eks/${local.name}/ebs"]
+  aliases = ["alias/eks/${local.name}/ebs"]
 
   tags = local.tags
+
+  count = var.existing_kms_key_id == "" ? 1 : 0
+}
+
+################################################################################
+# Alias for KMS Key (Conditional)
+################################################################################
+
+resource "aws_kms_alias" "ebs_alias" {
+  count = var.existing_kms_key_id == "" ? 1 : 0
+
+  name          = "alias/eks/${local.name}/ebs"
+  target_key_id = module.ebs_kms_key[0].key_id
 }
 
 ################################################################################
@@ -278,7 +266,7 @@ module "ebs_csi_driver_irsa" {
 }
 
 ################################################################################
-# EKS Blueprints Addons
+# EKS Blueprints Addons (Excluding OpenGovernance)
 ################################################################################
 
 module "eks_blueprints_addons" {
@@ -307,22 +295,92 @@ module "eks_blueprints_addons" {
   aws_load_balancer_controller = {
     chart_version = "1.6.0"
   }
-  
-  helm_releases = {
-    open-governance = {  # Custom Helm Release for Open Governance
-      description      = "A Helm chart for Open Governance"
-      namespace        = "opengovernance"
-      create_namespace = true
-      chart            = "open-governance"
-      chart_version    = "0.1.94"  # Specify the desired chart version
-      repository       = "https://kaytu-io.github.io/kaytu-charts"
-      values = [
-        file("${path.module}/values.yaml")
-      ]
-      timeout          = 750  # Timeout set to 600 seconds (10 minutes)
+
+  # Removed open-governance from helm_releases to avoid cyclic dependency
+  helm_releases = {}
+
+  tags = local.tags
+}
+
+################################################################################
+# Ingress Resource
+################################################################################
+
+resource "kubernetes_ingress_v1" "opengovernance_ingress" {
+  metadata {
+    name      = "opengovernance-ingress"
+    namespace = "opengovernance"
+    annotations = {
+      "alb.ingress.kubernetes.io/scheme"               = "internet-facing"
+      "alb.ingress.kubernetes.io/target-type"          = "ip"
+      "alb.ingress.kubernetes.io/backend-protocol"     = "HTTP"
+      "alb.ingress.kubernetes.io/listen-ports"         = "[{\"HTTP\": 80}]"
+      "kubernetes.io/ingress.class"                    = "alb"
+      "alb.ingress.kubernetes.io/name"                 = "opengovernance-alb"  # Set a predictable name
     }
   }
-  tags = local.tags
+
+  spec {
+    ingress_class_name = "alb"
+    rule {
+      http {
+        path {
+          path      = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = "nginx-proxy"  # Replace with the actual service name if different
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    module.eks_blueprints_addons  # Ensure Load Balancer Controller is ready
+  ]
+}
+
+################################################################################
+# Capture the Load Balancer's DNS name
+################################################################################
+
+data "aws_lb" "opengovernance_lb" {
+  name = kubernetes_ingress_v1.opengovernance_ingress.metadata[0].name
+}
+################################################################################
+# OpenGovernance Helm Release
+################################################################################
+
+resource "helm_release" "open_governance" {
+  name       = "open-governance"
+  namespace  = "opengovernance"
+  repository = "https://kaytu-io.github.io/kaytu-charts"
+  chart      = "open-governance"
+  version    = "0.1.94"
+
+  set {
+    name  = "global.domain"  # Set the domain from the Load Balancer DNS name
+    value = data.aws_lb.opengovernance_lb.dns_name
+  }
+
+  set {
+    name  = "dex.config.issuer"  # Set the issuer using the Load Balancer DNS name
+    value = "http://${data.aws_lb.opengovernance_lb.dns_name}/dex"
+  }
+
+  timeout = 750
+
+  depends_on = [
+    kubernetes_ingress_v1.kaytu_ingress,  # Ensure Ingress is created first
+    kubernetes_storage_class_v1.gp3, 
+    module.eks, 
+    module.ebs_csi_driver_irsa
+  ]
 }
 
 ################################################################################
@@ -350,7 +408,7 @@ resource "kubernetes_storage_class_v1" "gp3" {
   }
 
   depends_on = [
-    module.eks_blueprints_addons
+    module.eks
   ]
 }
 
@@ -358,7 +416,6 @@ resource "kubernetes_storage_class_v1" "gp3" {
 # RDS Resources
 ################################################################################
 
-# Security group for RDS
 module "rds_security_group" {
   source  = "terraform-aws-modules/security-group/aws"
   version = "~> 5.0"
@@ -372,7 +429,7 @@ module "rds_security_group" {
       from_port   = 5432
       to_port     = 5432
       protocol    = "tcp"
-      cidr_blocks = module.vpc.vpc_cidr_block  # Corrected: Pass as a string within a list
+      cidr_blocks = module.vpc.vpc_cidr_block
       description = "Allow PostgreSQL access from VPC"
     },
   ]
@@ -382,7 +439,6 @@ module "rds_security_group" {
   tags = local.tags
 }
 
-# RDS Instance
 resource "aws_db_instance" "postgresql" {
   identifier             = "${local.name}-postgresql"
   allocated_storage      = var.rds_allocated_storage
@@ -402,13 +458,9 @@ resource "aws_db_instance" "postgresql" {
   skip_final_snapshot     = true
   deletion_protection     = false
 
-  # Use the subnet group from the VPC module
   db_subnet_group_name    = module.vpc.database_subnet_group_name
 
-  # Apply security group
   vpc_security_group_ids  = [module.rds_security_group.security_group_id]
-
-  backup_retention_period = var.rds_backup_retention
 
   tags = {
     Name = "PostgreSQL Database"
@@ -421,162 +473,13 @@ resource "aws_db_instance" "postgresql" {
 }
 
 ################################################################################
-# OpenSearch Security Group
-################################################################################
-
-resource "aws_security_group" "opensearch_sg" {
-  count       = var.install_opensearch ? 1 : 0
-  name        = "${local.name}-opensearch-sg"
-  description = "Security group for OpenSearch domain"
-  vpc_id      = module.vpc.vpc_id
-
-  ingress {
-    description      = "Allow HTTPS traffic from VPC"
-    from_port        = 443
-    to_port          = 443
-    protocol         = "tcp"
-    cidr_blocks      = [module.vpc.vpc_cidr_block]  # Ensure this is a list of strings
-    ipv6_cidr_blocks = []
-    prefix_list_ids  = []
-    security_groups  = []
-  }
-
-  egress {
-    description      = "Allow all outbound traffic"
-    from_port        = 0
-    to_port          = 0
-    protocol         = "-1"
-    cidr_blocks      = ["0.0.0.0/0"]
-    ipv6_cidr_blocks = ["::/0"]
-    prefix_list_ids  = []
-    security_groups  = []
-  }
-
-  tags = merge(local.tags, {
-    Name = "${local.name}-opensearch-sg"
-  })
-}
-
-
-# IAM Policy for OpenSearch Access (Already defined above)
-# Add to your existing IAM Policies section or create a new one
-
-data "aws_iam_policy_document" "opensearch_access" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "AWS"
-      identifiers = ["*"]  # Replace "*" with specific IAM roles or users for enhanced security
-    }
-
-    actions = [
-      "es:ESHttpGet",
-      "es:ESHttpPost",
-      "es:ESHttpPut",
-      "es:ESHttpDelete",
-      "es:ESHttpHead"
-    ]
-
-    resources = [
-      "arn:aws:es:${var.region}:${data.aws_caller_identity.current.account_id}:domain/${var.opensearch_domain_name}/*"
-    ]
-
-    # Optional: Add conditions to restrict access further
-    # condition {
-    #   test     = "IpAddress"
-    #   variable = "aws:SourceIp"
-    #   values   = ["203.0.113.0/24"]  # Replace with your IP range
-    # }
-  }
-}
-
-
-# OpenSearch Domain (Updated)
-resource "aws_opensearch_domain" "opengovernance" {
-  count         = var.install_opensearch ? 1 : 0
-  domain_name = var.opensearch_domain_name
-
-  engine_version = var.opensearch_engine_version
-
-  cluster_config {
-    instance_type          = var.opensearch_instance_type
-    instance_count         = var.opensearch_instance_count
-    zone_awareness_enabled = true
-
-    zone_awareness_config {
-      availability_zone_count = 3
-    }
-  }
-  encrypt_at_rest {
-    enabled = true
-    #kms_key_id  =  data.aws_kms_key.rds.arn
-  }
-
-  ebs_options {
-    ebs_enabled = true
-    volume_size = var.opensearch_ebs_volume_size
-    volume_type = "gp3"
-  }
-
-  vpc_options {
-    subnet_ids         = module.vpc.private_subnets
-    security_group_ids = [aws_security_group.opensearch_sg[0].id]
-  }
-
-  access_policies = data.aws_iam_policy_document.opensearch_access.json
-
-  advanced_options = {
-    "rest.action.multi.allow_explicit_index" = "true"
-  }
-
-  # Enable Advanced Security Options
-  advanced_security_options {
-    enabled                        = true
-    internal_user_database_enabled = true  # Enable the internal user database
-
-    master_user_options {
-      master_user_name     = var.opensearch_master_username
-      master_user_password = random_password.opensearch_master_password.result
-    }
-  }
-  node_to_node_encryption {
-    enabled = true
-  }
-  domain_endpoint_options {
-    enforce_https = true
-  }
-  
-
-  # Automated snapshots
-  snapshot_options {
-    automated_snapshot_start_hour = 0  # UTC midnight
-  }
-
-  tags = merge(local.tags, {
-    Name        = var.opensearch_domain_name
-    Environment = var.opensearch_environment
-  })
-
-  # Auto-tune options
-  auto_tune_options {
-    desired_state = "ENABLED"
-  }
-
-  lifecycle {
-    prevent_destroy = false
-  }
-
-  depends_on = [
-    aws_security_group.opensearch_sg,
-    module.vpc
-  ]
-}
-
-
-################################################################################
 # Outputs
 ################################################################################
+
+output "opengovernance_lb_dns_name" {
+  value       = data.aws_lb.opengovernance_lb.dns_name
+  description = "The DNS name of the Load Balancer created by the Ingress."
+}
 
 output "vpc_id" {
   description = "The ID of the VPC"
@@ -591,25 +494,4 @@ output "eks_cluster_name" {
 output "rds_endpoint" {
   description = "The endpoint of the RDS PostgreSQL instance"
   value       = aws_db_instance.postgresql.endpoint
-}
-
-output "opensearch_domain_endpoint" {
-  description = "The endpoint of the OpenSearch domain"
-  value       = try(aws_opensearch_domain.opengovernance[0].endpoint, null)
-}
-
-output "opensearch_domain_arn" {
-  description = "The ARN of the OpenSearch domain"
-  value       = try(aws_opensearch_domain.opengovernance[0].arn, null)
-}
-
-output "opensearch_master_username" {
-  description = "The master username for OpenSearch"
-  value       = try(aws_opensearch_domain.opengovernance[0].advanced_security_options[0].master_user_options[0].master_user_name, null)
-}
-
-output "opensearch_master_password" {
-  description = "The master password for OpenSearch"
-  value       = try(random_password.opensearch_master_password.result, null)
-  sensitive   = true
 }
