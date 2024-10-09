@@ -2,31 +2,29 @@
 # Variables
 ################################################################################
 
-# AWS Region
 variable "region" {
   description = "The AWS region to deploy resources."
   type        = string
   default     = "us-west-2"
 }
 
-# Environment
 variable "environment" {
-  description = "The environment for the deployment (e.g., dev, staging, prod)."
+  description = "The environment for the deployment (e.g., dev, staging, production)."
   type        = string
-  default     = "dev"  # Set a default value or leave it without one
+  default     = "dev"
 }
 
-# RDS Instance Configuration
 variable "rds_master_username" {
   description = "Master username for the RDS instance."
   type        = string
-  default     = "postgres_user"  # Update with your desired username or set to null for runtime input
+  default     = "postgres_user"
 }
 
 variable "rds_master_password" {
   description = "Master password for the RDS instance."
   type        = string
-  default     = "UberSecretPassword"  # Consider using a secure method for managing passwords
+  sensitive   = true
+  default     = "UberSecretPassword"  # Consider using a more secure method to manage secrets
 }
 
 variable "rds_instance_class" {
@@ -41,30 +39,11 @@ variable "rds_allocated_storage" {
   default     = 20
 }
 
-variable "rds_backup_retention" {
-  description = "The number of days to retain backups for the RDS instance."
-  type        = number
-  default     = 7
-}
-
-# EKS Node Configuration
 variable "eks_instance_types" {
   description = "The instance types for the EKS node group."
   type        = list(string)
   default     = ["m6in.xlarge"]
 }
 
-# Scaled Workers Instance Type
-variable "scaled_workers_instance_type" {
-  description = "The instance type for the scaled workers node group. Defaulting to the first instance type in eks_instance_types."
-  type        = list(string)
-  default     = ["t3.large"]
-}
 
 
-# KMS Key Configuration
-variable "existing_kms_key_id" {
-  description = "The existing KMS key ID for EBS volumes. If not provided, a new key will be created."
-  type        = string
-  default     = ""
-}
