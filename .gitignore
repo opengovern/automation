@@ -2,7 +2,7 @@
 **/.terraform/*
 
 # Ignore all Terraform files
-*.tf
+
 *.tfstate
 *.tfstate.*
 *.tfvars
