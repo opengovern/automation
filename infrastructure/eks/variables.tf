@@ -57,7 +57,7 @@ variable "eks_instance_types" {
 # Scaled Workers Instance Type
 variable "scaled_workers_instance_type" {
   description = "The instance type for the scaled workers node group. Defaulting to the first instance type in eks_instance_types."
-  type        = string
+  type        = list(string)
   default     = ["t3.large"]
 }
 

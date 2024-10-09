@@ -376,7 +376,7 @@ resource "helm_release" "open_governance" {
   timeout = 750
 
   depends_on = [
-    kubernetes_ingress_v1.kaytu_ingress,  # Ensure Ingress is created first
+    kubernetes_ingress_v1.opengovernance_ingress,  # Ensure Ingress is created first
     kubernetes_storage_class_v1.gp3, 
     module.eks, 
     module.ebs_csi_driver_irsa
