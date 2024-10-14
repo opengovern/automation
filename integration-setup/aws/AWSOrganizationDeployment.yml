@@ -1,17 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploys Kaytu Platform to AWS Organization
+Description: Deploys OpenGovernance Platform to AWS Organization
 Parameters:
   IAMUsernameInOrganizationAccount:
     Type: String
-    Default: SimpleStackIAMUser
+    Default: OpenGovernanceIAMUser
     Description: IAM User to create
   IAMGroupnameInOrganizationAccount:
     Type: String
-    Default: SimpleStackIAMGroup
+    Default: OpenGovernanceIAMGroup
     Description: IAM User to create
   RoleNameInAccount:
     Type: String
-    Default: SimpleStackReadOnly
+    Default: OpenGovernanceReadOnly
     Description: The name of the role that will be assumed in each member account.
   AccountList:
     Type: String
@@ -33,7 +33,7 @@ Resources:
       RoleName: !Ref RoleNameInAccount
       Description: Allows the platform to gather inventory of the organization and member accounts
       Policies:
-        - PolicyName: SimpleStackRoleAssumption
+        - PolicyName: OpenGovernanceRoleAssumption
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -77,7 +77,7 @@ Resources:
   AttachRoleToOrganizationGroup:
       Type: 'AWS::IAM::GroupPolicy'
       Properties:
-        PolicyName: SimpleStackAllowRoleAssumption
+        PolicyName: OpenGovernanceAllowRoleAssumption
         GroupName: !Ref IAMGroupInOrganizationAccount
         PolicyDocument:
           Version: "2012-10-17"
@@ -89,7 +89,7 @@ Resources:
   MemberAccountRoleStackSet:
     Type: 'AWS::CloudFormation::StackSet'
     Properties:
-      StackSetName: SimpleStackMemberAccountRollout
+      StackSetName: OpenGovernanceMemberAccountRollout
       Description: Stack Set that will roll out to member account
       Capabilities:
         - CAPABILITY_NAMED_IAM
@@ -129,10 +129,10 @@ Resources:
               }
           },
           "Resources": {
-              "SimpleStack": {
+              "OpenGovernance": {
                   "Type": "AWS::IAM::ManagedPolicy",
                   "Properties": {
-                      "ManagedPolicyName": "SimpleStackPolicy",
+                      "ManagedPolicyName": "OpenGovernancePolicy",
                       "Description": "A Limited policy to allow cloudquery to do its job",
                       "PolicyDocument": {
                           "Version": "2012-10-17",
@@ -170,7 +170,7 @@ Resources:
                       "Description": "Read Only Access for to fetch inventory from member accounts",
                       "ManagedPolicyArns": [
                           {
-                              "Ref": "SimpleStack"
+                              "Ref": "OpenGovernance"
                           },
                           "arn:aws:iam::aws:policy/ReadOnlyAccess",
                           "arn:aws:iam::aws:policy/SecurityAudit",
