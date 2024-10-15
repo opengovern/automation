@@ -2,36 +2,35 @@
 
 ## Overview
 
-This guide helps configure access to Opengovernance deployed on DigitalOcean Kubernetes, using NGINX Ingress Controller.
+This guide helps configure access to Opengovernance deployed on DigitalOcean Kubernetes using the NGINX Ingress Controller.
 
 ## Contents 
 
 - [Prerequisites](#prerequisites)
 - [Step 1: Installing NGINX Ingress Controller](#step-1-installing-nginx-ingress-controller)
-- [Step 2: Update DNS record](#step-2-update-dns-record)
+- [Step 2: Update DNS Record](#step-2-update-dns-record)
 - [Step 3: Configuring TLS Certificate using `cert-manager`](#step-3-configuring-tls-certificate-using-cert-manager)
-- [Step 4: Update the Application configuration](#step-4-update-the-application-configuration)
+- [Step 4: Update the Application Configuration](#step-4-update-the-application-configuration)
 - [Step 5: Deploying the Ingress](#step-5-deploying-the-ingress)
-
 
 ## Prerequisites
 
-- Helm - [Installation guide](https://helm.sh/docs/intro/install/).
-- Kubectl - [Installation guide](https://kubernetes.io/docs/tasks/tools/)
-- Opengovernance installed on a DigitalOcean Kubernetes Cluster.
+- **Helm** - [Installation guide](https://helm.sh/docs/intro/install/).
+- **Kubectl** - [Installation guide](https://kubernetes.io/docs/tasks/tools/)
+- **Opengovernance** installed on a DigitalOcean Kubernetes Cluster.
 - Access to modify DNS records of a domain.
-
 
 ## Step 1: Installing NGINX Ingress Controller
 
-Add the official nginx helm repository and update helm.
+Add the official NGINX Helm repository and update Helm.
 
-```
+```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx && helm repo update
 ```
-Install the NGINX Ingress Controller using helm 
 
-```
+Install the NGINX Ingress Controller using Helm:
+
+```bash
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx \
   --create-namespace \
@@ -40,28 +39,31 @@ helm install ingress-nginx ingress-nginx/ingress-nginx \
   --set controller.resources.requests.memory=90Mi
 ```
 
-It may take a few minutes for the load balancer IP to be available.
-You can watch the status by running 
-```
+It may take a few minutes for the load balancer IP to be available. You can watch the status by running:
+
+```bash
 kubectl get service --namespace ingress-nginx ingress-nginx-controller --output wide --watch
 ```
-Look for the IP address provided in the `EXTERNAL-IP` field. 
 
-## Step 2: Update DNS record 
+Look for the IP address provided in the `EXTERNAL-IP` field.
 
-Create a DNS record pointing to the `A` value. In this example we wiil use `demo.opengovernance.io` to create the DNS record. 
+## Step 2: Update DNS Record
+
+Create a DNS record pointing to the `A` value. In this example, we will use `demo.opengovernance.io` to create the DNS record.
 
 ## Step 3: Configuring TLS Certificate using `cert-manager`
 
-> **Skip to [Step 4](#step-4--update-the-application-configuration) if you already have `cert-manager` installed.**
+> **Skip to [Step 4](#step-4-update-the-application-configuration) if you already have `cert-manager` installed.**
 
-First, export the EMAIL environment variable with your desired email address. This variable will be used in the Kubernetes manifest.
+First, export the `EMAIL` environment variable with your desired email address. This variable will be used in the Kubernetes manifest.
 
 ```bash
 export EMAIL=your-email@example.com
 ```
-Replace your-email@example.com with your actual email address.
 
+Replace `your-email@example.com` with your actual email address.
+
+Install `cert-manager` using Helm:
 
 ```bash
 helm repo add jetstack https://charts.jetstack.io && \
@@ -71,8 +73,9 @@ helm install cert-manager jetstack/cert-manager \
   --create-namespace \
   --set crds.enabled=true \
   --set prometheus.enabled=false
+```
 
-## Create and Apply the Issuer Manifest, Then Verify
+### Create and Apply the Issuer Manifest, Then Verify
 
 ```bash
 kubectl apply -f - <<EOF
@@ -83,7 +86,7 @@ metadata:
   namespace: opengovernance
 spec:
   acme:
-    email: $EMAIL
+    email: \$EMAIL
     server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
       name: letsencrypt-nginx-private-key
@@ -94,85 +97,42 @@ spec:
 EOF
 ```
 
+Verify the issuer is ready:
 
-Verify the issuer is ready
-```
+```bash
 kubectl get issuer -n opengovernance
 ```
-The output should be similar to below. The field `READY` should be `True`
 
-![kubectl get issuer](./images/get-issuer.png)
+The output should be similar to the image below. The field `READY` should be `True`.
 
+## Step 4: Update the Application Configuration
 
-## Step 4: Update the Application configuration
+First, export the necessary environment variables for the domain name and HTTPS configuration. By default, `DISABLE_HTTPS` is set to `false`. To disable HTTPS, you can explicitly set `DISABLE_HTTPS=true`.
 
-Download and open the [values.yaml](https://github.com/kaytu-io/kaytu-charts/blob/main/charts/open-governance/values.yaml) file in an editor.
-
+```bash
+export DOMAIN="demo5.opengovernance.io"
+export DISABLE_HTTPS=${DISABLE_HTTPS:-false}
 ```
-curl -O https://raw.githubusercontent.com/kaytu-io/kaytu-charts/main/charts/open-governance/values.yaml
-```
 
-The `values.yaml` must now look like the following
+Apply these changes to the cluster using the following command:
 
-```
-opengovernance:
-  replicaCount: 1
-  envType: dev
-  domain:
-    main: opengovernance.domain.com
-...
+```bash
+helm upgrade opengovernance opengovernance/open-governance -n opengovernance -f <(cat <<EOF
+global:
+  domain: ${DOMAIN}
 dex:
-  configSecret:
-    create: false
   config:
-    staticClients:
-      - id: public-client
-        name: 'Public Client'
-        redirectURIs:
-          - 'https://kaytu.app.domain/callback'
-          - 'http://kaytu.app.domain/callback'
-          - 'http://localhost:3000/callback'
-          - 'http://localhost:8080/callback'
-          - 'https://opengovernance.domain.com/callback'
-          - 'http://opengovernance.domain.com/callback'
-        public: true
-      - id: private-client
-        name: 'Private Client'
-        redirectURIs:
-          - 'https://kaytu.app.domain/callback'
-          - 'https://opengovernance.domain.com/callback'
-          - 'http://opengovernance.domain.com/callback'
-...
-```
-
-For an example refer to this [values.yaml](https://github.com/ADorigi/scratch/blob/main/example/values.yaml)
-
-Apply these changes to the cluster using the following command 
-
-```
-helm upgrade -f values.yaml opengovernance opengovernance/open-governance -n opengovernance 
-```
-
-Once the changes have been applied, we need to restart the pod corresponding to dex.
-
-Retrieve the pod name:
-
-```
-POD_NAME=$(kubectl get pods -n opengovernance -l app.kubernetes.io/instance=opengovernance,app.kubernetes.io/name=dex -o jsonpath='{.items[*].metadata.name}')
-
-```
-Delete the pod:
-```
-
-kubectl delete pod $POD_NAME -n opengovernance
+    issuer: $(if [ "$DISABLE_HTTPS" = "true" ]; then echo "http://${DOMAIN}/dex"; else echo "https://${DOMAIN}/dex"; fi)
+EOF
+)
 ```
 
 ## Step 5: Deploying the Ingress
 
-Create a kubernetes manifest `ingress.yaml` to define an ingress. Make sure to replace `<your-custom-domain>` with your domain.
+Create a Kubernetes manifest `ingress.yaml` to define an ingress. Make sure to replace `<your-custom-domain>` with your domain.
 
-```
-# ssuer.yaml
+```bash
+kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -183,30 +143,41 @@ metadata:
 spec:
   tls:
     - hosts:
-        - <your-custom-domain>
+        - ${DOMAIN}
       secretName: letsencrypt-nginx
   ingressClassName: nginx
   rules:
-  - host: <your-custom-domain>
-    http:
+    - host: ${DOMAIN}
+      http:
         paths:
-        - path: /
-          pathType: Prefix
-          backend:
-            service:
-              name: nginx-proxy
-              port:
-                number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
 ```
 
-Deploy the above manifest
+### Optional Verification Command
 
-```
-kubectl apply -f issuer.yaml
+After applying the ingress manifest, you may want to verify that the ingress has been successfully created and is configured correctly.
+
+```bash
+kubectl get ingress -n opengovernance
 ```
 
-Confirm that the certificate is issued and `Ready`. The certificate might take a few minutes to get to `Ready` state.
+> **Note:** If you have disabled HTTPS by setting `DISABLE_HTTPS=true`, ensure that the TLS configuration is appropriately adjusted.
 
+## Verification
+
+After deploying the ingress, verify that it has been successfully created and configured correctly.
+
+```bash
+kubectl get ingress -n ${OPENGOVERNANCE_NAMESPACE}
 ```
-kubectl get certificates -n opengovernance
-```
+
+The output should display the ingress resource with the correct configuration.
+
+---
