@@ -2,8 +2,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  namespace: kaytu-octopus
-  name: kaytu-ingress
+  namespace: opengovernance
+  name: opengovernance-ingress
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -14,7 +14,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: demo4.kaytu.sh
+    - host: demo.opengovernance.io
       http:
         paths:
         - path: /

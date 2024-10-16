@@ -1,32 +1,38 @@
-# SOP: Deploying OpenGovernance on AWS using Terraform and Helm
+# SOP: Deploying OpenGovernance on AWS with HTTPS Using Terraform and Helm
 
-This Standard Operating Procedure (SOP) provides detailed instructions for deploying the OpenGovernance platform on AWS using Terraform for infrastructure provisioning and Helm for application deployment. The steps include cloning the Terraform configuration from GitHub, configuring variables, deploying the infrastructure, accessing the Kubernetes cluster using `kubectl`, and installing the OpenGovernance application via Helm.
+This Standard Operating Procedure (SOP) provides step-by-step instructions to deploy the OpenGovernance platform on AWS. The deployment utilizes Terraform for infrastructure provisioning and Helm for application deployment. Additionally, it covers setting up an Application Load Balancer (ALB) with HTTPS using AWS Certificate Manager (ACM), configuring Kubernetes Ingress via `kubectl`, and updating DNS records.
 
 ---
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed and configured on your machine:
+Ensure the following tools and configurations are in place before proceeding:
 
-- **Git**: For cloning the repository.
-- **Terraform**: For deploying infrastructure as code.
-- **AWS CLI**: For AWS interactions and configuring `kubectl`.
-- **kubectl**: For managing the Kubernetes cluster.
-- **Helm**: For deploying applications on Kubernetes.
-- **AWS Credentials**: Configured with sufficient permissions to create the necessary resources.
+- **Git**: For cloning repositories.
+- **Terraform**: For Infrastructure as Code (IaC) deployments.
+- **AWS CLI**: For interacting with AWS services.
+- **kubectl**: For managing Kubernetes clusters.
+- **Helm**: For deploying Kubernetes applications.
+- **AWS Account**: With permissions to create necessary resources.
+- **Domain Name**: Owned and managed via a DNS provider.
+- **AWS Credentials**: Configured with sufficient permissions.
 
 ---
 
 ## Overview
 
-The deployment process involves the following major steps:
+The deployment process includes:
 
-1. **Clone the Terraform Repository**: Get the infrastructure code.
-2. **Configure Variables**: Customize your deployment settings.
-3. **Deploy Infrastructure with Terraform**: Provision AWS resources.
-4. **Configure kubectl Access**: Access your Kubernetes cluster.
-5. **Install OpenGovernance Application**: Deploy the app using Helm.
-6. **Access OpenGovernance**: Verify the deployment.
+1. **Cloning the Terraform Repository**
+2. **Configuring Variables**
+3. **Deploying Infrastructure with Terraform**
+4. **Configuring `kubectl` Access**
+5. **Obtaining an ACM Certificate**
+6. **Setting Environment Variables**
+7. **Installing OpenGovernance via Helm**
+8. **Configuring Kubernetes Ingress with HTTPS**
+9. **Creating DNS CNAME Record**
+10. **Accessing OpenGovernance**
 
 ---
 
@@ -45,54 +51,33 @@ cd deployment-automation/eks
 
 #### **Option A: Use Default Variables**
 
-The Terraform configuration includes a `variables.tf` file with default values:
-
-```hcl
-variable "region" {
-  description = "The AWS region to deploy resources."
-  type        = string
-  default     = "us-west-2"
-}
-
-variable "environment" {
-  description = "The environment for the deployment (e.g., dev, staging, production)."
-  type        = string
-  default     = "dev"
-}
-
-variable "rds_master_username" {
-  description = "Master username for the RDS instance."
-  type        = string
-  default     = "postgres_user"
-}
-
-variable "rds_master_password" {
-  description = "Master password for the RDS instance."
-  type        = string
-  sensitive   = true
-  default     = "UberSecretPassword"  # Consider using a more secure method to manage secrets.
-}
-
-# Additional variables...
-```
+The repository contains a `variables.tf` file with predefined variables.
 
 #### **Option B: Create a `terraform.tfvars` File**
 
-To customize variable values without modifying the `variables.tf` file, create a `terraform.tfvars` file in the same directory:
+To customize deployment settings, create a `terraform.tfvars` file:
 
-```hcl
-region                = "your-aws-region"
-environment           = "your-environment"            # e.g., "staging" or "production"
+```sh
+cat <<EOF > terraform.tfvars
+region                = "your-aws-region"            # e.g., "us-east-1"
+environment           = "your-environment"           # e.g., "staging" or "production"
+domain_name           = "your.domain.com"            # Your domain name
+certificate_arn       = "your-acm-certificate-arn"   # ACM Certificate ARN
 rds_master_username   = "your-db-username"
-rds_master_password   = "your-db-password"            # Use a secure password
-rds_instance_class    = "your-rds-instance-class"     # e.g., "db.m6i.large"
-rds_allocated_storage = your-allocated-storage        # e.g., 20
-eks_instance_types    = ["your-eks-instance-type"]    # e.g., ["m6in.xlarge"]
+rds_master_password   = "your-db-password"           # Use a secure password
+rds_instance_class    = "your-rds-instance-class"    # e.g., "db.m6i.large"
+rds_allocated_storage = 20                           # Adjust as needed
+eks_instance_types    = ["m6in.xlarge"]              # e.g., ["m6in.xlarge"]
+EOF
 ```
 
-**Note:** Replace the placeholders with your desired values. Ensure sensitive values like passwords are stored securely and are not committed to version control.
+**Note:**
+- Replace placeholders with actual values.
+- Ensure sensitive information like `rds_master_password` is handled securely and not committed to version control.
 
-### 3. Initialize Terraform
+### 3. Deploy Infrastructure with Terraform
+
+#### **A. Initialize Terraform**
 
 Initialize the Terraform working directory to download necessary providers and modules:
 
@@ -100,33 +85,33 @@ Initialize the Terraform working directory to download necessary providers and m
 terraform init
 ```
 
-### 4. Validate the Terraform Configuration (Optional)
+#### **B. Validate the Configuration (Optional)**
 
-Validate your Terraform configuration before applying:
+Validate the Terraform configuration to ensure correctness:
 
 ```sh
 terraform validate
 ```
 
-### 5. Plan the Deployment (Optional)
+#### **C. Plan the Deployment (Optional)**
 
-Review the changes Terraform will make without actually applying them:
+Review the planned actions without applying them:
 
 ```sh
 terraform plan
 ```
 
-### 6. Deploy the Infrastructure
+#### **D. Apply the Terraform Configuration**
 
-Apply the Terraform configuration to deploy the infrastructure:
+Deploy the infrastructure:
 
 ```sh
 terraform apply
 ```
 
-### 7. Confirm the Deployment
+#### **E. Confirm the Deployment**
 
-When prompted, type `yes` to confirm the deployment:
+When prompted, type `yes` to proceed:
 
 ```
 Do you want to perform these actions?
@@ -136,57 +121,102 @@ Do you want to perform these actions?
   Enter a value: yes
 ```
 
-### 8. Wait for Deployment to Complete
+### 4. Configure `kubectl` Access
 
-Terraform will provision the resources. This process may take several minutes. Upon completion, Terraform will output important information, including commands to configure `kubectl`.
-
-### 9. Configure `kubectl` to Access the EKS Cluster
-
-After the cluster is created, configure `kubectl` to connect to your new EKS cluster using the command provided in the Terraform outputs.
+After Terraform completes, configure `kubectl` to interact with your EKS cluster.
 
 #### **A. Retrieve the `kubectl` Configuration Command**
 
-The Terraform configuration includes an output named `configure_kubectl`. Retrieve this command:
+Use Terraform's output to get the command for configuring `kubectl`:
 
 ```sh
-terraform output configure_kubectl
+CONFIGURE_KUBECTL=$(terraform output -raw configure_kubectl)
+echo "Run the following command to configure kubectl:"
+echo "$CONFIGURE_KUBECTL"
 ```
 
-This will display a command similar to:
+#### **B. Execute the Configuration Command**
 
-```
-configure_kubectl = "aws eks --region your-aws-region update-kubeconfig --name your-cluster-name"
-```
-
-#### **B. Run the Command to Update `kubectl` Configuration**
-
-Execute the command provided by Terraform to configure `kubectl`:
+Run the command to update your `kubeconfig`:
 
 ```sh
-aws eks --region your-aws-region update-kubeconfig --name your-cluster-name
+eval "$CONFIGURE_KUBECTL"
 ```
-
-- Replace `your-aws-region` and `your-cluster-name` with the values from the Terraform output if necessary.
 
 #### **C. Verify Cluster Access**
 
-Test the connection:
+Ensure `kubectl` can communicate with the cluster:
 
 ```sh
 kubectl get nodes
 ```
 
-You should see a list of nodes in your EKS cluster, confirming that `kubectl` is correctly configured.
+You should see a list of nodes in your EKS cluster.
 
----
+### 5. Obtain an ACM Certificate
 
-### 10. Install the OpenGovernance Application via Helm
+To enable HTTPS, obtain an SSL/TLS certificate through AWS Certificate Manager (ACM).
 
-With the Kubernetes cluster up and `kubectl` configured, install the OpenGovernance application using Helm.
+#### **A. Request an ACM Certificate**
+
+1. **Access AWS Certificate Manager:**
+
+   Navigate to the [AWS Certificate Manager console](https://console.aws.amazon.com/acm/home).
+
+2. **Request a Public Certificate:**
+
+   - Click **Request a certificate**.
+   - Choose **Request a public certificate**.
+   - Click **Request a certificate**.
+
+3. **Add Domain Names:**
+
+   - Enter your domain name (e.g., `your.domain.com`).
+   - Click **Next**.
+
+4. **Select Validation Method:**
+
+   - Choose **DNS validation**.
+   - Click **Next**.
+
+5. **Add Tags (Optional):**
+
+   - Add any necessary tags.
+   - Click **Review**.
+
+6. **Confirm and Request:**
+
+   - Review the details.
+   - Click **Confirm and request**.
+
+7. **Validate Domain Ownership:**
+
+   - ACM provides CNAME records for DNS validation.
+   - Add these CNAME records to your DNS provider.
+   - Wait for ACM to validate and issue the certificate.
+
+#### **B. Record the Certificate ARN**
+
+Once validated, note down the **Certificate ARN** from the ACM console.
+
+### 6. Set Environment Variables
+
+Export the domain name and certificate ARN as environment variables to use in subsequent steps:
+
+```sh
+export DOMAIN_NAME="your.domain.com"
+export CERTIFICATE_ARN="arn:aws:acm:your-region:account-id:certificate/certificate-id"
+```
+
+**Ensure you replace the placeholders with your actual domain and certificate ARN.**
+
+### 7. Install OpenGovernance via Helm
+
+With the Kubernetes cluster configured, deploy the OpenGovernance application using Helm.
 
 #### **A. Add the OpenGovernance Helm Repository**
 
-Add the OpenGovernance Helm repository and update Helm repositories:
+Add the repository and update Helm:
 
 ```sh
 helm repo add opengovernance https://opengovern.github.io/charts
@@ -195,198 +225,211 @@ helm repo update
 
 #### **B. Deploy the OpenGovernance Application**
 
-Run the following command to deploy the OpenGovernance application inside the `opengovernance` namespace:
+Install OpenGovernance in the `opengovernance` namespace:
 
 ```sh
-helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m
+helm install opengovernance opengovernance/opengovernance \
+  -n opengovernance --create-namespace \
+  --timeout 10m
 ```
-
-- **Explanation:**
-  - `helm install`: Command to install a Helm chart.
-  - `-n opengovernance`: Specifies the Kubernetes namespace.
-  - `opengovernance`: The release name.
-  - `opengovernance/opengovernance`: Chart reference (`repository/chart`).
-  - `--create-namespace`: Creates the namespace if it doesn't exist.
-  - `--timeout=10m`: Sets the timeout for the operation to 10 minutes.
 
 #### **C. Verify the Deployment**
 
-Check the status of the deployment:
+Check the status of the Helm release and pods:
 
 ```sh
 helm status opengovernance -n opengovernance
-```
-
-List the pods to ensure they are running:
-
-```sh
 kubectl get pods -n opengovernance
 ```
 
----
+Ensure all pods are running without issues.
 
-### 11. Accessing the OpenGovernance Platform
+### 8. Configure Kubernetes Ingress with HTTPS
 
-With the application deployed, you can now access the OpenGovernance platform.
+Set up the Kubernetes Ingress resource to use the ACM certificate for HTTPS.
+
+#### **A. Create the Ingress Resource Using Environment Variables**
+
+Use a heredoc to define and apply the Ingress YAML, injecting environment variables for `domain_name` and `certificate_arn`:
+
+```sh
+kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: opengovernance
+  name: opengovernance-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "$CERTIFICATE_ARN"
+    kubernetes.io/ingress.class: alb
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "$DOMAIN_NAME"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+```
+
+**Explanation:**
+- **`alb.ingress.kubernetes.io/certificate-arn`**: Uses the exported `CERTIFICATE_ARN`.
+- **`host`**: Uses the exported `DOMAIN_NAME`.
+
+#### **B. Verify Ingress Creation**
+
+Ensure the Ingress resource is correctly applied:
+
+```sh
+kubectl get ingress opengovernance-ingress -n opengovernance
+```
+
+You should see the Ingress status with the Load Balancer details.
+
+### 9. Create DNS CNAME Record
+
+Point your domain to the Load Balancer by creating a DNS CNAME record.
 
 #### **A. Retrieve the Load Balancer DNS Name**
 
-Get the DNS name of the load balancer provisioned for OpenGovernance:
+Get the DNS name of the ALB from the Ingress status:
 
 ```sh
-kubectl get ingress -n opengovernance
+LB_DNS=$(kubectl get ingress opengovernance-ingress -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo "Load Balancer DNS: $LB_DNS"
 ```
 
-This will display the ingress resource, including the hostname of the load balancer.
+#### **B. Create a CNAME Record**
 
-Alternatively, use Terraform output if available:
+1. **Log in to Your DNS Provider**:
+
+   Access your DNS management console (e.g., Route 53, GoDaddy, etc.).
+
+2. **Add a CNAME Record**:
+
+   - **Host/Name**: `your.domain.com` (replace with your actual domain).
+   - **Type**: `CNAME`.
+   - **Value/Points to**: `$LB_DNS` (the Load Balancer DNS obtained above).
+   - **TTL**: Set to default or as desired.
+
+3. **Save the Record**:
+
+   Apply the changes and wait for DNS propagation (can take a few minutes to hours).
+
+### 10. Accessing the OpenGovernance Platform
+
+Once DNS propagation is complete, access OpenGovernance via your domain.
 
 ```sh
-terraform output opengovernance_lb_dns_name
+https://your.domain.com
 ```
 
-#### **B. Access OpenGovernance**
-
-Open a web browser and navigate to:
-
-```
-http://your-load-balancer-dns-name
-```
-
-- Replace `your-load-balancer-dns-name` with the actual DNS name from the ingress or Terraform output.
+**Note:** Ensure you replace `your.domain.com` with your actual domain name.
 
 ---
 
-## Notes
+## Outputs Provided by Terraform
 
-- **AWS Credentials**: Ensure your AWS CLI is configured with credentials that have sufficient permissions to create resources.
-- **Security**: Treat sensitive information like passwords and secrets securely. Avoid committing them to version control.
-- **Cleanup**: To remove all resources created by Terraform and Helm, run:
+The Terraform configuration includes outputs to assist in accessing and managing the deployed resources.
 
-  ```sh
-  terraform destroy
-  ```
+### 1. Configure `kubectl` Command
 
-  Confirm the destruction by typing `yes` when prompted.
-
-- **Terraform Outputs**: The Terraform configuration provides outputs to assist you, such as commands to configure `kubectl`.
-
----
-
-## Example Commands
-
-Assuming you are deploying to `us-east-1` and have customized your variables in `terraform.tfvars`:
-
-### Initialize Terraform
-
-```sh
-terraform init
-```
-
-### Apply the Terraform Configuration
-
-```sh
-terraform apply
-```
-
-### Retrieve the `kubectl` Configuration Command
+Retrieve the command to configure `kubectl`:
 
 ```sh
 terraform output configure_kubectl
 ```
 
-### Configure `kubectl`
+**Example Output:**
 
-Copy and paste the command output by Terraform, for example:
-
-```sh
-aws eks --region us-east-1 update-kubeconfig --name your-cluster-name
+```
+configure_kubectl = "aws eks --region your-aws-region update-kubeconfig --name your-cluster-name"
 ```
 
-### Verify `kubectl` Access
+- **Usage**: Run the command to set up `kubectl` access.
+
+### 2. Load Balancer DNS Name
+
+Retrieve the Load Balancer DNS name:
 
 ```sh
-kubectl get nodes
+kubectl get ingress opengovernance-ingress -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
-### Add the OpenGovernance Helm Repository
+**Example Output:**
 
-```sh
-helm repo add opengovernance https://opengovern.github.io/charts
-helm repo update
 ```
-
-### Install OpenGovernance via Helm
-
-```sh
-helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m
-```
-
-### Verify the Deployment
-
-```sh
-helm status opengovernance -n opengovernance
-kubectl get pods -n opengovernance
+k8s-openg-overprov-1234567890.us-east-1.elb.amazonaws.com
 ```
 
 ---
 
-## Additional Information
+## Cleanup
 
-### Variable Descriptions
-
-- **region**: AWS region to deploy resources (e.g., `us-east-1`, `us-west-2`).
-- **environment**: Deployment environment (`dev`, `staging`, `production`).
-- **rds_master_username**: Username for the RDS database.
-- **rds_master_password**: Password for the RDS database.
-- **rds_instance_class**: Instance class for RDS (e.g., `db.m6i.large`).
-- **rds_allocated_storage**: Storage allocated for RDS in GB (e.g., `20`).
-- **eks_instance_types**: List of EC2 instance types for the EKS node group (e.g., `["m6in.xlarge"]`).
-
-### AWS Credentials Configuration
-
-If you haven't configured AWS CLI credentials, you can do so using:
+To remove all deployed resources, run the following command:
 
 ```sh
-aws configure
+terraform destroy
 ```
 
-You will be prompted to enter your AWS Access Key ID, Secret Access Key, region, and output format.
+When prompted, type `yes` to confirm the destruction:
 
-### Accessing the OpenGovernance Platform
+```
+Do you really want to destroy all resources?
+  Terraform will destroy all your managed infrastructure, as shown above.
+  There is no undo. Only 'yes' will be accepted to confirm.
 
-- **Ingress Resource**: The Kubernetes ingress is configured to expose the OpenGovernance application.
-- **Load Balancer**: An AWS Application Load Balancer (ALB) is created by the ingress controller.
-- **DNS Name**: Use the DNS name provided by the ingress to access the application.
+  Enter a value: yes
+```
+
+**Caution:** This action deletes all resources managed by Terraform. Ensure you no longer need them before proceeding.
 
 ---
 
 ## Troubleshooting
 
-- **Terraform Errors**: If you encounter errors during `terraform apply`, review the error messages for guidance.
-- **AWS CLI Issues**: Ensure the AWS CLI is installed and properly configured with the necessary permissions.
-- **kubectl Connection Issues**: Verify that the AWS CLI command to update `kubeconfig` was successful and that you are using the correct cluster name and region.
-- **Helm Deployment Issues**: If the Helm installation fails, check the pod logs for errors.
-- **Accessing OpenGovernance**: If you cannot access the platform, ensure that the load balancer DNS name is correct and that all pods are running.
+- **ACM Certificate Not Validated**:
+  - Ensure DNS CNAME records for validation are correctly added.
+  - Wait for DNS propagation and certificate status to update.
+
+- **Ingress Not Creating Load Balancer**:
+  - Verify Ingress annotations and ensure the AWS ALB Ingress Controller is deployed.
+  - Check Kubernetes events for errors: `kubectl describe ingress opengovernance-ingress -n opengovernance`
+
+- **Cannot Access OpenGovernance**:
+  - Confirm DNS CNAME records are correctly pointing to the Load Balancer.
+  - Ensure the Load Balancer is active and serving traffic.
+  - Check Helm deployment and Kubernetes pods status.
+
+- **`kubectl` Connection Issues**:
+  - Re-run the `configure_kubectl` command to ensure correct configuration.
+  - Verify AWS CLI is authenticated and has necessary permissions.
 
 ---
 
 ## Best Practices
 
-- **Version Control**: Keep your infrastructure code in version control (e.g., Git) but avoid committing sensitive information.
+- **Version Control**:
+  - Keep Terraform and Helm configurations in a version-controlled repository.
+  - Avoid committing sensitive information like passwords and certificates.
+
 - **Security**:
-  - Use AWS IAM roles and policies to grant the least privilege necessary.
-  - Securely manage secrets and sensitive data.
-- **Infrastructure Updates**: When making changes to the infrastructure, use `terraform plan` to review changes before applying.
-- **Monitoring and Logging**: Implement monitoring and logging to track the health of your application and infrastructure.
-- **Resource Cleanup**: Regularly review and clean up unused resources to minimize costs.
+  - Use AWS IAM roles with least privilege required for deployments.
+  - Rotate secrets and credentials regularly.
 
----
+- **Monitoring**:
+  - Implement monitoring and logging for Kubernetes and AWS resources to track performance and issues.
 
-## Conclusion
-
-By following this SOP, you have successfully deployed the OpenGovernance platform on AWS using Terraform for infrastructure provisioning and Helm for application deployment. You have configured access to your Kubernetes cluster using `kubectl` and installed the OpenGovernance application.
-
----
-
-**Remember**: Always adhere to your organization's security policies and best practices when deploying and managing infrastructure and applications.
+- **Infrastructure Management**:
+  - Use `terraform plan` to review changes before applying.
+  - Regularly update Terraform and Helm to the latest stable versions for security and feature improvements.
