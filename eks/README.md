@@ -220,13 +220,13 @@ To enable HTTPS, obtain an SSL/TLS certificate through AWS Certificate Manager (
 
 1. **Request an ACM Certificate:**
 
-   Replace `your.domain.com` with your actual domain name.
+   Replace `your.domain.com` with your actual domain name and `your-region` with the desired AWS region.
 
    ```sh
    aws acm request-certificate \
      --domain-name your.domain.com \
      --validation-method DNS \
-     --idempotency-token 12345 \
+     --idempotency-token deploy-2024 \
      --region your-region
    ```
 
@@ -346,7 +346,7 @@ Ensure all pods are running without issues.
 
 ### 8. Configure Kubernetes Ingress with HTTPS
 
-Set up the Kubernetes Ingress resource to use the ACM certificate for HTTPS.
+Set up the Kubernetes Ingress resource to use the ACM certificate for HTTPS without modifying the YAML file directly. Instead, use `kubectl` with a heredoc and environment variables.
 
 #### **A. Create the Ingress Resource Using Environment Variables**
 
@@ -552,3 +552,22 @@ Do you really want to destroy all resources?
 - **Infrastructure Management:**
   - Use `terraform plan` to review changes before applying.
   - Regularly update Terraform and Helm to the latest stable versions for security and feature improvements.
+
+---
+
+## Summary
+
+By following this SOP, you have successfully:
+
+- Cloned and configured Terraform infrastructure code.
+- Deployed AWS infrastructure, including an EKS cluster.
+- Obtained and applied an ACM certificate for HTTPS.
+- Configured `kubectl` to access your Kubernetes cluster.
+- Installed the OpenGovernance application using Helm.
+- Configured Kubernetes Ingress with HTTPS.
+- Updated DNS records to point your domain to the Load Balancer.
+- Accessed the OpenGovernance platform securely via HTTPS.
+
+---
+
+**Remember**: Always adhere to your organization's security policies and best practices when deploying and managing infrastructure and applications.
