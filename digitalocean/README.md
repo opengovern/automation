@@ -92,9 +92,9 @@ You can create a Kubernetes cluster on DigitalOcean using either the Web Interfa
 
    ```plaintext
    NAME                                         STATUS   ROLES    AGE   VERSION
-   opengovernance-main-pool-xxxxxxxx-xxxx       Ready    <none>   5m    v1.25.4-do.0
-   opengovernance-main-pool-xxxxxxxx-xxxx       Ready    <none>   5m    v1.25.4-do.0
-   opengovernance-main-pool-xxxxxxxx-xxxx       Ready    <none>   5m    v1.25.4-do.0
+   opengovernance-main-pool-xxxxxxxx-xxxx       Ready    <none>   5m    v1.30.1-do.0
+   opengovernance-main-pool-xxxxxxxx-xxxx       Ready    <none>   5m    v1.30.1-do.0
+   opengovernance-main-pool-xxxxxxxx-xxxx       Ready    <none>   5m    v1.30.1-do.0
    ```
 
 ## 2. Install App
