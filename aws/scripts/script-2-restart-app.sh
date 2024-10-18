@@ -59,34 +59,31 @@ get_ingress_details() {
     echo "Load Balancer DNS: $LB_DNS"
 }
 
-# Function to check CNAME resolution without dig
-check_cname_resolution() {
-    echo "Checking if CNAME for $DOMAIN is resolving correctly..."
+# Function to check DNS resolution without dig
+check_dns_resolution() {
+    echo "Checking if $DOMAIN is resolving correctly..."
 
     # Use nslookup if available, otherwise use host, otherwise use getent
     if command -v nslookup &> /dev/null; then
-        CNAME=$(nslookup "$DOMAIN" | awk '/canonical name = / {print $NF}' | sed 's/\.$//')
+        RESOLVED=$(nslookup "$DOMAIN" | awk '/name = / {print $NF}' | sed 's/\.$//')
     elif command -v host &> /dev/null; then
-        CNAME=$(host "$DOMAIN" | awk '/alias for / {print $NF}' | sed 's/\.$//')
+        RESOLVED=$(host "$DOMAIN" | awk '/alias for / {print $NF}' | sed 's/\.$//')
     elif command -v getent &> /dev/null; then
-        CNAME=$(getent hosts "$DOMAIN" | awk '{print $1}')
+        RESOLVED=$(getent hosts "$DOMAIN" | awk '{print $1}')
     else
         echo "Error: No suitable DNS resolution command found (nslookup, host, getent). Please install one."
         exit 1
     fi
 
-    if [[ -z "$CNAME" ]]; then
-        echo "Error: CNAME for $DOMAIN is not resolving correctly."
+    if [[ -z "$RESOLVED" ]]; then
+        echo "Error: $DOMAIN is not resolving correctly."
         exit 1
     fi
 
-    if [[ "$CNAME" != "$LB_DNS" ]]; then
-        echo "Error: CNAME for $DOMAIN does not match Load Balancer DNS."
-        echo "Expected: $LB_DNS, Found: $CNAME"
-        exit 1
-    fi
+    echo "$DOMAIN is resolving to: $RESOLVED"
 
-    echo "CNAME for $DOMAIN is correctly resolving to $CNAME"
+    # Inform about the resolution; avoid strict matching
+    echo "Ensure that $DOMAIN is correctly pointing to your Load Balancer or proxy service (e.g., Cloudflare)."
 }
 
 # Function to update Helm release
@@ -129,8 +126,8 @@ done
 # Step 1: Retrieve Ingress details
 get_ingress_details
 
-# Step 2: Check CNAME resolution
-check_cname_resolution
+# Step 2: Check DNS resolution
+check_dns_resolution
 
 # Step 3: Run Helm upgrade
 update_helm_release
