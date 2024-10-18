@@ -46,12 +46,21 @@ HELM_CHART="opengovernance/opengovernance"
 # Function to request a new ACM certificate
 request_certificate() {
     echo "Requesting a new ACM certificate for domain: $DOMAIN"
+    
+    # Option A: Replace hyphen with underscore
     REQUEST_OUTPUT=$(aws acm request-certificate \
         --domain-name "$DOMAIN" \
         --validation-method DNS \
-        --idempotency-token "deploy-$(date +%Y%m%d%H%M%S)" \
+        --idempotency-token "deploy_$(date +%Y%m%d%H%M%S)" \
         --region "$REGION")
-
+    
+    # Option B: Remove hyphen entirely
+    # REQUEST_OUTPUT=$(aws acm request-certificate \
+    #     --domain-name "$DOMAIN" \
+    #     --validation-method DNS \
+    #     --idempotency-token "deploy$(date +%Y%m%d%H%M%S)" \
+    #     --region "$REGION")
+    
     CERTIFICATE_ARN=$(echo "$REQUEST_OUTPUT" | jq -r '.CertificateArn')
     echo "Certificate ARN: $CERTIFICATE_ARN"
 }
@@ -220,7 +229,6 @@ else
         --output text)
 fi
 
-# At this point, CERTIFICATE_ARN should be set and valid
 # Proceed only if the certificate is issued
 # Note: If the certificate was pending validation, the script would have exited earlier
 
