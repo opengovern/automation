@@ -40,10 +40,10 @@ HELM_RELEASE="opengovernance"
 HELM_CHART="opengovernance/opengovernance"
 
 # Time between status checks (in seconds)
-CHECK_INTERVAL=60
-
-# Maximum number of checks (e.g., 60 checks = ~1 hour)
-MAX_CHECKS=60
+CHECK_INTERVAL_CERT=60      # For certificate status
+CHECK_INTERVAL_LB=20        # For Load Balancer DNS
+CHECK_COUNT_CERT=60        # Maximum number of certificate checks (~1 hour)
+CHECK_COUNT_LB=6            # Maximum number of Load Balancer DNS checks (~120 seconds)
 
 # -----------------------------
 # Function Definitions
@@ -60,7 +60,7 @@ request_certificate() {
         --idempotency-token "deploy_$(date +%Y%m%d%H%M%S)" \
         --region "$REGION")
 
-    # Option B: Remove hyphen entirely
+    # Option B: Remove hyphen entirely (Uncomment if preferred)
     # REQUEST_OUTPUT=$(aws acm request-certificate \
     #     --domain-name "$DOMAIN" \
     #     --validation-method DNS \
@@ -149,22 +149,31 @@ EOF
     echo "Ingress $INGRESS_NAME has been created/updated."
 }
 
-# Function to retrieve Load Balancer DNS Name
+# Function to retrieve Load Balancer DNS Name with polling
 get_load_balancer_dns() {
     echo "Retrieving Load Balancer DNS name..."
-    LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+    local attempt=1
+    while [[ $attempt -le $CHECK_COUNT_LB ]]; do
+        LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
-    if [[ -z "$LB_DNS" ]]; then
-        echo "Failed to retrieve Load Balancer DNS. It might not be available yet."
-        return 1
-    fi
+        if [[ -n "$LB_DNS" ]]; then
+            echo "Load Balancer DNS: $LB_DNS"
+            return 0
+        else
+            echo "Attempt $attempt/$CHECK_COUNT_LB: Load Balancer DNS not available yet. Waiting for $CHECK_INTERVAL_LB seconds..."
+            ((attempt++))
+            sleep "$CHECK_INTERVAL_LB"
+        fi
+    done
 
-    echo "Load Balancer DNS: $LB_DNS"
-    return 0
+    echo "Failed to retrieve Load Balancer DNS after $CHECK_COUNT_LB attempts."
+    echo "Please check your Kubernetes Ingress resource manually."
+    echo ""
+    return 1
 }
 
-# Function to prompt user to create CNAME records
-prompt_cname_creation() {
+# Function to prompt user to create CNAME records for certificate validation
+prompt_cname_validation_creation() {
     echo ""
     echo "==============================="
     echo "CNAME Record Creation Required"
@@ -193,6 +202,25 @@ prompt_cname_creation() {
     read -p "Press Enter to continue after creating the CNAME records..."
 }
 
+# Function to prompt user to create CNAME records for domain mapping
+prompt_cname_domain_creation() {
+    echo ""
+    echo "==============================="
+    echo "CNAME Record Creation Required"
+    echo "==============================="
+    echo "Please create the following CNAME record in your DNS provider to map your domain to the Load Balancer:"
+    echo ""
+
+    echo "Host/Name: $DOMAIN"
+    echo "Type: CNAME"
+    echo "Value/Points to: $LB_DNS"
+    echo "TTL: 300 (or default)"
+    echo ""
+
+    echo "After creating the CNAME record, your service should be accessible at https://$DOMAIN"
+    echo ""
+}
+
 # Function to wait for ACM certificate to be issued
 wait_for_certificate_issuance() {
     local arn=$1
@@ -200,22 +228,24 @@ wait_for_certificate_issuance() {
 
     echo "Starting to monitor the certificate status. This may take some time..."
 
-    while [[ $attempts -lt $MAX_CHECKS ]]; do
+    while [[ $attempts -lt $CHECK_COUNT_CERT ]]; do
         STATUS=$(check_certificate_status "$arn")
+        echo "Certificate Status: $STATUS"
+
         if [[ "$STATUS" == "ISSUED" ]]; then
             echo "Certificate is now ISSUED."
             return 0
         elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
-            echo "Certificate is still PENDING_VALIDATION. Waiting for $CHECK_INTERVAL seconds before retrying..."
+            echo "Certificate is still PENDING_VALIDATION. Waiting for $CHECK_INTERVAL_CERT seconds before retrying..."
             ((attempts++))
-            sleep "$CHECK_INTERVAL"
+            sleep "$CHECK_INTERVAL_CERT"
         else
             echo "Certificate status is '$STATUS'. Exiting."
             exit 1
         fi
     done
 
-    echo "Reached maximum number of checks ($MAX_CHECKS). Certificate was not issued within the expected time."
+    echo "Reached maximum number of checks ($CHECK_COUNT_CERT). Certificate was not issued within the expected time."
     exit 1
 }
 
@@ -242,7 +272,7 @@ if [[ -n "$CERTIFICATE_ARN" ]]; then
     elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
         echo "Existing ACM certificate is PENDING_VALIDATION."
         get_validation_records "$CERTIFICATE_ARN"
-        prompt_cname_creation
+        prompt_cname_validation_creation
         echo "Waiting for ACM certificate to be issued..."
         wait_for_certificate_issuance "$CERTIFICATE_ARN"
     else
@@ -265,7 +295,7 @@ else
 
     if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
         get_validation_records "$CERTIFICATE_ARN"
-        prompt_cname_creation
+        prompt_cname_validation_creation
         echo "Waiting for ACM certificate to be issued..."
         wait_for_certificate_issuance "$CERTIFICATE_ARN"
     elif [[ "$STATUS" == "ISSUED" ]]; then
@@ -281,11 +311,48 @@ fi
 # Step 3: Create or update Ingress
 create_ingress
 
-# Step 4: Retrieve Load Balancer DNS
-if get_load_balancer_dns; then
-    :
-else
-    echo "Load Balancer DNS not available yet. Proceeding without it."
+# Step 4: Retrieve Load Balancer DNS with polling
+echo "Ingress Creation Completed Successfully!"
+echo "Your service should now be accessible at https://$DOMAIN once all validations are complete."
+echo "Next, run 'update-application.sh' to update the Helm release and restart services."
+echo "======================================="
+
+# Check Load Balancer DNS every 20 seconds for up to 120 seconds
+attempt=1
+max_attempts=6
+interval=20
+
+while [[ $attempt -le $max_attempts ]]; do
+    echo "Checking if Load Balancer DNS is available (Attempt $attempt/$max_attempts)..."
+    LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
+    if [[ -n "$LB_DNS" ]]; then
+        echo "Load Balancer DNS is available: $LB_DNS"
+        echo ""
+        echo "==============================="
+        echo "CNAME Record Creation Required"
+        echo "==============================="
+        echo "Please create the following CNAME record in your DNS provider to map your domain to the Load Balancer:"
+        echo ""
+        echo "Host/Name: $DOMAIN"
+        echo "Type: CNAME"
+        echo "Value/Points to: $LB_DNS"
+        echo "TTL: 300 (or default)"
+        echo ""
+        echo "After creating the CNAME record, your service should be accessible at https://$DOMAIN"
+        echo ""
+        break
+    else
+        echo "Load Balancer DNS not available yet. Waiting for $interval seconds before retrying..."
+        ((attempt++))
+        sleep "$interval"
+    fi
+done
+
+if [[ -z "$LB_DNS" ]]; then
+    echo "Load Balancer DNS was not available after $max_attempts attempts."
+    echo "Please check your Kubernetes Ingress resource manually and ensure the Load Balancer is provisioned correctly."
+    echo ""
 fi
 
 # Step 5: Save necessary details for update-application.sh
@@ -301,11 +368,4 @@ HELM_CHART="${HELM_CHART}"
 EOF
 
 echo "Details saved to 'ingress_details.env'."
-
-echo ""
-echo "======================================="
-echo "Ingress Creation Completed Successfully!"
-echo "======================================="
-echo "Your service should now be accessible at https://$DOMAIN once all validations are complete."
-echo "Next, run 'update-application.sh' to update the Helm release and restart services."
-echo "======================================="
+echo "Next, run 'script-2-restart-app.sh' to update the Helm release and restart services."
