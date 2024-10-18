@@ -6,11 +6,30 @@ set -euo pipefail
 # Configuration Variables
 # -----------------------------
 
-# Set your desired domain name
-DOMAIN="demo.opengovernance.io"
+# Retrieve the domain name from an external source (environment variable or argument)
+# Priority: Command-line argument > Environment variable > Prompt the user
+if [[ $# -ge 1 ]]; then
+    DOMAIN="$1"
+elif [[ -n "${DOMAIN:-}" ]]; then
+    DOMAIN="$DOMAIN"
+else
+    read -p "Enter the domain name (e.g., demo.opengovernance.io): " DOMAIN
+    if [[ -z "$DOMAIN" ]]; then
+        echo "Error: DOMAIN is not set. Please provide a domain name."
+        exit 1
+    fi
+fi
 
-# AWS region where ACM certificate is managed
-REGION="us-east-1"
+# Determine AWS region from AWS CLI configuration
+REGION=$(aws configure get region)
+
+if [[ -z "$REGION" ]]; then
+    echo "Error: AWS region is not set in your AWS CLI configuration."
+    echo "Please configure it using 'aws configure' or set the AWS_REGION environment variable."
+    exit 1
+fi
+
+echo "Using AWS Region: $REGION"
 
 # Kubernetes namespace and Ingress name
 NAMESPACE="opengovernance"
@@ -32,7 +51,7 @@ request_certificate() {
         --validation-method DNS \
         --idempotency-token "deploy-$(date +%Y%m%d%H%M%S)" \
         --region "$REGION")
-    
+
     CERTIFICATE_ARN=$(echo "$REQUEST_OUTPUT" | jq -r '.CertificateArn')
     echo "Certificate ARN: $CERTIFICATE_ARN"
 }
@@ -44,7 +63,7 @@ get_certificate_arn() {
         --region "$REGION" \
         --query "CertificateSummaryList[?DomainName=='$DOMAIN'].CertificateArn" \
         --output text)
-    
+
     if [[ -z "$CERTIFICATE_ARN" ]]; then
         echo "No existing ACM certificate found for domain: $DOMAIN"
         CERTIFICATE_ARN=""
@@ -61,9 +80,9 @@ check_certificate_status() {
         --region "$REGION" \
         --query "Certificate.Status" \
         --output text)
-    
+
     echo "Certificate Status: $STATUS"
-    
+
     if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
         echo "Certificate is pending validation."
         get_validation_records "$arn"
@@ -85,7 +104,7 @@ get_validation_records() {
         --region "$REGION" \
         --query "Certificate.DomainValidationOptions[].ResourceRecord" \
         --output json)
-    
+
     echo "Validation Records:"
     echo "$VALIDATION_RECORDS" | jq
     echo ""
@@ -95,7 +114,7 @@ get_validation_records() {
 # Function to create Ingress
 create_ingress() {
     echo "Creating or updating Kubernetes Ingress: $INGRESS_NAME in namespace: $NAMESPACE"
-    
+
     kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -131,12 +150,12 @@ EOF
 get_load_balancer_dns() {
     echo "Retrieving Load Balancer DNS name..."
     LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-    
+
     if [[ -z "$LB_DNS" ]]; then
         echo "Failed to retrieve Load Balancer DNS. It might not be available yet."
         exit 1
     fi
-    
+
     echo "Load Balancer DNS: $LB_DNS"
 }
 
@@ -147,9 +166,9 @@ prompt_cname_creation() {
     echo "CNAME Record Creation Required"
     echo "==============================="
     echo "Please create a CNAME record in your DNS provider with the following details:"
-    echo "Host/Name: $DOMAIN"
+    echo "Host/Name: ${DOMAIN}"
     echo "Type: CNAME"
-    echo "Value/Points to: $LB_DNS"
+    echo "Value/Points to: ${LB_DNS}"
     echo "TTL: 300 (or default)"
     echo ""
     echo "After creating the CNAME record, please wait for DNS propagation to complete."
@@ -163,7 +182,9 @@ verify_dns_propagation() {
     while true; do
         # Attempt to resolve the CNAME
         RESOLVED=$(dig +short CNAME "$DOMAIN" @8.8.8.8)
-        if [[ "$RESOLVED" == "$LB_DNS." ]]; then
+        # Remove trailing dot from LB_DNS if present
+        CLEAN_LB_DNS="${LB_DNS%.}"
+        if [[ "$RESOLVED" == "$CLEAN_LB_DNS" ]]; then
             echo "CNAME record successfully propagated."
             break
         else
