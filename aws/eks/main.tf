@@ -91,11 +91,7 @@
      # Use the Key ID (not ARN)
      ebs_kms_key_id = module.ebs_kms_key.key_id
 
-     # Local variable to safely extract the ALB DNS name
-     opengovernance_alb_dns = try(
-    data.kubernetes_ingress_v1.opengovernance_ingress_status.status[0].load_balancer[0].ingress[0].hostname,
-    ""
-  )
+
    }
 
    ################################################################################
