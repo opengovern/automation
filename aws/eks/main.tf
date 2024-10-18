@@ -3,7 +3,8 @@
    ################################################################################
 
    provider "aws" {
-  region = var.region != "" ? var.region : lookup(env, "AWS_REGION", "us-east-1")
+    region = var.region != "" ? var.region : (try(env.AWS_REGION, "us-east-1"))
+
 }
 
    provider "kubernetes" {
