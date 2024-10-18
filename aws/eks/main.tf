@@ -3,8 +3,8 @@
    ################################################################################
 
    provider "aws" {
-     region = var.region
-   }
+  region = var.region != "" ? var.region : lookup(env, "AWS_REGION", "us-east-1")
+}
 
    provider "kubernetes" {
      host                   = module.eks.cluster_endpoint
@@ -285,135 +285,12 @@
      tags = local.tags
    }
 
-   ################################################################################
-   # Kubernetes Namespace
-   ################################################################################
+  
 
-   resource "kubernetes_namespace" "opengovernance" {
-     metadata {
-       name = "opengovernance"
-     }
 
-     depends_on = [
-       module.eks_blueprints_addons  # Ensure this runs after the EKS blueprints addons
-     ]
-   }
 
-   ################################################################################
-   # Kubernetes Ingress
-   ################################################################################
 
-   resource "kubernetes_ingress_v1" "opengovernance_ingress" {
-     metadata {
-       name      = "opengovernance-ingress"
-       namespace = kubernetes_namespace.opengovernance.metadata[0].name
-       annotations = {
-         "alb.ingress.kubernetes.io/scheme"               = "internet-facing"
-         "alb.ingress.kubernetes.io/target-type"          = "ip"
-         "alb.ingress.kubernetes.io/backend-protocol"     = "HTTP"
-         "alb.ingress.kubernetes.io/listen-ports"         = "[{\"HTTP\": 80}]"
-         "kubernetes.io/ingress.class"                    = "alb"
-         "alb.ingress.kubernetes.io/name"                 = "opengovernance-alb"
-       }
-     }
 
-     spec {
-       ingress_class_name = "alb"
-       rule {
-         http {
-           path {
-             path      = "/"
-             path_type = "Prefix"
-             backend {
-               service {
-                 name = "nginx-proxy" // Replace with the actual service name if different
-                 port {
-                   number = 80
-                 }
-               }
-             }
-           }
-         }
-       }
-     }
-
-     depends_on = [
-       kubernetes_namespace.opengovernance
-     ]
-   }
-
-   ################################################################################
-   # Wait for ALB to be Ready
-   ################################################################################
-
-   resource "null_resource" "wait_for_alb" {
-     depends_on = [
-       kubernetes_ingress_v1.opengovernance_ingress
-     ]
-
-     provisioner "local-exec" {
-       command = <<EOT
-         SECONDS=0
-         TIMEOUT=600 # 10 minutes
-         while [ -z "$(kubectl get ingress opengovernance-ingress -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')" ]; do
-           if [ $SECONDS -ge $TIMEOUT ]; then
-             echo "Timed out waiting for the ALB address to be available."
-             exit 1
-           fi
-           echo "Waiting for the ALB address to be available..."
-           sleep 10
-         done
-         echo "ALB address is now available."
-       EOT
-     }
-   }
-
-   ################################################################################
-   # Capture the Load Balancer's DNS name
-   ################################################################################
-
-   data "kubernetes_ingress_v1" "opengovernance_ingress_status" {
-     metadata {
-    name      = "opengovernance-ingress"
-    namespace = "opengovernance"
-  }
-
-     depends_on = [
-       null_resource.wait_for_alb
-     ]
-   }
-
-   ################################################################################
-   # OpenGovernance Helm Release
-   ################################################################################
-
-   resource "helm_release" "open_governance" {
-     name       = "open-governance"
-     namespace  = "opengovernance"
-     repository = "https://kaytu-io.github.io/kaytu-charts"
-     chart      = "open-governance"
-     version    = "0.1.95"
-
-     set {
-       name  = "global.domain"
-       value = local.opengovernance_alb_dns
-     }
-
-     set {
-       name  = "dex.config.issuer"
-       value = "http://${local.opengovernance_alb_dns}/dex"
-     }
-
-     timeout = 750
-
-     depends_on = [
-       kubernetes_ingress_v1.opengovernance_ingress,  # Ensure Ingress is created first
-       kubernetes_storage_class_v1.gp3, 
-       module.eks, 
-       module.ebs_csi_driver_irsa,
-       data.kubernetes_ingress_v1.opengovernance_ingress_status  # Ensure Ingress status is ready
-     ]
-   }
 
    ################################################################################
    # Storage Classes
@@ -509,10 +386,7 @@
    # Outputs
    ################################################################################
 
-   output "opengovernance_lb_dns_name" {
-     value       = local.opengovernance_alb_dns
-     description = "The DNS name of the Load Balancer created by the Ingress."
-   }
+
 
    output "vpc_id" {
      description = "The ID of the VPC"
@@ -529,10 +403,8 @@
      value       = length(aws_db_instance.postgresql) > 0 ? aws_db_instance.postgresql[0].endpoint : null
    }
 
-   # Debug Output (Optional)
-   output "kms_key_id_debug" {
-     description = "Debugging output for KMS Key ID"
-     value       = local.ebs_kms_key_id
-     sensitive   = true
-   }
 
+output "configure_kubectl" {
+  description = "Configure kubectl: make sure you're logged in with the correct AWS profile and run the following command to update your kubeconfig"
+  value       = "aws eks --region ${var.region} update-kubeconfig --name ${module.eks.cluster_name}"
+}
