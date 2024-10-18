@@ -20,9 +20,17 @@ else
     fi
 fi
 
-# Determine AWS region from AWS CLI configuration
-REGION=$(terraform output -raw aws_region 2>/dev/null); [ -z "$REGION" ] && REGION=$(aws configure get region); echo "AWS Region: $REGION"
+REGION=$( (cd .. && terraform output -raw aws_region) 2>/dev/null )
 
+# Fallback to AWS CLI configuration if REGION is empty
+if [ -z "$REGION" ]; then
+  REGION=$(aws configure get region)
+fi
+
+# Verify the extracted region
+echo "AWS Region: $REGION"
+
+# Exit if REGION is still empty
 
 if [[ -z "$REGION" ]]; then
     echo "Error: AWS region is not set in your AWS CLI configuration."
