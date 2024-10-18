@@ -52,21 +52,21 @@ MAX_CHECKS=60
 # Function to request a new ACM certificate
 request_certificate() {
     echo "Requesting a new ACM certificate for domain: $DOMAIN"
-    
+
     # Option A: Replace hyphen with underscore
     REQUEST_OUTPUT=$(aws acm request-certificate \
         --domain-name "$DOMAIN" \
         --validation-method DNS \
         --idempotency-token "deploy_$(date +%Y%m%d%H%M%S)" \
         --region "$REGION")
-    
+
     # Option B: Remove hyphen entirely
     # REQUEST_OUTPUT=$(aws acm request-certificate \
     #     --domain-name "$DOMAIN" \
     #     --validation-method DNS \
     #     --idempotency-token "deploy$(date +%Y%m%d%H%M%S)" \
     #     --region "$REGION")
-    
+
     CERTIFICATE_ARN=$(echo "$REQUEST_OUTPUT" | jq -r '.CertificateArn')
     echo "Certificate ARN: $CERTIFICATE_ARN"
 }
@@ -191,6 +191,8 @@ prompt_cname_creation() {
 wait_for_certificate_issuance() {
     local arn=$1
     local attempts=0
+
+    echo "Starting to monitor the certificate status. This may take some time..."
 
     while [[ $attempts -lt $MAX_CHECKS ]]; do
         STATUS=$(check_certificate_status "$arn")
