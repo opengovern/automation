@@ -6,53 +6,50 @@ set -euo pipefail
 # Configuration Variables
 # -----------------------------
 
+# Default flag for HTTP-only setup
+HTTP_ONLY=0
+
 # Retrieve the domain name from an external source (environment variable or argument)
 # Priority: Command-line argument > Environment variable > Prompt the user
 if [[ $# -ge 1 ]]; then
     DOMAIN="$1"
-elif [[ -n "${DOMAIN:-}" ]]; then
-    DOMAIN="$DOMAIN"
+    shift
 else
-    read -p "Enter the domain name (e.g., demo.opengovernance.io): " DOMAIN
-    if [[ -z "$DOMAIN" ]]; then
-        echo "Error: DOMAIN is not set. Please provide a domain name."
-        exit 1
+    if [[ -n "${DOMAIN:-}" ]]; then
+        DOMAIN="$DOMAIN"
+    else
+        read -p "Enter the domain name (e.g., demo.opengovernance.io): " DOMAIN
+        if [[ -z "$DOMAIN" ]]; then
+            echo "Error: DOMAIN is not set. Please provide a domain name."
+            exit 1
+        fi
     fi
 fi
 
+# Parse optional flags
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --http-only)
+            HTTP_ONLY=1
+            echo "Configuring Ingress for HTTP only. HTTPS will not be enabled."
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [DOMAIN] [--http-only]"
+            exit 1
+            ;;
+    esac
+done
+
 # Define the path to your Terraform state files
 TERRAFORM_STATE_DIR="../eks"
-
-# Check if terraform exists and retrieve the region, fallback to AWS CLI if terraform is not available
-if command -v terraform &>/dev/null; then
-    REGION=$( (cd "$TERRAFORM_STATE_DIR" && terraform output -raw aws_region) 2>/dev/null || true)
-else
-    echo "Terraform is not installed or not found. Falling back to AWS CLI."
-    REGION=""
-fi
-
-# Fallback to AWS CLI configuration if REGION is empty
-if [[ -z "$REGION" ]]; then
-  REGION=$(aws configure get region)
-fi
-
-# Verify the extracted region
-echo "AWS Region: $REGION"
-
-# Exit if REGION is still empty
-if [[ -z "$REGION" ]]; then
-    echo "Error: AWS region is not set in your AWS CLI configuration."
-    echo "Please configure it using 'aws configure' or set the AWS_REGION environment variable."
-    exit 1
-fi
-
-echo "Using AWS Region: $REGION"
 
 # Kubernetes namespace and Ingress name
 NAMESPACE="opengovernance"
 INGRESS_NAME="opengovernance-ingress"
 
-# Helm release name and chart repository (used in update-application.sh)
+# Helm release name and chart repository (used in script-2-restart-app.sh)
 HELM_RELEASE="opengovernance"
 HELM_CHART="opengovernance/opengovernance"
 
@@ -62,10 +59,18 @@ CHECK_INTERVAL_LB=20        # For Load Balancer DNS
 CHECK_COUNT_CERT=60         # Maximum number of certificate checks (~1 hour)
 CHECK_COUNT_LB=6            # Maximum number of Load Balancer DNS checks (~120 seconds)
 
-
 # -----------------------------
 # Function Definitions
 # -----------------------------
+
+# Function to check if a command exists
+check_command() {
+    local cmd=$1
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "Error: Required command '$cmd' is not installed."
+        exit 1
+    fi
+}
 
 # Function to request a new ACM certificate
 request_certificate() {
@@ -136,7 +141,37 @@ get_validation_records() {
 create_ingress() {
     echo "Creating or updating Kubernetes Ingress: $INGRESS_NAME in namespace: $NAMESPACE"
 
-    kubectl apply -f - <<EOF
+    if [[ $HTTP_ONLY -eq 1 ]]; then
+        # HTTP Only Configuration
+        kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: $NAMESPACE
+  name: $INGRESS_NAME
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    kubernetes.io/ingress.class: alb
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "$DOMAIN"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy  # Replace with your actual service name if different
+                port:
+                  number: 80
+EOF
+    else
+        # HTTPS Enabled Configuration
+        kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -163,6 +198,7 @@ spec:
                 port:
                   number: 80
 EOF
+    fi
 
     echo "Ingress $INGRESS_NAME has been created/updated."
 }
@@ -272,116 +308,129 @@ wait_for_certificate_issuance() {
 # -----------------------------
 
 # Ensure required tools are installed
-for cmd in aws jq kubectl dig; do
-    if ! command -v "$cmd" &> /dev/null; then
-        echo "Error: Required command '$cmd' is not installed."
-        exit 1
-    fi
+for cmd in aws jq kubectl; do
+    check_command "$cmd"
 done
 
-# Step 1: Check if ACM Certificate exists and its status
-get_certificate_arn
-
-if [[ -n "$CERTIFICATE_ARN" ]]; then
-    STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
-    echo "Certificate Status: $STATUS"
-    if [[ "$STATUS" == "ISSUED" ]]; then
-        echo "Existing ACM certificate is ISSUED. Proceeding to create/update Ingress."
-    elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
-        echo "Existing ACM certificate is PENDING_VALIDATION."
-        get_validation_records "$CERTIFICATE_ARN"
-        prompt_cname_validation_creation
-        echo "Waiting for ACM certificate to be issued..."
-        wait_for_certificate_issuance "$CERTIFICATE_ARN"
-    else
-        echo "Certificate status is '$STATUS'. Exiting."
-        exit 1
-    fi
+# Check if terraform exists and retrieve the region, fallback to AWS CLI if terraform is not available
+if command -v terraform &>/dev/null; then
+    echo "Terraform found. Retrieving AWS region from Terraform outputs..."
+    REGION=$( (cd "$TERRAFORM_STATE_DIR" && terraform output -raw aws_region) 2>/dev/null || true)
 else
-    # Step 2: Create ACM Certificate
-    request_certificate
-    # Retrieve the ARN again if necessary
-    get_certificate_arn
-
-    if [[ -z "$CERTIFICATE_ARN" ]]; then
-        echo "Error: Failed to retrieve Certificate ARN after requesting."
-        exit 1
-    fi
-
-    STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
-    echo "Certificate Status: $STATUS"
-
-    if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
-        get_validation_records "$CERTIFICATE_ARN"
-        prompt_cname_validation_creation
-        echo "Waiting for ACM certificate to be issued..."
-        wait_for_certificate_issuance "$CERTIFICATE_ARN"
-    elif [[ "$STATUS" == "ISSUED" ]]; then
-        echo "Certificate is already ISSUED."
-    else
-        echo "Certificate status is '$STATUS'. Exiting."
-        exit 1
-    fi
+    echo "Terraform is not installed or not found. Falling back to AWS CLI."
+    REGION=""
 fi
 
-# At this point, the certificate is ISSUED. Proceed to create/update Ingress.
+# Fallback to AWS CLI configuration if REGION is empty
+if [[ -z "$REGION" ]]; then
+    echo "Retrieving AWS region from AWS CLI configuration..."
+    REGION=$(aws configure get region)
+fi
+
+# Verify the extracted region
+if [[ -z "$REGION" ]]; then
+    echo "Error: AWS region is not set in your Terraform outputs or AWS CLI configuration."
+    echo "Please configure it using 'terraform apply' or 'aws configure', or set the AWS_REGION environment variable."
+    exit 1
+fi
+
+echo "Using AWS Region: $REGION"
+
+# Step 1: Check if ACM Certificate exists and its status (only if not HTTP only)
+if [[ $HTTP_ONLY -eq 0 ]]; then
+    get_certificate_arn
+
+    if [[ -n "$CERTIFICATE_ARN" ]]; then
+        STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
+        echo "Certificate Status: $STATUS"
+        if [[ "$STATUS" == "ISSUED" ]]; then
+            echo "Existing ACM certificate is ISSUED. Proceeding to create/update Ingress."
+        elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
+            echo "Existing ACM certificate is PENDING_VALIDATION."
+            get_validation_records "$CERTIFICATE_ARN"
+            prompt_cname_validation_creation
+            echo "Waiting for ACM certificate to be issued..."
+            wait_for_certificate_issuance "$CERTIFICATE_ARN"
+        else
+            echo "Certificate status is '$STATUS'. Exiting."
+            exit 1
+        fi
+    else
+        # Step 2: Create ACM Certificate
+        request_certificate
+        # Retrieve the ARN again if necessary
+        get_certificate_arn
+
+        if [[ -z "$CERTIFICATE_ARN" ]]; then
+            echo "Error: Failed to retrieve Certificate ARN after requesting."
+            exit 1
+        fi
+
+        STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
+        echo "Certificate Status: $STATUS"
+
+        if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
+            get_validation_records "$CERTIFICATE_ARN"
+            prompt_cname_validation_creation
+            echo "Waiting for ACM certificate to be issued..."
+            wait_for_certificate_issuance "$CERTIFICATE_ARN"
+        elif [[ "$STATUS" == "ISSUED" ]]; then
+            echo "Certificate is already ISSUED."
+        else
+            echo "Certificate status is '$STATUS'. Exiting."
+            exit 1
+        fi
+    fi
+else
+    echo "Configuring Ingress for HTTP only. Skipping ACM certificate creation and validation."
+fi
 
 # Step 3: Create or update Ingress
 create_ingress
 
-# Step 4: Retrieve Load Balancer DNS with polling
-echo "Ingress Creation Completed Successfully!"
-echo "Your service should now be accessible at https://$DOMAIN once all validations are complete."
-echo "Next, run 'update-application.sh' to update the Helm release and restart services."
-echo "======================================="
+# Step 4: Retrieve Load Balancer DNS with polling (only if HTTPS is enabled)
+if [[ $HTTP_ONLY -eq 0 ]]; then
+    echo "Ingress Creation Completed Successfully!"
+    echo "Your service should now be accessible at https://$DOMAIN once all validations are complete."
+    echo "Next, run 'script-2-restart-app.sh' to update the Helm release and restart services."
+    echo "======================================="
 
-# Check Load Balancer DNS every 20 seconds for up to 120 seconds
-attempt=1
-max_attempts=6
-interval=20
+    # Check Load Balancer DNS every 20 seconds for up to 120 seconds
+    attempt=1
+    max_attempts=6
+    interval=20
 
-while [[ $attempt -le $max_attempts ]]; do
-    echo "Checking if Load Balancer DNS is available (Attempt $attempt/$max_attempts)..."
-    LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+    while [[ $attempt -le $max_attempts ]]; do
+        echo "Checking if Load Balancer DNS is available (Attempt $attempt/$max_attempts)..."
+        LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
-    if [[ -n "$LB_DNS" ]]; then
-        echo "Load Balancer DNS is available: $LB_DNS"
+        if [[ -n "$LB_DNS" ]]; then
+            echo "Load Balancer DNS is available: $LB_DNS"
+            echo ""
+            echo "==============================="
+            echo "CNAME Record Creation Required"
+            echo "==============================="
+            echo "Please create the following CNAME record in your DNS provider to map your domain to the Load Balancer:"
+            echo ""
+            echo "Host/Name: $DOMAIN"
+            echo "Type: CNAME"
+            echo "Value/Points to: $LB_DNS"
+            echo "TTL: 300 (or default)"
+            echo ""
+            break
+        else
+            echo "Load Balancer DNS not available yet. Waiting for $interval seconds before retrying..."
+            ((attempt++))
+            sleep "$interval"
+        fi
+    done
+
+    if [[ -z "$LB_DNS" ]]; then
+        echo "Load Balancer DNS was not available after $max_attempts attempts."
+        echo "Please check your Kubernetes Ingress resource manually and ensure the Load Balancer is provisioned correctly."
         echo ""
-        echo "==============================="
-        echo "CNAME Record Creation Required"
-        echo "==============================="
-        echo "Please create the following CNAME record in your DNS provider to map your domain to the Load Balancer:"
-        echo ""
-        echo "Host/Name: $DOMAIN"
-        echo "Type: CNAME"
-        echo "Value/Points to: $LB_DNS"
-        echo "TTL: 300 (or default)"
-        echo ""
-        break
-    else
-        echo "Load Balancer DNS not available yet. Waiting for $interval seconds before retrying..."
-        ((attempt++))
-        sleep "$interval"
     fi
-done
-
-if [[ -z "$LB_DNS" ]]; then
-    echo "Load Balancer DNS was not available after $max_attempts attempts."
-    echo "Please check your Kubernetes Ingress resource manually and ensure the Load Balancer is provisioned correctly."
-    echo ""
 fi
 
-# Step 5: Save necessary details for update-application.sh
-echo "Saving Certificate ARN and Load Balancer DNS to 'ingress_details.env'..."
-cat <<EOF > ingress_details.env
-DOMAIN="${DOMAIN}"
-CERTIFICATE_ARN="${CERTIFICATE_ARN}"
-LB_DNS="${LB_DNS:-}"
-NAMESPACE="${NAMESPACE}"
-INGRESS_NAME="${INGRESS_NAME}"
-HELM_RELEASE="${HELM_RELEASE}"
-HELM_CHART="${HELM_CHART}"
-EOF
 
-echo "Details saved to 'ingress_details.env'."
-echo "Next, run 'script-2-restart-app.sh' to update the Helm release and restart services."
+echo "Next, run 'script-2-update-app.sh' to update the Helm release and restart services."
