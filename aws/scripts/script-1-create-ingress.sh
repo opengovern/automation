@@ -39,6 +39,12 @@ INGRESS_NAME="opengovernance-ingress"
 HELM_RELEASE="opengovernance"
 HELM_CHART="opengovernance/opengovernance"
 
+# Time between status checks (in seconds)
+CHECK_INTERVAL=60
+
+# Maximum number of checks (e.g., 60 checks = ~1 hour)
+MAX_CHECKS=60
+
 # -----------------------------
 # Function Definitions
 # -----------------------------
@@ -92,16 +98,7 @@ check_certificate_status() {
 
     echo "Certificate Status: $STATUS"
 
-    if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
-        echo "Certificate is pending validation."
-        get_validation_records "$arn"
-        exit 0
-    elif [[ "$STATUS" != "ISSUED" ]]; then
-        echo "Certificate status is '$STATUS'. Exiting."
-        exit 1
-    else
-        echo "Certificate is valid and issued."
-    fi
+    echo "$STATUS"
 }
 
 # Function to get DNS validation records
@@ -162,10 +159,11 @@ get_load_balancer_dns() {
 
     if [[ -z "$LB_DNS" ]]; then
         echo "Failed to retrieve Load Balancer DNS. It might not be available yet."
-        exit 1
+        return 1
     fi
 
     echo "Load Balancer DNS: $LB_DNS"
+    return 0
 }
 
 # Function to prompt user to create CNAME record
@@ -175,32 +173,42 @@ prompt_cname_creation() {
     echo "CNAME Record Creation Required"
     echo "==============================="
     echo "Please create a CNAME record in your DNS provider with the following details:"
-    echo "Host/Name: ${DOMAIN}"
+
+    # Extract CNAME details using jq
+    CNAME_HOST=$(echo "$VALIDATION_RECORDS" | jq -r '.[0].Name')
+    CNAME_VALUE=$(echo "$VALIDATION_RECORDS" | jq -r '.[0].Value')
+
+    echo "Host/Name: $CNAME_HOST"
     echo "Type: CNAME"
-    echo "Value/Points to: ${LB_DNS}"
+    echo "Value/Points to: $CNAME_VALUE"
     echo "TTL: 300 (or default)"
     echo ""
     echo "After creating the CNAME record, please wait for DNS propagation to complete."
-    echo "You can use tools like DNS Checker to verify the propagation."
-    read -p "Press Enter to continue after creating the CNAME record..."
+    echo "You can use tools like [DNS Checker](https://dnschecker.org/) to verify the propagation."
 }
 
-# Function to verify DNS propagation
-verify_dns_propagation() {
-    echo "Verifying DNS propagation for CNAME record..."
-    while true; do
-        # Attempt to resolve the CNAME
-        RESOLVED=$(dig +short CNAME "$DOMAIN" @8.8.8.8)
-        # Remove trailing dot from LB_DNS if present
-        CLEAN_LB_DNS="${LB_DNS%.}"
-        if [[ "$RESOLVED" == "$CLEAN_LB_DNS" ]]; then
-            echo "CNAME record successfully propagated."
-            break
+# Function to wait for ACM certificate to be issued
+wait_for_certificate_issuance() {
+    local arn=$1
+    local attempts=0
+
+    while [[ $attempts -lt $MAX_CHECKS ]]; do
+        STATUS=$(check_certificate_status "$arn")
+        if [[ "$STATUS" == "ISSUED" ]]; then
+            echo "Certificate is now ISSUED."
+            return 0
+        elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
+            echo "Certificate is still PENDING_VALIDATION. Waiting for $CHECK_INTERVAL seconds before retrying..."
+            ((attempts++))
+            sleep "$CHECK_INTERVAL"
         else
-            echo "CNAME record not propagated yet. Retrying in 30 seconds..."
-            sleep 30
+            echo "Certificate status is '$STATUS'. Exiting."
+            exit 1
         fi
     done
+
+    echo "Reached maximum number of checks ($MAX_CHECKS). Certificate was not issued within the expected time."
+    exit 1
 }
 
 # -----------------------------
@@ -219,43 +227,63 @@ done
 get_certificate_arn
 
 if [[ -n "$CERTIFICATE_ARN" ]]; then
-    check_certificate_status "$CERTIFICATE_ARN"
+    STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
+    if [[ "$STATUS" == "ISSUED" ]]; then
+        echo "Existing ACM certificate is ISSUED. Proceeding to create/update Ingress."
+    elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
+        echo "Existing ACM certificate is PENDING_VALIDATION."
+        get_validation_records "$CERTIFICATE_ARN"
+        prompt_cname_creation
+        echo "Waiting for ACM certificate to be issued..."
+        wait_for_certificate_issuance "$CERTIFICATE_ARN"
+    else
+        echo "Certificate status is '$STATUS'. Exiting."
+        exit 1
+    fi
 else
     # Step 2: Create ACM Certificate
     request_certificate
-    CERTIFICATE_ARN=$(aws acm list-certificates \
-        --region "$REGION" \
-        --query "CertificateSummaryList[?DomainName=='$DOMAIN'].CertificateArn" \
-        --output text)
+    # Retrieve the ARN again if necessary
+    get_certificate_arn
+
+    if [[ -z "$CERTIFICATE_ARN" ]]; then
+        echo "Error: Failed to retrieve Certificate ARN after requesting."
+        exit 1
+    fi
+
+    STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
+
+    if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
+        get_validation_records "$CERTIFICATE_ARN"
+        prompt_cname_creation
+        echo "Waiting for ACM certificate to be issued..."
+        wait_for_certificate_issuance "$CERTIFICATE_ARN"
+    elif [[ "$STATUS" == "ISSUED" ]]; then
+        echo "Certificate is already ISSUED."
+    else
+        echo "Certificate status is '$STATUS'. Exiting."
+        exit 1
+    fi
 fi
 
-# Proceed only if the certificate is issued
-# Note: If the certificate was pending validation, the script would have exited earlier
+# At this point, the certificate is ISSUED. Proceed to create/update Ingress.
 
-# Step 3: Load the Certificate ARN (already loaded as CERTIFICATE_ARN)
-
-# Step 4: Create or update Ingress
+# Step 3: Create or update Ingress
 create_ingress
 
-# Ensure Ingress creation is complete by checking the Load Balancer DNS
-get_load_balancer_dns
+# Step 4: Retrieve Load Balancer DNS
+if get_load_balancer_dns; then
+    :
+else
+    echo "Load Balancer DNS not available yet. Proceeding without it."
+fi
 
-# Step 5: Create DNS CNAME records
-prompt_cname_creation
-
-# Optionally verify DNS propagation automatically
-verify_dns_propagation
-
-# --------------------------------
-# Save necessary details for update-application.sh
-# --------------------------------
-
-# Export variables to a file for the next script
+# Step 5: Save necessary details for update-application.sh
 echo "Saving Certificate ARN and Load Balancer DNS to 'ingress_details.env'..."
 cat <<EOF > ingress_details.env
 DOMAIN="${DOMAIN}"
 CERTIFICATE_ARN="${CERTIFICATE_ARN}"
-LB_DNS="${LB_DNS}"
+LB_DNS="${LB_DNS:-}"
 NAMESPACE="${NAMESPACE}"
 INGRESS_NAME="${INGRESS_NAME}"
 HELM_RELEASE="${HELM_RELEASE}"
