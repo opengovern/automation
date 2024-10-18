@@ -44,6 +44,9 @@
      }
    }
 
+   data "aws_region" "current" {
+}
+
    data "aws_rds_engine_version" "postgresql" {
      engine             = "postgres"
      preferred_versions = ["15.5", "15.4", "15.3", "15.2", "15.1"]
