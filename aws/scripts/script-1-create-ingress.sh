@@ -301,3 +301,4 @@ echo "======================================="
 echo "Your service should now be accessible at https://$DOMAIN once all validations are complete."
 echo "Next, run 'update-application.sh' to update the Helm release and restart services."
 echo "======================================="
+```
