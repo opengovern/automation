@@ -95,16 +95,62 @@ check_dns_resolution() {
         RESOLVED=$(getent hosts "$DOMAIN" | awk '{print $1}')
     else
         echo "Error: No suitable DNS resolution command found (nslookup, host, getent). Please install one."
-        exit 1
+        return 1
     fi
 
     if [[ -z "$RESOLVED" ]]; then
         echo "Error: $DOMAIN is not resolving correctly."
-        exit 1
+        return 1
     fi
 
     echo "$DOMAIN is resolving to: $RESOLVED"
     echo "Ensure that $DOMAIN is correctly pointing to your Load Balancer or proxy service (e.g., Cloudflare)."
+
+    return 0
+}
+
+# Function to check DNS resolution with retries and option to skip
+check_dns_resolution_with_retries() {
+    local max_attempts=12
+    local interval=30
+    local attempt=1
+
+    while [[ $attempt -le $max_attempts ]]; do
+        echo "Attempt $attempt/$max_attempts: Checking DNS resolution for $DOMAIN..."
+        if check_dns_resolution; then
+            echo "DNS resolution successful."
+            return 0
+        else
+            echo "DNS resolution failed."
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            echo "Waiting for $interval seconds before retrying..."
+            sleep "$interval"
+        fi
+
+        ((attempt++))
+    done
+
+    echo "DNS resolution for $DOMAIN failed after $max_attempts attempts."
+
+    # Prompt user to skip or exit
+    while true; do
+        read -p "Do you want to skip DNS resolution check and proceed? (y/N): " choice
+        case "$choice" in
+            y|Y )
+                echo "Skipping DNS resolution check."
+                return 0
+                ;;
+            n|N|"" )
+                echo "Exiting script due to DNS resolution failure."
+                exit 1
+                ;;
+            * )
+                echo "Invalid input. Please enter 'y' or 'n'."
+                ;;
+        esac
+    done
 }
 
 # Function to update Helm release
@@ -139,6 +185,25 @@ restart_pods() {
 # Main Execution Flow
 # -----------------------------
 
+# Initialize skip DNS check flag
+SKIP_DNS_CHECK=0
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --skip-dns-check)
+            SKIP_DNS_CHECK=1
+            echo "Skipping DNS resolution check as per the '--skip-dns-check' flag."
+            shift
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [--skip-dns-check]"
+            exit 1
+            ;;
+    esac
+done
+
 # Ensure required tools are installed
 for cmd in aws kubectl helm; do
     check_command "$cmd"
@@ -150,8 +215,12 @@ get_ingress_details
 # Step 2: Determine protocol based on Ingress listen ports
 determine_protocol
 
-# Step 3: Check DNS resolution
-check_dns_resolution
+# Step 3: Check DNS resolution if not skipped
+if [[ $SKIP_DNS_CHECK -eq 0 ]]; then
+    check_dns_resolution_with_retries
+else
+    echo "DNS resolution check skipped."
+fi
 
 # Step 4: Run Helm upgrade
 update_helm_release
@@ -163,5 +232,5 @@ echo ""
 echo "======================================="
 echo "Application Update Completed Successfully!"
 echo "======================================="
-echo "Your service should now be fully operational at https://$DOMAIN"
+echo "Your service should now be fully operational at https://${DOMAIN}"
 echo "======================================="
