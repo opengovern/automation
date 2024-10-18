@@ -21,7 +21,8 @@ else
 fi
 
 # Determine AWS region from AWS CLI configuration
-REGION=$(aws configure get region)
+REGION=$(terraform output -raw aws_region 2>/dev/null); [ -z "$REGION" ] && REGION=$(aws configure get region); echo "AWS Region: $REGION"
+
 
 if [[ -z "$REGION" ]]; then
     echo "Error: AWS region is not set in your AWS CLI configuration."
@@ -338,8 +339,6 @@ while [[ $attempt -le $max_attempts ]]; do
         echo "Type: CNAME"
         echo "Value/Points to: $LB_DNS"
         echo "TTL: 300 (or default)"
-        echo ""
-        echo "After creating the CNAME record, your service should be accessible at https://$DOMAIN"
         echo ""
         break
     else
