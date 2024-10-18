@@ -20,6 +20,66 @@ else
     fi
 fi
 
+# Define the path to your Terraform state files
+TERRAFORM_STATE_DIR="../eks"
+
+# Check if terraform exists and retrieve the region, fallback to AWS CLI if terraform is not available
+if command -v terraform &>/dev/null; then
+    REGION=$( (cd "$TERRAFORM_STATE_DIR" && terraform output -raw aws_region) 2>/dev/null || true)
+else
+    echo "Terraform is not installed or not found. Falling back to AWS CLI."
+    REGION=""
+fi
+
+# Fallback to AWS CLI configuration if REGION is empty
+if [[ -z "$REGION" ]]; then
+  REGION=$(aws configure get region)
+fi
+
+# Verify the extracted region
+echo "AWS Region: $REGION"
+
+# Exit if REGION is still empty
+if [[ -z "$REGION" ]]; then
+    echo "Error: AWS region is not set in your AWS CLI configuration."
+    echo "Please configure it using 'aws configure' or set the AWS_REGION environment variable."
+    exit 1
+fi
+
+echo "Using AWS Region: $REGION"
+
+# Kubernetes namespace and Ingress name
+NAMESPACE="opengovernance"
+INGRESS_NAME="opengovernance-ingress"
+
+# Helm release name and chart repository (used in update-application.sh)
+HELM_RELEASE="opengovernance"
+HELM_CHART="opengovernance/opengovernance"
+
+# Time between status checks (in seconds)
+CHECK_INTERVAL_CERT=60      # For certificate status
+CHECK_INTERVAL_LB=20        # For Load Balancer DNS
+CHECK_COUNT_CERT=60         # Maximum number of certificate checks (~1 hour)
+CHECK_COUNT_LB=6            # Maximum number of Load Balancer DNS checks (~120 seconds)
+
+# -----------------------------
+# Configuration Variables
+# -----------------------------
+
+# Retrieve the domain name from an external source (environment variable or argument)
+# Priority: Command-line argument > Environment variable > Prompt the user
+if [[ $# -ge 1 ]]; then
+    DOMAIN="$1"
+elif [[ -n "${DOMAIN:-}" ]]; then
+    DOMAIN="$DOMAIN"
+else
+    read -p "Enter the domain name (e.g., demo.opengovernance.io): " DOMAIN
+    if [[ -z "$DOMAIN" ]]; then
+        echo "Error: DOMAIN is not set. Please provide a domain name."
+        exit 1
+    fi
+fi
+
 REGION=$( (cd .. && terraform output -raw aws_region) 2>/dev/null )
 
 # Fallback to AWS CLI configuration if REGION is empty
