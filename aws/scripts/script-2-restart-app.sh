@@ -27,13 +27,13 @@ check_command() {
     fi
 }
 
-# Function to retrieve DOMAIN, CERTIFICATE_ARN, and LB_DNS from Ingress
+# Function to retrieve DOMAIN, CERTIFICATE_ARN, LB_DNS, and LISTEN_PORTS from Ingress
 get_ingress_details() {
     echo "Retrieving Ingress details from Kubernetes..."
 
     # Get DOMAIN from the Ingress rules
     DOMAIN=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
-    
+
     if [[ -z "$DOMAIN" ]]; then
         echo "Error: Unable to retrieve DOMAIN from Ingress rules."
         exit 1
@@ -42,7 +42,7 @@ get_ingress_details() {
 
     # Get CERTIFICATE_ARN from Ingress annotations
     CERTIFICATE_ARN=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.alb\.ingress\.kubernetes\.io/certificate-arn}')
-    
+
     if [[ -z "$CERTIFICATE_ARN" ]]; then
         echo "Error: Unable to retrieve CERTIFICATE_ARN from Ingress annotations."
         exit 1
@@ -51,12 +51,35 @@ get_ingress_details() {
 
     # Get Load Balancer DNS from Ingress status
     LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-    
+
     if [[ -z "$LB_DNS" ]]; then
         echo "Error: Load Balancer DNS not available yet. Ensure Ingress is properly deployed."
         exit 1
     fi
     echo "Load Balancer DNS: $LB_DNS"
+
+    # Get Listen Ports from Ingress annotations
+    LISTEN_PORTS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.alb\.ingress\.kubernetes\.io/listen-ports}')
+
+    if [[ -z "$LISTEN_PORTS" ]]; then
+        echo "Error: Unable to retrieve LISTEN_PORTS from Ingress annotations."
+        exit 1
+    fi
+    echo "Listen Ports: $LISTEN_PORTS"
+}
+
+# Function to determine the protocol (http or https) based on listen-ports
+determine_protocol() {
+    echo "Determining protocol based on Ingress listen ports..."
+
+    # Check if HTTPS is present in the listen ports
+    if echo "$LISTEN_PORTS" | grep -q '"HTTPS"'; then
+        PROTOCOL="https"
+    else
+        PROTOCOL="http"
+    fi
+
+    echo "Determined Protocol: $PROTOCOL"
 }
 
 # Function to check DNS resolution without dig
@@ -81,21 +104,19 @@ check_dns_resolution() {
     fi
 
     echo "$DOMAIN is resolving to: $RESOLVED"
-
-    # Inform about the resolution; avoid strict matching
     echo "Ensure that $DOMAIN is correctly pointing to your Load Balancer or proxy service (e.g., Cloudflare)."
 }
 
 # Function to update Helm release
 update_helm_release() {
-    echo "Updating Helm release: $HELM_RELEASE with domain: $DOMAIN"
+    echo "Updating Helm release: $HELM_RELEASE with domain: $DOMAIN and protocol: $PROTOCOL"
 
     helm upgrade "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" -f <(cat <<EOF
 global:
   domain: ${DOMAIN}
 dex:
   config:
-    issuer: https://${DOMAIN}/dex
+    issuer: ${PROTOCOL}://${DOMAIN}/dex
 EOF
 )
     echo "Helm release $HELM_RELEASE has been updated."
@@ -126,13 +147,16 @@ done
 # Step 1: Retrieve Ingress details
 get_ingress_details
 
-# Step 2: Check DNS resolution
+# Step 2: Determine protocol based on Ingress listen ports
+determine_protocol
+
+# Step 3: Check DNS resolution
 check_dns_resolution
 
-# Step 3: Run Helm upgrade
+# Step 4: Run Helm upgrade
 update_helm_release
 
-# Step 4: Restart relevant Kubernetes pods
+# Step 5: Restart relevant Kubernetes pods
 restart_pods
 
 echo ""
