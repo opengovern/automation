@@ -3,7 +3,7 @@
    ################################################################################
 
    provider "aws" {
-    region = var.region != "" ? var.region : (try(env.AWS_REGION, "us-east-1"))
+    #region = var.region != "" ? var.region : "us-east-1"
 
 }
 
@@ -75,7 +75,6 @@
 
    locals {
      name   = "opengovernance"
-     region = var.region
 
      vpc_cidr = "10.0.0.0/16"
      azs      = var.environment == "dev" ? slice(data.aws_availability_zones.available.names, 0, 2) : slice(data.aws_availability_zones.available.names, 0, 3)
@@ -403,5 +402,5 @@
 
 output "configure_kubectl" {
   description = "Configure kubectl: make sure you're logged in with the correct AWS profile and run the following command to update your kubeconfig"
-  value       = "aws eks --region ${var.region} update-kubeconfig --name ${module.eks.cluster_name}"
+  value       = "aws eks --region ${data.aws_region.current.name} update-kubeconfig --name ${module.eks.cluster_name}"
 }
