@@ -68,6 +68,10 @@ request_certificate() {
     #     --region "$REGION")
 
     CERTIFICATE_ARN=$(echo "$REQUEST_OUTPUT" | jq -r '.CertificateArn')
+    if [[ -z "$CERTIFICATE_ARN" || "$CERTIFICATE_ARN" == "null" ]]; then
+        echo "Error: Failed to retrieve Certificate ARN after requesting."
+        exit 1
+    fi
     echo "Certificate ARN: $CERTIFICATE_ARN"
 }
 
@@ -96,8 +100,6 @@ check_certificate_status() {
         --query "Certificate.Status" \
         --output text)
 
-    echo "Certificate Status: $STATUS"
-
     echo "$STATUS"
 }
 
@@ -110,11 +112,6 @@ get_validation_records() {
         --region "$REGION" \
         --query "Certificate.DomainValidationOptions[].ResourceRecord" \
         --output json)
-
-    echo "Validation Records:"
-    echo "$VALIDATION_RECORDS" | jq
-    echo ""
-    echo "Please create the above CNAME records in your DNS provider to validate the certificate."
 }
 
 # Function to create Ingress
@@ -166,25 +163,34 @@ get_load_balancer_dns() {
     return 0
 }
 
-# Function to prompt user to create CNAME record
+# Function to prompt user to create CNAME records
 prompt_cname_creation() {
     echo ""
     echo "==============================="
     echo "CNAME Record Creation Required"
     echo "==============================="
-    echo "Please create a CNAME record in your DNS provider with the following details:"
-
-    # Extract CNAME details using jq
-    CNAME_HOST=$(echo "$VALIDATION_RECORDS" | jq -r '.[0].Name')
-    CNAME_VALUE=$(echo "$VALIDATION_RECORDS" | jq -r '.[0].Value')
-
-    echo "Host/Name: $CNAME_HOST"
-    echo "Type: CNAME"
-    echo "Value/Points to: $CNAME_VALUE"
-    echo "TTL: 300 (or default)"
+    echo "Please create the following CNAME records in your DNS provider to validate the certificate:"
     echo ""
-    echo "After creating the CNAME record, please wait for DNS propagation to complete."
+
+    # Iterate over each validation record and display details
+    echo "$VALIDATION_RECORDS" | jq -c '.[]' | while read -r RECORD; do
+        CNAME_HOST=$(echo "$RECORD" | jq -r '.Name')
+        CNAME_VALUE=$(echo "$RECORD" | jq -r '.Value')
+
+        # Remove trailing dot for user-friendliness, if present
+        CNAME_HOST="${CNAME_HOST%.}"
+        CNAME_VALUE="${CNAME_VALUE%.}"
+
+        echo "Host/Name: $CNAME_HOST"
+        echo "Type: CNAME"
+        echo "Value/Points to: $CNAME_VALUE"
+        echo "TTL: 300 (or default)"
+        echo ""
+    done
+
+    echo "After creating the CNAME records, please wait for DNS propagation to complete."
     echo "You can use tools like [DNS Checker](https://dnschecker.org/) to verify the propagation."
+    read -p "Press Enter to continue after creating the CNAME records..."
 }
 
 # Function to wait for ACM certificate to be issued
@@ -230,6 +236,7 @@ get_certificate_arn
 
 if [[ -n "$CERTIFICATE_ARN" ]]; then
     STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
+    echo "Certificate Status: $STATUS"
     if [[ "$STATUS" == "ISSUED" ]]; then
         echo "Existing ACM certificate is ISSUED. Proceeding to create/update Ingress."
     elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
@@ -254,6 +261,7 @@ else
     fi
 
     STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
+    echo "Certificate Status: $STATUS"
 
     if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
         get_validation_records "$CERTIFICATE_ARN"
@@ -301,4 +309,3 @@ echo "======================================="
 echo "Your service should now be accessible at https://$DOMAIN once all validations are complete."
 echo "Next, run 'update-application.sh' to update the Helm release and restart services."
 echo "======================================="
-```
