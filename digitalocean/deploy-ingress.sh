@@ -33,34 +33,28 @@ fi
 
 echo "Ingress Controller External IP: $INGRESS_EXTERNAL_IP"
 
-# Step 2: Verify DNS A Record
-echo_info "=== Verifying DNS A Record for ${DOMAIN} ==="
+# Step 2: Check DNS A Record Existence
+echo_info "=== Checking if DNS A Record for ${DOMAIN} Exists ==="
 
-# Attempt to resolve the domain using 'getent'
-DNS_IPS=$(getent hosts "$DOMAIN" | awk '{ print $1 }')
-
-if [ -z "$DNS_IPS" ]; then
-  echo_error "Warning: No DNS A record found for ${DOMAIN}. Proceeding without DNS verification."
+# Attempt to resolve the domain using 'dig' or 'nslookup'
+if command -v dig &> /dev/null; then
+  DNS_LOOKUP_RESULT=$(dig +short A "$DOMAIN")
+elif command -v nslookup &> /dev/null; then
+  DNS_LOOKUP_RESULT=$(nslookup -type=A "$DOMAIN" | grep 'Address:' | awk '{ print $2 }' | tail -n +2)
 else
-  # Check if any of the DNS A records match the Ingress External IP
-  DNS_MATCH=false
-  for ip in $DNS_IPS; do
-    if [ "$ip" == "$INGRESS_EXTERNAL_IP" ]; then
-      DNS_MATCH=true
-      break
-    fi
-  done
+  echo_info "DNS tools not found ('dig' or 'nslookup'). Skipping DNS A record check."
+  DNS_LOOKUP_RESULT=""
+fi
 
-  if [ "$DNS_MATCH" == true ]; then
-    echo "DNS A record for ${DOMAIN} is correctly pointing to ${INGRESS_EXTERNAL_IP}."
-  else
-    echo_error "Warning: DNS A record for ${DOMAIN} does not point to ${INGRESS_EXTERNAL_IP}."
-    echo "Current A records:"
-    for ip in $DNS_IPS; do
-      echo "- $ip"
-    done
-    echo "Please update your DNS A record to point ${DOMAIN} to ${INGRESS_EXTERNAL_IP}."
+if [ -n "$DNS_LOOKUP_RESULT" ]; then
+  echo "DNS A record for ${DOMAIN} exists."
+else
+  if [ -n "$(command -v dig)" ] || [ -n "$(command -v nslookup)" ]; then
+    echo_error "Warning: No DNS A record found for ${DOMAIN}."
+    echo "Please ensure that a DNS A record exists for your domain."
     echo "Continuing with the configuration..."
+  else
+    echo_info "Proceeding without DNS verification as DNS tools are unavailable."
   fi
 fi
 
@@ -121,5 +115,8 @@ kubectl delete pods -l app.kubernetes.io/name=dex -n opengovernance
 
 echo_info "Relevant pods have been restarted."
 
-echo_info "=== Update Config, Deploy Ingress, and Restart Services Completed Successfully ==="
+# Final Instructions
+echo_info "=== Setup Completed Successfully ==="
 echo "Please allow a few minutes for the changes to propagate and for services to become fully operational."
+
+echo_info "Open your web browser and navigate to https://${DOMAIN}. To sign in, use 'admin@opengovernance.io' as the username and 'password' as the password."
