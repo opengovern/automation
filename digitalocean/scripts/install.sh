@@ -13,35 +13,31 @@ function echo_error() {
 }
 
 # Step 1: Confirm that kubectl is connected to a cluster
-echo_info "Step 1: Confirming kubectl configuration"
+echo_info "Step 1: Checking Cluster"
 
 if ! kubectl cluster-info > /dev/null 2>&1; then
   echo_error "Error: kubectl is not connected to a cluster."
-  echo "Please configure your kubectl to connect to a Kubernetes cluster and try again."
+  echo "Please configure kubectl to connect to a Kubernetes cluster and try again."
   exit 1
-else
-  echo_info "kubectl is connected to a cluster."
 fi
 
 # Step 2: Check if Helm is installed
-echo_info "Step 2: Confirming helm installation"
+echo_info "Step 2: Checking Helm"
 
 if ! command -v helm &> /dev/null; then
   echo_error "Error: Helm is not installed."
   echo "Please install Helm and try again."
   exit 1
-else
-  echo_info "Helm is installed."
 fi
 
 # Step 3: Add the OpenGovernance Helm repository and update
-echo_info "Step 3: Adding OpenGovernance Helm repository and updating"
+echo_info "Step 3: Adding Helm repository"
 
 helm repo add opengovernance https://opengovern.github.io/charts
 helm repo update
 
 # Step 4: Install OpenGovernance using Helm if not already installed
-echo_info "Step 4: Installing OpenGovernance using Helm (if not already installed)"
+echo_info "Step 4: Installing OpenGovernance using Helm"
 
 # Check if the release 'opengovernance' exists in the 'opengovernance' namespace
 if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
@@ -52,9 +48,9 @@ else
 fi
 
 # Step 5: Ensure all Pods are running and/or healthy
-echo_info "Step 5: Ensuring all Pods are running and/or healthy"
+echo_info "Step 5: Checking Pods"
 
-echo_info "Waiting for all Pods in 'opengovernance' namespace to be ready..."
+echo_info "Waiting for all Pod to be ready..."
 
 TIMEOUT=600  # Timeout in seconds (10 minutes)
 SLEEP_INTERVAL=10  # Check every 10 seconds
