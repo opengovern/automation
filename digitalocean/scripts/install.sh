@@ -17,6 +17,40 @@ DOMAIN=""
 EMAIL=""
 ENABLE_HTTPS=false
 
+# Function to display usage information
+function usage() {
+  echo "Usage: $0 [-d DOMAIN] [-e EMAIL]"
+  echo ""
+  echo "Options:"
+  echo "  -d, --domain    Specify the domain for OpenGovernance."
+  echo "  -e, --email     Specify the email for Let's Encrypt certificate generation."
+  echo "  -h, --help      Display this help message."
+  exit 1
+}
+
+# Function to parse command-line arguments
+function parse_args() {
+  while [[ "$#" -gt 0 ]]; do
+    case $1 in
+      -d|--domain)
+        DOMAIN="$2"
+        shift 2
+        ;;
+      -e|--email)
+        EMAIL="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        ;;
+      *)
+        echo_error "Unknown parameter passed: $1"
+        usage
+        ;;
+    esac
+  done
+}
+
 # Function to check prerequisites (Step 1)
 function check_prerequisites() {
   echo_info "Step 1 of 10: Checking Prerequisites"
@@ -636,6 +670,7 @@ function run_installation_logic() {
 # Main Execution Flow
 # -----------------------------
 
+parse_args "$@"
 check_prerequisites
 check_opengovernance_status
 run_installation_logic
