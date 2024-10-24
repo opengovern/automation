@@ -53,14 +53,12 @@ fi
 ### Begin setup-ingress steps
 
 # Step 1 (of 7): Checking if cert-manager is installed (ETA: 20 seconds)
-echo_info "=== Step 1 of 7: Checking if cert-manager is installed ==="
+echo_info "=== Step 1 of 7: Installing cert-manager ==="
 echo_info "Estimated time: 20 seconds"
 
 if helm list -n cert-manager | grep cert-manager > /dev/null 2>&1; then
   echo_info "cert-manager is already installed. Skipping installation."
 else
-  echo_info "cert-manager not found. Installing cert-manager."
-
   if helm repo list | grep jetstack > /dev/null 2>&1; then
     echo_info "Jetstack Helm repository already exists. Skipping add."
   else
@@ -83,8 +81,6 @@ else
     --timeout=120s
 fi
 
-echo_info "Step 1 completed. 6 steps remaining."
-
 # Step 2 (of 7): Creating Issuer for Let's Encrypt (ETA: 30 seconds - 6 minutes)
 echo_info "=== Step 2 of 7: Creating Issuer for Let's Encrypt ==="
 echo_info "Estimated time: 30 seconds - 6 minutes"
@@ -92,8 +88,6 @@ echo_info "Estimated time: 30 seconds - 6 minutes"
 if kubectl get issuer letsencrypt-nginx -n opengovernance > /dev/null 2>&1; then
   echo_info "Issuer 'letsencrypt-nginx' already exists. Skipping creation."
 else
-  echo_info "Issuer 'letsencrypt-nginx' not found. Creating Issuer."
-
   kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: Issuer
@@ -118,8 +112,6 @@ EOF
     --timeout=360s
 fi
 
-echo_info "Step 2 completed. 5 steps remaining."
-
 # Step 3 (of 7): Installing NGINX Ingress Controller (ETA: 2-3 minutes)
 echo_info "=== Step 3 of 7: Installing NGINX Ingress Controller ==="
 echo_info "Estimated time: 2-3 minutes"
@@ -127,8 +119,6 @@ echo_info "Estimated time: 2-3 minutes"
 if helm list -n opengovernance | grep ingress-nginx > /dev/null 2>&1; then
   echo_info "NGINX Ingress Controller is already installed. Skipping installation."
 else
-  echo_info "NGINX Ingress Controller not found. Installing Ingress Controller."
-
   if helm repo list | grep ingress-nginx > /dev/null 2>&1; then
     echo_info "Ingress-nginx Helm repository already exists. Skipping add."
   else
@@ -165,8 +155,6 @@ while true; do
   sleep 15
 done
 
-echo_info "Step 3 completed. 4 steps remaining."
-
 # Step 4 (of 7): Retrieving Ingress Controller External IP (ETA: 20 seconds)
 echo_info "=== Step 4 of 7: Retrieving Ingress Controller External IP ==="
 echo_info "Estimated time: 20 seconds"
@@ -184,10 +172,8 @@ else
   echo "Ingress Controller External IP: $INGRESS_EXTERNAL_IP"
 fi
 
-echo_info "Step 4 completed. 3 steps remaining."
 
-echo_info "=== Setup Completed Successfully ==="
-echo "CERT-MANAGER and NGINX Ingress Controller are installed and configured."
+echo "CERT-MANAGER and NGINX Ingress Controller are installed."
 echo "Email: $EMAIL"
 echo "Domain: $DOMAIN"
 echo "Ingress Controller External IP: $INGRESS_EXTERNAL_IP"
@@ -211,7 +197,6 @@ EOF
 
 echo_info "OpenGovernance application configuration updated."
 
-echo_info "Step 5 completed. 2 steps remaining."
 
 # Step 6 (of 7): Deploying Ingress Resources (ETA: 20 seconds)
 echo_info "=== Step 6 of 7: Deploying Ingress Resources ==="
@@ -245,9 +230,7 @@ spec:
                   number: 80
 EOF
 
-echo_info "Ingress resource deployed."
 
-echo_info "Step 6 completed. 1 step remaining."
 
 # Step 7 (of 7): Restarting Relevant Pods (ETA: 20 seconds)
 echo_info "=== Step 7 of 7: Restarting Relevant Pods ==="
@@ -261,10 +244,12 @@ echo_info "Relevant pods have been restarted."
 echo_info "=== Setup Completed Successfully ==="
 echo "Please allow a few minutes for the changes to propagate and for services to become fully operational."
 
-echo_info "Next Steps:"
+echo_info "After Setup:"
 echo "1. Create a DNS A record pointing your domain to the Ingress Controller's external IP."
 echo "   - Type: A"
 echo "   - Name (Key): ${DOMAIN}"
 echo "   - Value: ${INGRESS_EXTERNAL_IP}"
-echo "2. After the DNS changes take effect, open your web browser and navigate to https://${DOMAIN}."
-echo "   - To sign in, use 'admin@opengovernance.io' as the username and 'password' as the password."
+echo "2. After the DNS changes take effect, Open https://${DOMAIN}."
+echo "   - You can login with the following credentials:"
+echo "     - Username: admin@opengovernance.io"
+echo "     - Password: password"
