@@ -5,7 +5,7 @@ set -e
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-LOGFILE="/var/log/opengovernance_install.log"
+LOGFILE="$HOME/opengovernance_install.log"
 
 # Ensure the log directory exists
 mkdir -p "$(dirname "$LOGFILE")"
@@ -112,14 +112,14 @@ function check_prerequisites() {
     exit 1
   fi
 
-  # Check if necessary Kubernetes resources are available
-  REQUIRED_KUBECTL_RESOURCES=("svc" "pods" "namespace")
-  for resource in "${REQUIRED_KUBECTL_RESOURCES[@]}"; do
-    if ! kubectl api-resources | grep -qw "$resource"; then
-      echo_error "Error: Kubernetes resource '$resource' is not available."
-      exit 1
-    fi
-  done
+  # Check if there are at least three ready nodes
+  READY_NODES=$(kubectl get nodes --no-headers | grep -c 'Ready')
+  if [ "$READY_NODES" -lt 3 ]; then
+    echo_error "Error: At least three Kubernetes nodes must be ready. Currently, $READY_NODES node(s) are ready."
+    exit 1
+  else
+    echo_info "There are $READY_NODES ready nodes."
+  fi
 }
 
 # Function to capture DOMAIN and EMAIL variables when needed
@@ -230,6 +230,7 @@ function uninstall_and_reinstall_opengovernance() {
             exit 1
           fi
 
+          # Delete the namespace
           if kubectl delete namespace opengovernance; then
             echo_info "Namespace 'opengovernance' deleted successfully."
           else
