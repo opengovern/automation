@@ -113,7 +113,7 @@ function check_prerequisites() {
   fi
 
   # Check if necessary Kubernetes resources are available
-  REQUIRED_KUBECTL_RESOURCES=("ingress" "svc" "pods" "namespace")
+  REQUIRED_KUBECTL_RESOURCES=("svc" "pods" "namespace")
   for resource in "${REQUIRED_KUBECTL_RESOURCES[@]}"; do
     if ! kubectl api-resources | grep -qw "$resource"; then
       echo_error "Error: Kubernetes resource '$resource' is not available."
