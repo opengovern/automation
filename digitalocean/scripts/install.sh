@@ -121,7 +121,7 @@ function check_and_handle_upgrade_or_reinstall() {
     echo_info "OpenGovernance is installed. Checking health status."
 
     # Check if app is unhealthy
-    UNHEALTHY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $1,$3}' | grep -E "CrashLoopBackOff|Error|Failed")
+    UNHEALTHY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $1,$3}' | grep -E "CrashLoopBackOff|Error|Failed" || true)
     if [ -n "$UNHEALTHY_PODS" ]; then
       echo_error "Detected unhealthy pods:"
       echo "$UNHEALTHY_PODS"
@@ -184,6 +184,7 @@ function check_and_handle_upgrade_or_reinstall() {
     echo_info "OpenGovernance is not installed."
   fi
 }
+
 
 # Function to install OpenGovernance with custom domain (Step 3)
 function install_opengovernance_with_custom_domain() {
