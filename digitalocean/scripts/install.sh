@@ -43,8 +43,9 @@ function configure_email_and_domain() {
   # Capture DOMAIN if not set
   if [ -z "$DOMAIN" ]; then
     while true; do
+      echo ""
       echo "Enter your domain for OpenGovernance (required for HTTPS)."
-      echo "Without a domain, HTTPS cannot be configured. The app will still be accessible on an ip address."
+      echo "Without a domain, HTTPS cannot be configured. The app will still be accessible on an IP address."
       read -p "Domain (or press Enter to skip): " DOMAIN < /dev/tty
       if [ -z "$DOMAIN" ]; then
         echo_info "No domain entered. Skipping domain configuration."
@@ -385,7 +386,7 @@ function deploy_ingress_resources() {
   # Define desired Ingress configuration based on the installation case
   if [ "$ENABLE_HTTPS" = true ]; then
     # Custom Domain with HTTPS
-    read -r -d '' DESIRED_INGRESS <<EOF
+    DESIRED_INGRESS=$(cat <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -412,9 +413,10 @@ spec:
                 port:
                   number: 80
 EOF
+)
   elif [ -n "$DOMAIN" ]; then
     # Custom Domain without HTTPS
-    read -r -d '' DESIRED_INGRESS <<EOF
+    DESIRED_INGRESS=$(cat <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -434,16 +436,17 @@ spec:
                 port:
                   number: 80
 EOF
+)
   else
     # No Custom Domain, use external IP, no host field
-    read -r -d '' DESIRED_INGRESS <<EOF
+    DESIRED_INGRESS=$(cat <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: opengovernance-ingress
   namespace: opengovernance
 spec:
-  ingressClassName: nginx2
+  ingressClassName: nginx
   rules:
     - http:
         paths:
@@ -455,6 +458,7 @@ spec:
                 port:
                   number: 80
 EOF
+)
   fi
 
   # Apply the Ingress configuration
