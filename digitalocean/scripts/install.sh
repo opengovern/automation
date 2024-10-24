@@ -8,12 +8,12 @@ DEFAULT_DOMAIN="opengovernance.example.io"
 
 # Function to display informational messages
 function echo_info() {
-  echo -e "\n\033[1;34m$1\033[0m\n"
+  printf "\n\033[1;34m%s\033[0m\n\n" "$1"
 }
 
 # Function to display error messages
 function echo_error() {
-  echo -e "\n\033[0;31m$1\033[0m\n"
+  printf "\n\033[0;31m%s\033[0m\n\n" "$1"
 }
 
 # Function to check prerequisites (Step 1)
@@ -343,7 +343,7 @@ function provide_port_forward_instructions() {
   echo_info "Installation completed successfully."
 
   echo_info "To access the OpenGovernance application, please run the following command in a separate terminal:"
-  echo -e "\033[1;32mkubectl port-forward -n opengovernance svc/nginx-proxy 8080:80\033[0m"
+  printf "\033[1;32m%s\033[0m\n" "kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80"
   echo "Then open http://localhost:8080/ in your browser, and sign in with the following credentials:"
   echo "Username: admin@opengovernance.io"
   echo "Password: password"
@@ -388,7 +388,8 @@ fi
 if [ -z "$EMAIL" ] && [ -z "$DOMAIN" ]; then
   # EMAIL and DOMAIN are not set
   echo_info "EMAIL and DOMAIN are not set."
-  echo_info "The installation will proceed without a custom domain."
+  echo_info "The installation will proceed without a custom domain and https."
+  echo_info "Custom domain and HTTPS can also be configured post-installation."
   echo_info "The script will continue in 10 seconds. Press Ctrl+C to cancel."
   sleep 10
   install_opengovernance
