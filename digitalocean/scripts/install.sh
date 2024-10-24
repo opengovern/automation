@@ -33,13 +33,6 @@ function check_prerequisites() {
     echo "Please install Helm and try again."
     exit 1
   fi
-
-  # Check if jq is installed (required for version comparison)
-  if ! command -v jq &> /dev/null; then
-    echo_error "Error: jq is not installed."
-    echo "Please install jq and try again."
-    exit 1
-  fi
 }
 
 # Function to capture EMAIL and DOMAIN variables (Step 2)
@@ -95,12 +88,29 @@ function check_and_handle_upgrade_or_reinstall() {
       # Check if newer version is available
       echo_info "Checking for newer version of OpenGovernance."
 
-      # Get current installed version
-      CURRENT_VERSION=$(helm ls -n opengovernance -o json | jq -r '.[0].chart' | sed 's/^opengovernance-//')
-
-      # Get latest available version
+      # Update Helm repo
       helm repo update > /dev/null 2>&1
-      LATEST_VERSION=$(helm search repo opengovernance/opengovernance --versions -o json | jq -r '.[0].version')
+
+      # Check if jq is installed
+      if command -v jq &> /dev/null; then
+        echo_info "jq is available. Using jq for version parsing."
+
+        # Get current installed version using jq
+        CURRENT_VERSION=$(helm ls -n opengovernance -o json | jq -r '.[0].chart' | sed 's/^opengovernance-//')
+
+        # Get latest available version using jq
+        LATEST_VERSION=$(helm search repo opengovernance/opengovernance --versions -o json | jq -r '.[0].version')
+      else
+        echo_info "jq is not available. Using grep/awk/sed for version parsing."
+
+        # Get current installed version
+        CURRENT_CHART=$(helm ls -n opengovernance -o yaml | grep 'chart:' | awk '{print $2}')
+        # Extract version from chart name
+        CURRENT_VERSION=$(echo "$CURRENT_CHART" | sed 's/^opengovernance-//')
+
+        # Get latest available version
+        LATEST_VERSION=$(helm search repo opengovernance/opengovernance --versions | awk '/opengovernance\/opengovernance/ {print $2}' | head -n1)
+      fi
 
       echo "Current version: $CURRENT_VERSION"
       echo "Latest version: $LATEST_VERSION"
