@@ -93,7 +93,7 @@ function configure_email_and_domain() {
 
 # Function to check if OpenGovernance is installed and healthy
 function check_opengovernance_status() {
-  echo_info "Checking if OpenGovernance is installed and healthy."
+  echo_info "Step 3 of 10: Checking if OpenGovernance is installed and healthy."
 
   APP_INSTALLED=false
   APP_HEALTHY=false
@@ -153,7 +153,7 @@ function uninstall_and_reinstall_opengovernance() {
 
 # Function to install OpenGovernance with custom domain and with HTTPS
 function install_opengovernance_with_custom_domain_with_https() {
-  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain and HTTPS"
+  echo_info "Step 4 of 10: Installing OpenGovernance with custom domain and HTTPS"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
@@ -175,7 +175,7 @@ EOF
 
 # Function to install OpenGovernance with custom domain and without HTTPS
 function install_opengovernance_with_custom_domain_no_https() {
-  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain and without HTTPS"
+  echo_info "Step 4 of 10: Installing OpenGovernance with custom domain and without HTTPS"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
@@ -195,9 +195,9 @@ EOF
   echo_info "OpenGovernance application installation completed."
 }
 
-# Function to install OpenGovernance without custom domain (Step 3 alternative)
+# Function to install OpenGovernance without custom domain (Step 4 alternative)
 function install_opengovernance() {
-  echo_info "Step 3 of 10: Installing OpenGovernance without custom domain"
+  echo_info "Step 4 of 10: Installing OpenGovernance without custom domain"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
@@ -210,9 +210,9 @@ function install_opengovernance() {
   echo_info "OpenGovernance application installation completed."
 }
 
-# Function to check pods and migrator jobs (Step 4)
+# Function to check pods and migrator jobs (Step 5)
 function check_pods_and_jobs() {
-  echo_info "Step 4 of 10: Checking Pods and Migrator Jobs"
+  echo_info "Step 5 of 10: Checking Pods and Migrator Jobs"
 
   echo_info "Waiting for all Pods to be ready..."
 
@@ -269,9 +269,9 @@ function check_pods_and_jobs() {
   fi
 }
 
-# Function to set up cert-manager and Let's Encrypt Issuer (Step 5)
+# Function to set up cert-manager and Let's Encrypt Issuer (Step 6)
 function setup_cert_manager_and_issuer() {
-  echo_info "Step 5 of 10: Setting up cert-manager and Let's Encrypt Issuer"
+  echo_info "Step 6 of 10: Setting up cert-manager and Let's Encrypt Issuer"
 
   # Install cert-manager if not already installed
   if helm list -n cert-manager | grep cert-manager > /dev/null 2>&1; then
@@ -328,9 +328,9 @@ EOF
   fi
 }
 
-# Function to install NGINX Ingress Controller and get External IP (Step 6)
+# Function to install NGINX Ingress Controller and get External IP (Step 7)
 function setup_ingress_controller() {
-  echo_info "Step 6 of 10: Installing NGINX Ingress Controller and Retrieving External IP"
+  echo_info "Step 7 of 10: Installing NGINX Ingress Controller and Retrieving External IP"
 
   # Install NGINX Ingress Controller if not already installed
   if helm list -n opengovernance | grep ingress-nginx > /dev/null 2>&1; then
@@ -372,14 +372,18 @@ function setup_ingress_controller() {
     echo "Waiting for EXTERNAL-IP assignment..."
     sleep 15
   done
+
+  # Export the external IP for later use
+  export INGRESS_EXTERNAL_IP
 }
 
 # Function to deploy Ingress Resources (Step 8)
 function deploy_ingress_resources() {
   echo_info "Step 8 of 10: Deploying Ingress Resources"
 
-  # Define desired Ingress configuration based on whether HTTPS is enabled
-  if [ "$ENABLE_HTTPS" = true ]; then
+  # Define desired Ingress configuration based on the installation case
+  if [ "$ENABLE_HTTPS" = true ] && [ "$DOMAIN_SET" = true ] && [ "$EMAIL_SET" = true ]; then
+    # Case 2: Custom Domain with HTTPS
     read -r -d '' DESIRED_INGRESS <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -407,7 +411,8 @@ spec:
                 port:
                   number: 80
 EOF
-  else
+  elif [ "$ENABLE_HTTPS" = false ] && [ "$DOMAIN_SET" = true ]; then
+    # Case 3: Custom Domain without HTTPS
     read -r -d '' DESIRED_INGRESS <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -428,6 +433,30 @@ spec:
                 port:
                   number: 80
 EOF
+  elif [ "$DOMAIN_SET" = false ]; then
+    # Case 1: No Custom Domain, use external IP, no host field
+    read -r -d '' DESIRED_INGRESS <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  namespace: opengovernance
+spec:
+  ingressClassName: nginx2
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+  else
+    echo_error "Error: Undefined deployment case."
+    exit 1
   fi
 
   # Check if the Ingress already exists
@@ -453,9 +482,32 @@ EOF
   fi
 }
 
-# Function to restart relevant pods (Step 9)
+# Function to perform Helm upgrade with external IP (for no custom domain) (Step 9)
+function perform_helm_upgrade_no_custom_domain() {
+  echo_info "Step 9 of 10: Performing Helm Upgrade with External IP"
+
+  if [ -z "$INGRESS_EXTERNAL_IP" ]; then
+    echo_error "Error: Ingress External IP is not set."
+    exit 1
+  fi
+
+  echo_info "Upgrading OpenGovernance Helm release with external IP: $INGRESS_EXTERNAL_IP"
+
+  helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m -f - <<EOF
+global:
+  domain: "${INGRESS_EXTERNAL_IP}"
+  debugMode: true
+dex:
+  config:
+    issuer: "http://${INGRESS_EXTERNAL_IP}/dex"
+EOF
+
+  echo_info "Helm upgrade completed successfully."
+}
+
+# Function to restart relevant pods (Step 10)
 function restart_pods() {
-  echo_info "Step 9 of 10: Restarting Relevant Pods"
+  echo_info "Step 10 of 10: Restarting Relevant Pods"
 
   kubectl delete pods -l app=nginx-proxy -n opengovernance
   kubectl delete pods -l app.kubernetes.io/name=dex -n opengovernance
@@ -463,9 +515,9 @@ function restart_pods() {
   echo_info "Relevant pods have been restarted."
 }
 
-# Function to display completion message (Step 10)
+# Function to display completion message (Step 11)
 function display_completion_message() {
-  echo_info "Step 10 of 10: Setup Completed Successfully"
+  echo_info "Step 11 of 11: Setup Completed Successfully"
 
   echo "Please allow a few minutes for the changes to propagate and for services to become fully operational."
 
@@ -476,19 +528,30 @@ function display_completion_message() {
   fi
 
   echo_info "After Setup:"
-  echo "1. Create a DNS A record pointing your domain to the Ingress Controller's external IP."
-  echo "   - Type: A"
-  echo "   - Name (Key): ${DOMAIN}"
-  echo "   - Value: ${INGRESS_EXTERNAL_IP}"
-  echo "2. After the DNS changes take effect, open ${PROTOCOL}://${DOMAIN}."
-  echo "   - You can log in with the following credentials:"
-  echo "     - Username: admin@opengovernance.io"
-  echo "     - Password: password"
+  if [ "$DOMAIN_SET" = true ]; then
+    echo "1. Create a DNS A record pointing your domain to the Ingress Controller's external IP."
+    echo "   - Type: A"
+    echo "   - Name (Key): ${DOMAIN}"
+    echo "   - Value: ${INGRESS_EXTERNAL_IP}"
+    echo "2. After the DNS changes take effect, open ${PROTOCOL}://${DOMAIN}."
+    echo "   - You can log in with the following credentials:"
+    echo "     - Username: admin@opengovernance.io"
+    echo "     - Password: password"
+  else
+    echo "1. Access the OpenGovernance application using the Ingress Controller's external IP:"
+    echo "   - URL: ${PROTOCOL}://${INGRESS_EXTERNAL_IP}"
+    echo "   - Alternatively, use port-forwarding as described below."
+    echo "2. You can log in with the following credentials:"
+    echo "   - Username: admin@opengovernance.io"
+    echo "   - Password: password"
+  fi
 }
 
-# Function to provide port-forwarding instructions
+# Function to provide port-forwarding instructions (Fallback)
 function provide_port_forward_instructions() {
-  echo_info "Installation completed successfully."
+  echo_info "Installation partially completed."
+
+  echo_error "Failed to set up Ingress resources. Providing port-forwarding instructions as a fallback."
 
   echo_info "To access the OpenGovernance application, please run the following command in a separate terminal:"
   printf "\033[1;32m%s\033[0m\n" "kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80"
@@ -518,7 +581,22 @@ function run_installation_logic() {
     sleep 10
     install_opengovernance
     check_pods_and_jobs
-    provide_port_forward_instructions
+
+    # Attempt to set up Ingress Controller and related resources
+    set +e  # Temporarily disable exit on error
+    setup_ingress_controller
+    DEPLOY_SUCCESS=true
+
+    deploy_ingress_resources || DEPLOY_SUCCESS=false
+    perform_helm_upgrade_no_custom_domain || DEPLOY_SUCCESS=false
+    restart_pods || DEPLOY_SUCCESS=false
+    set -e  # Re-enable exit on error
+
+    if [ "$DEPLOY_SUCCESS" = true ]; then
+      display_completion_message
+    else
+      provide_port_forward_instructions
+    fi
   elif [ "$DOMAIN_SET" = true ] && [ "$EMAIL_SET" = true ]; then
     # Install with custom domain and HTTPS
     ENABLE_HTTPS=true
@@ -556,7 +634,22 @@ function run_installation_logic() {
               EMAIL=""
               install_opengovernance
               check_pods_and_jobs
-              provide_port_forward_instructions
+
+              # Attempt to set up Ingress Controller and related resources
+              set +e  # Temporarily disable exit on error
+              setup_ingress_controller
+              DEPLOY_SUCCESS=true
+
+              deploy_ingress_resources || DEPLOY_SUCCESS=false
+              perform_helm_upgrade_no_custom_domain || DEPLOY_SUCCESS=false
+              restart_pods || DEPLOY_SUCCESS=false
+              set -e  # Re-enable exit on error
+
+              if [ "$DEPLOY_SUCCESS" = true ]; then
+                display_completion_message
+              else
+                provide_port_forward_instructions
+              fi
               break
               ;;
           [Nn]* )
@@ -591,6 +684,8 @@ elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
     # Determine if HTTPS should be enabled based on EMAIL
     if [ -n "$EMAIL" ] && [ "$EMAIL" != "$DEFAULT_EMAIL" ]; then
       ENABLE_HTTPS=true
+      DOMAIN_SET=true
+      EMAIL_SET=true
       echo_info "Completing post-installation steps for custom domain configuration with HTTPS."
       setup_ingress_controller
       setup_cert_manager_and_issuer
@@ -599,6 +694,8 @@ elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
       display_completion_message
     else
       ENABLE_HTTPS=false
+      DOMAIN_SET=true
+      EMAIL_SET=false
       echo_info "Completing post-installation steps for custom domain configuration without HTTPS."
       setup_ingress_controller
       deploy_ingress_resources
