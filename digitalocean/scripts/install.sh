@@ -39,11 +39,15 @@ function check_prerequisites() {
 function configure_email_and_domain() {
   echo_info "Step 2 of 10: Configuring EMAIL and DOMAIN"
 
-  # Capture EMAIL if not set or default
-  if [ -z "$EMAIL" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ]; then
-    echo_info "EMAIL is not set or is set to the default value."
+  # Capture EMAIL if not set
+  if [ -z "$EMAIL" ]; then
+    echo_info "EMAIL is not set."
     while true; do
       read -p "Please enter your email: " EMAIL < /dev/tty
+      if [ -z "$EMAIL" ]; then
+        echo_error "Email cannot be empty. Please enter a valid email."
+        continue
+      fi
       echo "You entered: $EMAIL"
       read -p "Is this correct? (y/n): " yn < /dev/tty
       case $yn in
@@ -54,11 +58,48 @@ function configure_email_and_domain() {
     done
   fi
 
+  # Capture EMAIL if set to default
+  if [ "$EMAIL" = "$DEFAULT_EMAIL" ]; then
+    echo_info "EMAIL is set to the default value."
+    while true; do
+      read -p "Do you want to enter a different email? (y/n): " yn < /dev/tty
+      case $yn in
+          [Yy]* )
+            read -p "Please enter your email: " EMAIL < /dev/tty
+            if [ -z "$EMAIL" ]; then
+              echo_error "Email cannot be empty. Please enter a valid email."
+              continue
+            fi
+            echo "You entered: $EMAIL"
+            read -p "Is this correct? (y/n): " yn_confirm < /dev/tty
+            case $yn_confirm in
+                [Yy]* ) break;;
+                [Nn]* ) echo "Let's try again.";;
+                * ) echo "Please answer y or n.";;
+            esac
+            ;;
+          [Nn]* )
+            echo_info "Proceeding with the default email."
+            break
+            ;;
+          * ) echo "Please answer y or n.";;
+      esac
+    done
+  fi
+
   # Capture DOMAIN if not set or default
   if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
-    echo_info "DOMAIN is not set or is set to the default value."
+    if [ -z "$DOMAIN" ]; then
+      echo_info "DOMAIN is not set."
+    else
+      echo_info "DOMAIN is set to the default value."
+    fi
     while true; do
       read -p "Please enter your domain for OpenGovernance: " DOMAIN < /dev/tty
+      if [ -z "$DOMAIN" ]; then
+        echo_error "Domain cannot be empty. Please enter a valid domain."
+        continue
+      fi
       echo "You entered: $DOMAIN"
       read -p "Is this correct? (y/n): " yn < /dev/tty
       case $yn in
