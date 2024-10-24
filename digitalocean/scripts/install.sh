@@ -13,7 +13,7 @@ function echo_error() {
 }
 
 # Step 1: Confirm that kubectl is connected to a cluster
-echo_info "Step 1: Confirming kubectl is connected to a cluster"
+echo_info "Step 1: Confirming kubectl configuration"
 
 if ! kubectl cluster-info > /dev/null 2>&1; then
   echo_error "Error: kubectl is not connected to a cluster."
@@ -24,7 +24,7 @@ else
 fi
 
 # Step 2: Check if Helm is installed
-echo_info "Step 2: Checking if Helm is installed"
+echo_info "Step 2: Confirming helm installation"
 
 if ! command -v helm &> /dev/null; then
   echo_error "Error: Helm is not installed."
