@@ -57,7 +57,7 @@ function configure_email_and_domain() {
       case $yn in
           "" | [Yy]* ) break;;
           [Nn]* ) echo "Let's try again.";;
-          * ) echo "Please answer y or n.";;
+          * ) break;;
       esac
     done
   fi
@@ -82,7 +82,7 @@ function configure_email_and_domain() {
         case $yn in
             "" | [Yy]* ) break;;
             [Nn]* ) echo "Let's try again.";;
-            * ) echo "Please answer y or n.";;
+            * ) break;;
         esac
       done
     fi
@@ -101,13 +101,13 @@ function check_opengovernance_status() {
   # Check if app is installed
   if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
     APP_INSTALLED=true
-    echo_info "OpenGovernance is installed. Checking health status."
+    echo_info "OpenGovernance is installed."
 
     # Check if all pods are healthy
     UNHEALTHY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $1,$3}' | grep -E "CrashLoopBackOff|Error|Failed|Pending|Terminating" || true)
     if [ -z "$UNHEALTHY_PODS" ]; then
       APP_HEALTHY=true
-      echo_info "All OpenGovernance pods are healthy."
+      echo_info "All pods are healthy."
     else
       echo_error "Detected unhealthy pods:"
       echo "$UNHEALTHY_PODS"
@@ -146,14 +146,17 @@ function uninstall_and_reinstall_opengovernance() {
           echo_info "Please resolve the pod issues manually or rerun the script."
           exit 0
           ;;
-        * ) echo "Please answer y or n.";;
+        * )  
+          echo_info "Skipping uninstallation and reinstallation of OpenGovernance."
+          echo_info "Please resolve the pod issues manually or rerun the script."
+          exit 0;;
     esac
   done
 }
 
 # Function to install OpenGovernance with custom domain (Step 3)
 function install_opengovernance_with_custom_domain() {
-  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain"
+  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain: $DOMAIN"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
@@ -170,12 +173,12 @@ dex:
   config:
     issuer: https://${DOMAIN}/dex
 EOF
-  echo_info "OpenGovernance application installation completed."
+  echo_info "Installation completed."
 }
 
 # Function to install OpenGovernance without custom domain (Step 3 alternative)
 function install_opengovernance() {
-  echo_info "Step 3 of 10: Installing OpenGovernance without custom domain"
+  echo_info "Step 3 of 10: Installing OpenGovernance"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
@@ -202,7 +205,6 @@ function check_pods_and_jobs() {
     # Get the count of pods that are not in Running, Succeeded, or Completed state
     NOT_READY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $3}' | grep -v -E 'Running|Succeeded|Completed' | wc -l)
     if [ "$NOT_READY_PODS" -eq 0 ]; then
-      echo_info "All Pods are running and/or healthy."
       break
     fi
 
@@ -217,8 +219,7 @@ function check_pods_and_jobs() {
     ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
   done
 
-  # Check the status of 'migrator-job' pods
-  echo_info "Checking the status of 'migrator-job' pods"
+ 
 
   # Get the list of pods starting with 'migrator-job'
   MIGRATOR_PODS=$(kubectl get pods -n opengovernance -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep '^migrator-job')
@@ -233,8 +234,6 @@ function check_pods_and_jobs() {
       if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "Completed" ]; then
         echo_error "Pod '$POD' is in '$STATUS' state. It needs to be in 'Completed' state."
         ALL_COMPLETED=false
-      else
-        echo_info "Pod '$POD' is in 'Completed' state."
       fi
     done
 
@@ -451,7 +450,6 @@ function run_installation_logic() {
 
   if [ "$DOMAIN_SET" = false ] && [ "$EMAIL_SET" = false ]; then
     # Install without custom domain
-    echo_info "Installing OpenGovernance without custom domain."
     echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
     sleep 10
     install_opengovernance
@@ -459,7 +457,6 @@ function run_installation_logic() {
     provide_port_forward_instructions
   elif [ "$DOMAIN_SET" = true ] && [ "$EMAIL_SET" = true ]; then
     # Install with custom domain
-    echo_info "Installing OpenGovernance with custom domain: $DOMAIN"
     echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
     sleep 10
     install_opengovernance_with_custom_domain
@@ -473,7 +470,7 @@ function run_installation_logic() {
     # DOMAIN and/or EMAIL are set to defaults
     echo_info "DOMAIN and/or EMAIL are set to default values."
     while true; do
-      echo "Do you want to proceed with installation without a custom domain and HTTPS?"
+      echo "Do you want to proceed with installation without a custom (domain and/or email) and HTTPS?"
       read -p "(Y/n): " yn < /dev/tty
       case $yn in
           "" | [Yy]* )
@@ -489,7 +486,14 @@ function run_installation_logic() {
               run_installation_logic
               break
               ;;
-          * ) echo "Please answer y or n.";;
+          * ) 
+              DOMAIN=""
+              EMAIL=""
+              install_opengovernance
+              check_pods_and_jobs
+              provide_port_forward_instructions
+              break
+          ;;
       esac
     done
   fi
@@ -522,6 +526,5 @@ elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
     display_completion_message
   else
     echo_info "OpenGovernance is already installed and healthy."
-    echo_info "No further actions are required."
   fi
 fi
