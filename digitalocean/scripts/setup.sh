@@ -20,6 +20,11 @@ DEFAULT_DOMAIN="demo.opengovernance.io"
 if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
   echo_info "EMAIL and DOMAIN are not set or are set to default values."
 
+  # Inform the user about the importance of EMAIL and DOMAIN
+  echo_info "Change the email and domain to your own."
+  echo_info "Email is needed to generate SSL Certificate with Let's Encrypt."
+  echo_info "App will be configured to use the domain."
+
   # Prompt for EMAIL
   while true; do
     read -p "Please enter your email: " EMAIL
