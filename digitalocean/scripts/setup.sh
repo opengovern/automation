@@ -14,7 +14,7 @@ function echo_error() {
 
 # Default values for EMAIL and DOMAIN
 DEFAULT_EMAIL="your-email@example.com"
-DEFAULT_DOMAIN="demo.opengovernance.io"
+DEFAULT_DOMAIN="opengovernance.example.io"
 
 # Check if EMAIL and DOMAIN variables are set and not default values
 if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
