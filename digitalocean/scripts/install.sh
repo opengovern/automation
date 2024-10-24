@@ -65,7 +65,7 @@ function configure_email_and_domain() {
 
   # Only proceed to capture EMAIL if DOMAIN is set and not empty
   if [ -n "$DOMAIN" ]; then
-    # Capture EMAIL if not set
+    # Capture EMAIL if not set or set to default
     if [ -z "$EMAIL" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ]; then
       if [ -z "$EMAIL" ]; then
         echo_info "EMAIL is not set."
@@ -116,6 +116,47 @@ function check_opengovernance_status() {
   else
     echo_info "OpenGovernance is not installed."
   fi
+}
+
+# Function to uninstall and reinstall OpenGovernance (Reinstallation)
+function uninstall_and_reinstall_opengovernance() {
+  echo_info "Reinstalling OpenGovernance due to unhealthy pods."
+
+  # Prompt for confirmation
+  while true; do
+    read -p "Are you sure you want to uninstall and reinstall OpenGovernance? (y/N): " yn < /dev/tty
+    case $yn in
+        [Yy]* )
+          # Uninstall OpenGovernance
+          helm uninstall opengovernance -n opengovernance
+          kubectl delete namespace opengovernance
+
+          # Wait for namespace deletion
+          echo_info "Waiting for namespace 'opengovernance' to be deleted."
+          while kubectl get namespace opengovernance > /dev/null 2>&1; do
+            sleep 5
+          done
+          echo_info "Namespace 'opengovernance' has been deleted."
+
+          # Reinstall OpenGovernance with custom domain
+          install_opengovernance_with_custom_domain
+          check_pods_and_jobs
+          # Proceed with the rest of the steps
+          setup_cert_manager_and_issuer
+          setup_ingress_controller
+          deploy_ingress_resources
+          restart_pods
+          display_completion_message
+          break
+          ;;
+        [Nn]* )
+          echo_info "Skipping uninstallation and reinstallation of OpenGovernance."
+          echo_info "Please resolve the pod issues manually or rerun the script."
+          exit 0
+          ;;
+        * ) echo "Please answer y or n.";;
+    esac
+  done
 }
 
 # Function to install OpenGovernance with custom domain (Step 3)
@@ -298,9 +339,10 @@ function setup_ingress_controller() {
       --set controller.resources.requests.memory=90Mi
   fi
 
-  echo_info "Waiting for Ingress Controller to obtain an external IP (2-6 minutes)"
+  echo_info "Waiting for Ingress Controller to obtain an external IP (2-6 minutes)..."
   START_TIME=$(date +%s)
-  TIMEOUT=360
+  TIMEOUT=360  # 6 minutes
+
   while true; do
     INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
     if [ -n "$INGRESS_EXTERNAL_IP" ]; then
@@ -404,6 +446,7 @@ if [ -z "$DOMAIN" ]; then
   echo_info "DOMAIN is not set."
   echo_info "The installation will proceed without a custom domain and HTTPS."
   echo_info "Custom domain and HTTPS can also be configured post-installation."
+
   if [ "$APP_INSTALLED" = false ]; then
     echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
     sleep 10
@@ -416,6 +459,7 @@ if [ -z "$DOMAIN" ]; then
 else
   # DOMAIN is set
   echo_info "DOMAIN is set to: $DOMAIN"
+
   if [ "$APP_INSTALLED" = false ]; then
     echo_info "The installation will proceed with this domain in 10 seconds. Press Ctrl+C to cancel."
     sleep 10
@@ -428,36 +472,21 @@ else
     restart_pods
     display_completion_message
   elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = false ]; then
-    echo_info "Reinstalling OpenGovernance due to unhealthy pods."
-    # Uninstall and reinstall
-    helm uninstall opengovernance -n opengovernance
-    kubectl delete namespace opengovernance
-    # Wait for namespace deletion
-    echo_info "Waiting for namespace 'opengovernance' to be deleted."
-    while kubectl get namespace opengovernance > /dev/null 2>&1; do
-      sleep 5
-    done
-    install_opengovernance_with_custom_domain
-    check_pods_and_jobs
-    # Proceed with the rest of the steps
-    setup_cert_manager_and_issuer
-    setup_ingress_controller
-    deploy_ingress_resources
-    restart_pods
-    display_completion_message
+    # Prompt user for confirmation before reinstalling
+    uninstall_and_reinstall_opengovernance
   else
     echo_info "OpenGovernance is already installed and healthy. Skipping installation."
     # Proceed with configuration steps if necessary
-    read -p "Do you want to configure HTTPS and custom domain settings? (Y/n): " yn < /dev/tty
+    read -p "Do you want to configure HTTPS and custom domain settings? (y/N): " yn < /dev/tty
     case $yn in
-        "" | [Yy]* )
+        [Yy]* )
             setup_cert_manager_and_issuer
             setup_ingress_controller
             deploy_ingress_resources
             restart_pods
             display_completion_message
             ;;
-        [Nn]* )
+        [Nn]* | "" )
             echo_info "Skipping configuration of HTTPS and custom domain settings."
             ;;
         * ) echo "Please answer y or n.";;
