@@ -2,6 +2,10 @@
 
 set -e
 
+# Default values for EMAIL and DOMAIN
+DEFAULT_EMAIL="your-email@example.com"
+DEFAULT_DOMAIN="opengovernance.example.io"
+
 # Function to display informational messages
 function echo_info() {
   echo -e "\n\033[1;34m$1\033[0m\n"
@@ -31,24 +35,13 @@ function check_prerequisites() {
   fi
 }
 
-# Function to handle EMAIL and DOMAIN variables (Step 2)
+# Function to capture EMAIL and DOMAIN variables (Step 2)
 function configure_email_and_domain() {
   echo_info "Step 2 of 10: Configuring EMAIL and DOMAIN"
 
-  # Default values for EMAIL and DOMAIN
-  DEFAULT_EMAIL="your-email@example.com"
-  DEFAULT_DOMAIN="opengovernance.example.io"
-
-  # Check if EMAIL and DOMAIN variables are set and not default values
-  if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
-    echo_info "EMAIL and DOMAIN are not set or are set to default values."
-
-    # Inform the user about the importance of EMAIL and DOMAIN
-    echo_info "Change the email and domain to your own."
-    echo_info "Email is needed to generate SSL Certificate with Let's Encrypt."
-    echo_info "App will be configured to use the domain you provided."
-
-    # Prompt for EMAIL
+  # Capture EMAIL if not set or default
+  if [ -z "$EMAIL" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ]; then
+    echo_info "EMAIL is not set or is set to the default value."
     while true; do
       read -p "Please enter your email: " EMAIL
       echo "You entered: $EMAIL"
@@ -59,8 +52,11 @@ function configure_email_and_domain() {
           * ) echo "Please answer y or n.";;
       esac
     done
+  fi
 
-    # Prompt for DOMAIN
+  # Capture DOMAIN if not set or default
+  if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
+    echo_info "DOMAIN is not set or is set to the default value."
     while true; do
       read -p "Please enter your domain for OpenGovernance: " DOMAIN
       echo "You entered: $DOMAIN"
@@ -71,13 +67,6 @@ function configure_email_and_domain() {
           * ) echo "Please answer y or n.";;
       esac
     done
-  else
-    echo_info "EMAIL and DOMAIN are set as follows:"
-    echo "Email: $EMAIL"
-    echo "Domain: $DOMAIN"
-    echo_info "If these are correct, the script will continue in 10 seconds..."
-    echo_info "Press Ctrl+C to cancel and set the correct values."
-    sleep 10
   fi
 }
 
@@ -93,6 +82,7 @@ function install_opengovernance_with_custom_domain() {
   if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
     echo_info "OpenGovernance is already installed. Skipping installation."
   else
+    echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
     helm install -n opengovernance opengovernance \
       opengovernance/opengovernance --create-namespace --timeout=10m \
       -f - <<EOF
@@ -102,7 +92,7 @@ dex:
   config:
     issuer: https://${DOMAIN}/dex
 EOF
-    echo_info "OpenGovernance application configuration updated."
+    echo_info "OpenGovernance application installation completed."
   fi
 }
 
@@ -118,8 +108,10 @@ function install_opengovernance() {
   if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
     echo_info "OpenGovernance is already installed. Skipping installation."
   else
+    echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
     helm install -n opengovernance opengovernance \
       opengovernance/opengovernance --create-namespace --timeout=10m
+    echo_info "OpenGovernance application installation completed."
   fi
 }
 
@@ -266,9 +258,9 @@ function setup_ingress_controller() {
       --set controller.resources.requests.memory=90Mi
   fi
 
-  echo_info "Waiting for Ingress Controller to obtain an external IP (up to 4 minutes)..."
+  echo_info "Waiting for Ingress Controller to obtain an external IP (up to 5 minutes)... This usually takes between 2-5 minutes."
   START_TIME=$(date +%s)
-  TIMEOUT=240
+  TIMEOUT=300
   while true; do
     INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
     if [ -n "$INGRESS_EXTERNAL_IP" ]; then
@@ -364,10 +356,52 @@ function provide_port_forward_instructions() {
 check_prerequisites
 configure_email_and_domain
 
-# Decide which installation function to run based on DOMAIN and EMAIL
-if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ] && [ "$EMAIL" != "your-email@example.com" ] && [ "$DOMAIN" != "opengovernance.example.io" ]; then
-  install_opengovernance_with_custom_domain
+# Decision-making logic moved to main execution flow
 
+if [ "$EMAIL" = "$DEFAULT_EMAIL" ] && [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
+  # Both EMAIL and DOMAIN are set to default values
+  echo_info "EMAIL and DOMAIN are set to default values."
+  echo "You can enter valid EMAIL and DOMAIN values or proceed without a custom domain."
+  while true; do
+    read -p "Do you want to enter valid EMAIL and DOMAIN values? (y/n): " yn
+    case $yn in
+      [Yy]* )
+        configure_email_and_domain
+        # Re-evaluate after capturing new values
+        if [ "$EMAIL" != "$DEFAULT_EMAIL" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; then
+          break
+        else
+          echo_info "EMAIL and DOMAIN are still set to default values."
+        fi
+        ;;
+      [Nn]* )
+        echo_info "Proceeding without custom domain."
+        EMAIL=""
+        DOMAIN=""
+        break
+        ;;
+      * ) echo "Please answer y or n.";;
+    esac
+  done
+fi
+
+if [ -z "$EMAIL" ] && [ -z "$DOMAIN" ]; then
+  # EMAIL and DOMAIN are not set
+  echo_info "EMAIL and DOMAIN are not set."
+  echo_info "The installation will proceed without a custom domain."
+  echo_info "The script will continue in 10 seconds. Press Ctrl+C to cancel."
+  sleep 10
+  install_opengovernance
+  check_pods_and_jobs
+  provide_port_forward_instructions
+elif [ "$EMAIL" != "$DEFAULT_EMAIL" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; then
+  # EMAIL and DOMAIN are set to user-provided values
+  echo_info "EMAIL and DOMAIN are set as follows:"
+  echo "Email: $EMAIL"
+  echo "Domain: $DOMAIN"
+  echo_info "The installation will proceed with these values in 10 seconds. Press Ctrl+C to cancel."
+  sleep 10
+  install_opengovernance_with_custom_domain
   # Only run these steps after successful completion of 'install_opengovernance_with_custom_domain'
   check_pods_and_jobs
   setup_cert_manager_and_issuer
@@ -376,8 +410,8 @@ if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ] && [ "$EMAIL" != "your-email@example.com"
   restart_pods
   display_completion_message
 else
-  install_opengovernance
-
-  # After 'install_opengovernance', provide port-forwarding instructions
-  provide_port_forward_instructions
+  # EMAIL and DOMAIN are mismatched or invalid
+  echo_error "EMAIL and DOMAIN must both be set to proceed with custom domain installation."
+  echo "Please ensure both EMAIL and DOMAIN are set to valid values."
+  exit 1
 fi
