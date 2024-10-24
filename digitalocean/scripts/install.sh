@@ -12,34 +12,31 @@ function echo_error() {
   echo -e "\n\033[0;31m$1\033[0m\n"
 }
 
-# Step 1: Confirm that kubectl is connected to a cluster
-echo_info "Step 1: Checking Cluster"
+# Step 1: Check prerequisites (kubectl and Helm)
+echo_info "Step 1 of 10: Checking Prerequisites"
 
+# Check if kubectl is connected to a cluster
 if ! kubectl cluster-info > /dev/null 2>&1; then
   echo_error "Error: kubectl is not connected to a cluster."
   echo "Please configure kubectl to connect to a Kubernetes cluster and try again."
   exit 1
 fi
 
-# Step 2: Check if Helm is installed
-echo_info "Step 2: Checking Helm"
-
+# Check if Helm is installed
 if ! command -v helm &> /dev/null; then
   echo_error "Error: Helm is not installed."
   echo "Please install Helm and try again."
   exit 1
 fi
 
-# Step 3: Add the OpenGovernance Helm repository and update
-echo_info "Step 3: Adding Helm repository"
+# Step 2: Install OpenGovernance using Helm
+echo_info "Step 2 of 10: Installing OpenGovernance using Helm"
 
+# Add the OpenGovernance Helm repository and update
 helm repo add opengovernance https://opengovern.github.io/charts
 helm repo update
 
-# Step 4: Install OpenGovernance using Helm if not already installed
-echo_info "Step 4: Installing OpenGovernance using Helm"
-
-# Check if the release 'opengovernance' exists in the 'opengovernance' namespace
+# Install OpenGovernance if not already installed
 if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
   echo_info "OpenGovernance is already installed. Skipping installation."
 else
@@ -47,10 +44,10 @@ else
     opengovernance/opengovernance --create-namespace --timeout=10m
 fi
 
-# Step 5: Ensure all Pods are running and/or healthy
-echo_info "Step 5: Checking Pods"
+# Step 3: Ensure all Pods are running and migrator-job pods are completed
+echo_info "Step 3 of 10: Checking Pods and Migrator Jobs"
 
-echo_info "Waiting for all Pod to be ready..."
+echo_info "Waiting for all Pods to be ready..."
 
 TIMEOUT=600  # Timeout in seconds (10 minutes)
 SLEEP_INTERVAL=10  # Check every 10 seconds
@@ -75,8 +72,8 @@ while true; do
   ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
 done
 
-# Step 6: Check the status of 'migrator-job' pods
-echo_info "Step 6: Checking the status of 'migrator-job' pods"
+# Check the status of 'migrator-job' pods
+echo_info "Checking the status of 'migrator-job' pods"
 
 # Get the list of pods starting with 'migrator-job'
 MIGRATOR_PODS=$(kubectl get pods -n opengovernance -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep '^migrator-job')
@@ -104,4 +101,220 @@ else
   fi
 fi
 
-echo_info "All steps completed successfully."
+# Step 4: Handle EMAIL and DOMAIN variables
+echo_info "Step 4 of 10: Configuring EMAIL and DOMAIN"
+
+# Default values for EMAIL and DOMAIN
+DEFAULT_EMAIL="your-email@example.com"
+DEFAULT_DOMAIN="opengovernance.example.io"
+
+# Check if EMAIL and DOMAIN variables are set and not default values
+if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
+  echo_info "EMAIL and DOMAIN are not set or are set to default values."
+
+  # Inform the user about the importance of EMAIL and DOMAIN
+  echo_info "Change the email and domain to your own."
+  echo_info "Email is needed to generate SSL Certificate with Let's Encrypt."
+  echo_info "App will be configured to use the domain you provided."
+
+  # Prompt for EMAIL
+  while true; do
+    read -p "Please enter your email: " EMAIL
+    echo "You entered: $EMAIL"
+    read -p "Is this correct? (y/n): " yn
+    case $yn in
+        [Yy]* ) break;;
+        [Nn]* ) echo "Let's try again.";;
+        * ) echo "Please answer y or n.";;
+    esac
+  done
+
+  # Prompt for DOMAIN
+  while true; do
+    read -p "Please enter your domain for OpenGovernance: " DOMAIN
+    echo "You entered: $DOMAIN"
+    read -p "Is this correct? (y/n): " yn
+    case $yn in
+        [Yy]* ) break;;
+        [Nn]* ) echo "Let's try again.";;
+        * ) echo "Please answer y or n.";;
+    esac
+  done
+else
+  echo_info "EMAIL and DOMAIN are set as follows:"
+  echo "Email: $EMAIL"
+  echo "Domain: $DOMAIN"
+  echo_info "If these are correct, the script will continue in 10 seconds..."
+  echo_info "Press Ctrl+C to cancel and set the correct values."
+  sleep 10
+fi
+
+# Step 5: Install cert-manager and create Let's Encrypt Issuer
+echo_info "Step 5 of 10: Setting up cert-manager and Let's Encrypt Issuer"
+
+# Install cert-manager if not already installed
+if helm list -n cert-manager | grep cert-manager > /dev/null 2>&1; then
+  echo_info "cert-manager is already installed. Skipping installation."
+else
+  if helm repo list | grep jetstack > /dev/null 2>&1; then
+    echo_info "Jetstack Helm repository already exists. Skipping add."
+  else
+    helm repo add jetstack https://charts.jetstack.io
+    echo_info "Added Jetstack Helm repository."
+  fi
+
+  helm repo update
+
+  helm install cert-manager jetstack/cert-manager \
+    --namespace cert-manager \
+    --create-namespace \
+    --set installCRDs=true \
+    --set prometheus.enabled=false
+
+  echo_info "Waiting for cert-manager pods to be ready..."
+  kubectl wait --namespace cert-manager \
+    --for=condition=ready pod \
+    --selector=app.kubernetes.io/name=cert-manager \
+    --timeout=120s
+fi
+
+# Create Let's Encrypt Issuer
+if kubectl get issuer letsencrypt-nginx -n opengovernance > /dev/null 2>&1; then
+  echo_info "Issuer 'letsencrypt-nginx' already exists. Skipping creation."
+else
+  kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-nginx
+  namespace: opengovernance
+spec:
+  acme:
+    email: ${EMAIL}
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-nginx-private-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+EOF
+
+  echo_info "Waiting for Issuer to be ready (up to 6 minutes)..."
+  kubectl wait --namespace opengovernance \
+    --for=condition=Ready issuer/letsencrypt-nginx \
+    --timeout=360s
+fi
+
+# Step 6: Install NGINX Ingress Controller and retrieve External IP
+echo_info "Step 6 of 10: Installing NGINX Ingress Controller and Retrieving External IP"
+
+# Install NGINX Ingress Controller if not already installed
+if helm list -n opengovernance | grep ingress-nginx > /dev/null 2>&1; then
+  echo_info "NGINX Ingress Controller is already installed. Skipping installation."
+else
+  if helm repo list | grep ingress-nginx > /dev/null 2>&1; then
+    echo_info "Ingress-nginx Helm repository already exists. Skipping add."
+  else
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    echo_info "Added ingress-nginx Helm repository."
+  fi
+
+  helm repo update
+
+  helm install ingress-nginx ingress-nginx/ingress-nginx \
+    --namespace opengovernance \
+    --create-namespace \
+    --set controller.replicaCount=2 \
+    --set controller.resources.requests.cpu=100m \
+    --set controller.resources.requests.memory=90Mi
+fi
+
+echo_info "Waiting for Ingress Controller to obtain an external IP (up to 4 minutes)..."
+START_TIME=$(date +%s)
+TIMEOUT=240
+while true; do
+  INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  if [ -n "$INGRESS_EXTERNAL_IP" ]; then
+    echo "Ingress Controller External IP: $INGRESS_EXTERNAL_IP"
+    break
+  fi
+  CURRENT_TIME=$(date +%s)
+  ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+  if [ $ELAPSED_TIME -ge $TIMEOUT ]; then
+    echo_error "Error: Ingress Controller External IP not assigned within timeout period."
+    exit 1
+  fi
+  echo "Waiting for EXTERNAL-IP assignment..."
+  sleep 15
+done
+
+# Step 7: Update OpenGovernance Configuration
+echo_info "Step 7 of 10: Updating OpenGovernance Configuration"
+
+helm upgrade opengovernance opengovernance/opengovernance \
+  -n opengovernance \
+  --reuse-values \
+  -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: https://${DOMAIN}/dex
+EOF
+
+echo_info "OpenGovernance application configuration updated."
+
+# Step 8: Deploy Ingress Resources
+echo_info "Step 8 of 10: Deploying Ingress Resources"
+
+kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  namespace: opengovernance
+  annotations:
+    cert-manager.io/issuer: letsencrypt-nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+    - hosts:
+        - ${DOMAIN}
+      secretName: letsencrypt-nginx
+  ingressClassName: nginx
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+
+# Step 9: Restart Relevant Pods
+echo_info "Step 9 of 10: Restarting Relevant Pods"
+
+kubectl delete pods -l app=nginx-proxy -n opengovernance
+kubectl delete pods -l app.kubernetes.io/name=dex -n opengovernance
+
+echo_info "Relevant pods have been restarted."
+
+# Step 10: Setup Completed Successfully
+echo_info "Step 10 of 10: Setup Completed Successfully"
+
+echo "Please allow a few minutes for the changes to propagate and for services to become fully operational."
+
+echo_info "After Setup:"
+echo "1. Create a DNS A record pointing your domain to the Ingress Controller's external IP."
+echo "   - Type: A"
+echo "   - Name (Key): ${DOMAIN}"
+echo "   - Value: ${INGRESS_EXTERNAL_IP}"
+echo "2. After the DNS changes take effect, open https://${DOMAIN}."
+echo "   - You can log in with the following credentials:"
+echo "     - Username: admin@opengovernance.io"
+echo "     - Password: password"
