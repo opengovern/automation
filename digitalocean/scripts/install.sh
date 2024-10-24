@@ -31,9 +31,84 @@ function check_prerequisites() {
   fi
 }
 
-# Function to install OpenGovernance (Step 2)
+# Function to handle EMAIL and DOMAIN variables (Step 2)
+function configure_email_and_domain() {
+  echo_info "Step 2 of 10: Configuring EMAIL and DOMAIN"
+
+  # Default values for EMAIL and DOMAIN
+  DEFAULT_EMAIL="your-email@example.com"
+  DEFAULT_DOMAIN="opengovernance.example.io"
+
+  # Check if EMAIL and DOMAIN variables are set and not default values
+  if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
+    echo_info "EMAIL and DOMAIN are not set or are set to default values."
+
+    # Inform the user about the importance of EMAIL and DOMAIN
+    echo_info "Change the email and domain to your own."
+    echo_info "Email is needed to generate SSL Certificate with Let's Encrypt."
+    echo_info "App will be configured to use the domain you provided."
+
+    # Prompt for EMAIL
+    while true; do
+      read -p "Please enter your email: " EMAIL
+      echo "You entered: $EMAIL"
+      read -p "Is this correct? (y/n): " yn
+      case $yn in
+          [Yy]* ) break;;
+          [Nn]* ) echo "Let's try again.";;
+          * ) echo "Please answer y or n.";;
+      esac
+    done
+
+    # Prompt for DOMAIN
+    while true; do
+      read -p "Please enter your domain for OpenGovernance: " DOMAIN
+      echo "You entered: $DOMAIN"
+      read -p "Is this correct? (y/n): " yn
+      case $yn in
+          [Yy]* ) break;;
+          [Nn]* ) echo "Let's try again.";;
+          * ) echo "Please answer y or n.";;
+      esac
+    done
+  else
+    echo_info "EMAIL and DOMAIN are set as follows:"
+    echo "Email: $EMAIL"
+    echo "Domain: $DOMAIN"
+    echo_info "If these are correct, the script will continue in 10 seconds..."
+    echo_info "Press Ctrl+C to cancel and set the correct values."
+    sleep 10
+  fi
+}
+
+# Function to install OpenGovernance with custom domain (Step 3)
+function install_opengovernance_with_custom_domain() {
+  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain"
+
+  # Add the OpenGovernance Helm repository and update
+  helm repo add opengovernance https://opengovern.github.io/charts
+  helm repo update
+
+  # Install OpenGovernance if not already installed
+  if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
+    echo_info "OpenGovernance is already installed. Skipping installation."
+  else
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: https://${DOMAIN}/dex
+EOF
+    echo_info "OpenGovernance application configuration updated."
+  fi
+}
+
+# Function to install OpenGovernance without custom domain (Step 3 alternative)
 function install_opengovernance() {
-  echo_info "Step 2 of 10: Installing OpenGovernance using Helm"
+  echo_info "Step 3 of 10: Installing OpenGovernance using Helm"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts
@@ -48,9 +123,9 @@ function install_opengovernance() {
   fi
 }
 
-# Function to check pods and migrator jobs (Step 3)
+# Function to check pods and migrator jobs (Step 4)
 function check_pods_and_jobs() {
-  echo_info "Step 3 of 10: Checking Pods and Migrator Jobs"
+  echo_info "Step 4 of 10: Checking Pods and Migrator Jobs"
 
   echo_info "Waiting for all Pods to be ready..."
 
@@ -104,56 +179,6 @@ function check_pods_and_jobs() {
     else
       echo_info "All 'migrator-job' pods are in 'Completed' state."
     fi
-  fi
-}
-
-# Function to handle EMAIL and DOMAIN variables (Step 4)
-function configure_email_and_domain() {
-  echo_info "Step 4 of 10: Configuring EMAIL and DOMAIN"
-
-  # Default values for EMAIL and DOMAIN
-  DEFAULT_EMAIL="your-email@example.com"
-  DEFAULT_DOMAIN="opengovernance.example.io"
-
-  # Check if EMAIL and DOMAIN variables are set and not default values
-  if [ -z "$EMAIL" ] || [ -z "$DOMAIN" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
-    echo_info "EMAIL and DOMAIN are not set or are set to default values."
-
-    # Inform the user about the importance of EMAIL and DOMAIN
-    echo_info "Change the email and domain to your own."
-    echo_info "Email is needed to generate SSL Certificate with Let's Encrypt."
-    echo_info "App will be configured to use the domain you provided."
-
-    # Prompt for EMAIL
-    while true; do
-      read -p "Please enter your email: " EMAIL
-      echo "You entered: $EMAIL"
-      read -p "Is this correct? (y/n): " yn
-      case $yn in
-          [Yy]* ) break;;
-          [Nn]* ) echo "Let's try again.";;
-          * ) echo "Please answer y or n.";;
-      esac
-    done
-
-    # Prompt for DOMAIN
-    while true; do
-      read -p "Please enter your domain for OpenGovernance: " DOMAIN
-      echo "You entered: $DOMAIN"
-      read -p "Is this correct? (y/n): " yn
-      case $yn in
-          [Yy]* ) break;;
-          [Nn]* ) echo "Let's try again.";;
-          * ) echo "Please answer y or n.";;
-      esac
-    done
-  else
-    echo_info "EMAIL and DOMAIN are set as follows:"
-    echo "Email: $EMAIL"
-    echo "Domain: $DOMAIN"
-    echo_info "If these are correct, the script will continue in 10 seconds..."
-    echo_info "Press Ctrl+C to cancel and set the correct values."
-    sleep 10
   fi
 }
 
@@ -344,9 +369,16 @@ function display_completion_message() {
 # -----------------------------
 
 check_prerequisites
-install_opengovernance
-check_pods_and_jobs
 configure_email_and_domain
+
+# Decide which installation function to run based on DOMAIN and EMAIL
+if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ] && [ "$EMAIL" != "your-email@example.com" ] && [ "$DOMAIN" != "opengovernance.example.io" ]; then
+  install_opengovernance_with_custom_domain
+else
+  install_opengovernance
+fi
+
+check_pods_and_jobs
 setup_cert_manager_and_issuer
 setup_ingress_controller
 update_opengovernance_config
