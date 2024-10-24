@@ -269,14 +269,15 @@ function check_pods_and_jobs() {
   fi
 }
 
-# Function to set up cert-manager and Let's Encrypt Issuer (Step 6)
+# Function to set up cert-manager and Let's Encrypt Issuer (Step 5)
 function setup_cert_manager_and_issuer() {
-  echo_info "Step 6 of 10: Setting up cert-manager and Let's Encrypt Issuer"
+  echo_info "Step 5 of 10: Setting up cert-manager and Let's Encrypt Issuer"
 
-  # Install cert-manager if not already installed
-  if helm list -n cert-manager | grep cert-manager > /dev/null 2>&1; then
-    echo_info "cert-manager is already installed. Skipping installation."
+  # Check if cert-manager is installed in any namespace
+  if helm list --all-namespaces | grep cert-manager > /dev/null 2>&1; then
+    echo_info "cert-manager is already installed in the cluster. Skipping installation."
   else
+    # Add Jetstack Helm repository if not already added
     if helm repo list | grep jetstack > /dev/null 2>&1; then
       echo_info "Jetstack Helm repository already exists. Skipping add."
     else
@@ -286,23 +287,24 @@ function setup_cert_manager_and_issuer() {
 
     helm repo update
 
+    # Install cert-manager in the 'cert-manager' namespace
     helm install cert-manager jetstack/cert-manager \
       --namespace cert-manager \
       --create-namespace \
-      --set crds.enabled=true \
+      --set installCRDs=true \
       --set prometheus.enabled=false
 
     echo_info "Waiting for cert-manager pods to be ready..."
-    kubectl wait --namespace cert-manager \
-      --for=condition=ready pod \
-      --selector=app.kubernetes.io/name=cert-manager \
+    kubectl wait --for=condition=ready pod \
+      --all --namespace cert-manager \
       --timeout=120s
   fi
 
-  # Create Let's Encrypt Issuer
-  if kubectl get issuer letsencrypt-nginx -n opengovernance > /dev/null 2>&1; then
+  # Check if the Let's Encrypt Issuer already exists in any namespace
+  if kubectl get issuer --all-namespaces | grep letsencrypt-nginx > /dev/null 2>&1; then
     echo_info "Issuer 'letsencrypt-nginx' already exists. Skipping creation."
   else
+    # Create the Let's Encrypt Issuer in the 'opengovernance' namespace
     kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: Issuer
@@ -327,6 +329,7 @@ EOF
       --timeout=360s
   fi
 }
+
 
 # Function to install NGINX Ingress Controller and get External IP (Step 7)
 function setup_ingress_controller() {
