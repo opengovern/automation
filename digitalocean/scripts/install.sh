@@ -43,9 +43,9 @@ function configure_email_and_domain() {
   if [ -z "$EMAIL" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ]; then
     echo_info "EMAIL is not set or is set to the default value."
     while true; do
-      read -p "Please enter your email: " EMAIL
+      read -p "Please enter your email: " EMAIL < /dev/tty
       echo "You entered: $EMAIL"
-      read -p "Is this correct? (y/n): " yn
+      read -p "Is this correct? (y/n): " yn < /dev/tty
       case $yn in
           [Yy]* ) break;;
           [Nn]* ) echo "Let's try again.";;
@@ -58,9 +58,9 @@ function configure_email_and_domain() {
   if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
     echo_info "DOMAIN is not set or is set to the default value."
     while true; do
-      read -p "Please enter your domain for OpenGovernance: " DOMAIN
+      read -p "Please enter your domain for OpenGovernance: " DOMAIN < /dev/tty
       echo "You entered: $DOMAIN"
-      read -p "Is this correct? (y/n): " yn
+      read -p "Is this correct? (y/n): " yn < /dev/tty
       case $yn in
           [Yy]* ) break;;
           [Nn]* ) echo "Let's try again.";;
@@ -363,7 +363,7 @@ if [ "$EMAIL" = "$DEFAULT_EMAIL" ] && [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
   echo_info "EMAIL and DOMAIN are set to default values."
   echo "You can enter valid EMAIL and DOMAIN values or proceed without a custom domain."
   while true; do
-    read -p "Do you want to enter valid EMAIL and DOMAIN values? (y/n): " yn
+    read -p "Do you want to enter valid EMAIL and DOMAIN values? (y/n): " yn < /dev/tty
     case $yn in
       [Yy]* )
         configure_email_and_domain
