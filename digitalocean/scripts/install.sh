@@ -356,6 +356,16 @@ function setup_ingress_controller() {
 function deploy_ingress_resources() {
   echo_info "Step 8 of 10: Deploying Ingress Resources"
 
+  # Check if the Ingress already exists
+  if kubectl get ingress opengovernance-ingress -n opengovernance > /dev/null 2>&1; then
+    echo_info "Ingress 'opengovernance-ingress' already exists."
+    echo_info "Updating existing Ingress in 10 seconds. Press Ctrl+C to cancel."
+    sleep 10
+  else
+    echo_info "Creating new Ingress resource."
+  fi
+
+  # Apply the Ingress configuration
   kubectl apply -f - <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -383,6 +393,8 @@ spec:
                 port:
                   number: 80
 EOF
+
+  echo_info "Ingress resource has been applied."
 }
 
 # Function to restart relevant pods (Step 9)
