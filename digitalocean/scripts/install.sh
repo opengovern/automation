@@ -334,9 +334,9 @@ function setup_cert_manager_and_issuer() {
       --timeout=120s
   fi
 
-  # Check if the Let's Encrypt Issuer already exists in any namespace
-  if kubectl get issuer --all-namespaces | grep letsencrypt-nginx > /dev/null 2>&1; then
-    echo_info "Issuer 'letsencrypt-nginx' already exists. Skipping creation."
+  # Check if the Let's Encrypt Issuer already exists in 'opengovernance' namespace
+  if kubectl get issuer letsencrypt-nginx -n opengovernance > /dev/null 2>&1; then
+    echo_info "Issuer 'letsencrypt-nginx' already exists in 'opengovernance' namespace. Skipping creation."
   else
     # Create the Let's Encrypt Issuer in the 'opengovernance' namespace
     kubectl apply -f - <<EOF
