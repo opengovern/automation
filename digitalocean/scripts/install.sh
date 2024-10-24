@@ -33,6 +33,13 @@ function check_prerequisites() {
     echo "Please install Helm and try again."
     exit 1
   fi
+
+  # Check if jq is installed (required for version comparison)
+  if ! command -v jq &> /dev/null; then
+    echo_error "Error: jq is not installed."
+    echo "Please install jq and try again."
+    exit 1
+  fi
 }
 
 # Function to capture EMAIL and DOMAIN variables (Step 2)
@@ -70,30 +77,83 @@ function configure_email_and_domain() {
   fi
 }
 
+# Function to check and handle upgrade or reinstall
+function check_and_handle_upgrade_or_reinstall() {
+  echo_info "Checking if app is installed and unhealthy, and if a newer version is available."
+
+  # Check if app is installed
+  if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
+    # App is installed
+    echo_info "OpenGovernance is installed. Checking health status."
+
+    # Check if app is unhealthy
+    UNHEALTHY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $1,$3}' | grep -E "CrashLoopBackOff|Error|Failed")
+    if [ -n "$UNHEALTHY_PODS" ]; then
+      echo_error "Detected unhealthy pods:"
+      echo "$UNHEALTHY_PODS"
+
+      # Check if newer version is available
+      echo_info "Checking for newer version of OpenGovernance."
+
+      # Get current installed version
+      CURRENT_VERSION=$(helm ls -n opengovernance -o json | jq -r '.[0].chart' | sed 's/^opengovernance-//')
+
+      # Get latest available version
+      helm repo update > /dev/null 2>&1
+      LATEST_VERSION=$(helm search repo opengovernance/opengovernance --versions -o json | jq -r '.[0].version')
+
+      echo "Current version: $CURRENT_VERSION"
+      echo "Latest version: $LATEST_VERSION"
+
+      # Compare versions
+      if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+        echo_info "A newer version of OpenGovernance is available. Proceeding to uninstall and reinstall."
+
+        # Uninstall the app
+        helm uninstall opengovernance -n opengovernance
+
+        # Delete the namespace
+        kubectl delete namespace opengovernance
+
+        # Wait for namespace deletion
+        echo_info "Waiting for namespace 'opengovernance' to be deleted."
+        while kubectl get namespace opengovernance > /dev/null 2>&1; do
+          sleep 5
+        done
+
+        # Proceed to reinstall
+      else
+        echo_info "No newer version available. Skipping reinstallation."
+      fi
+    else
+      echo_info "All pods are healthy. No action needed."
+    fi
+  else
+    # App is not installed
+    echo_info "OpenGovernance is not installed."
+  fi
+}
+
 # Function to install OpenGovernance with custom domain (Step 3)
 function install_opengovernance_with_custom_domain() {
   echo_info "Step 3 of 10: Installing OpenGovernance with custom domain"
 
   # Add the OpenGovernance Helm repository and update
-  helm repo add opengovernance https://opengovern.github.io/charts
+  helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
   helm repo update
 
-  # Install OpenGovernance if not already installed
-  if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
-    echo_info "OpenGovernance is already installed. Skipping installation."
-  else
-    echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
-      -f - <<EOF
+  # Install OpenGovernance
+  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
+  helm install -n opengovernance opengovernance \
+    opengovernance/opengovernance --create-namespace --timeout=10m \
+    -f - <<EOF
 global:
   domain: ${DOMAIN}
 dex:
   config:
     issuer: https://${DOMAIN}/dex
 EOF
-    echo_info "OpenGovernance application installation completed."
-  fi
+  echo_info "OpenGovernance application installation completed."
 }
 
 # Function to install OpenGovernance without custom domain (Step 3 alternative)
@@ -101,18 +161,14 @@ function install_opengovernance() {
   echo_info "Step 3 of 10: Installing OpenGovernance using Helm"
 
   # Add the OpenGovernance Helm repository and update
-  helm repo add opengovernance https://opengovern.github.io/charts
+  helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
   helm repo update
 
-  # Install OpenGovernance if not already installed
-  if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
-    echo_info "OpenGovernance is already installed. Skipping installation."
-  else
-    echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m
-    echo_info "OpenGovernance application installation completed."
-  fi
+  # Install OpenGovernance
+  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
+  helm install -n opengovernance opengovernance \
+    opengovernance/opengovernance --create-namespace --timeout=10m
+  echo_info "OpenGovernance application installation completed."
 }
 
 # Function to check pods and migrator jobs (Step 4)
@@ -355,6 +411,7 @@ function provide_port_forward_instructions() {
 
 check_prerequisites
 configure_email_and_domain
+check_and_handle_upgrade_or_reinstall
 
 # Decision-making logic moved to main execution flow
 
