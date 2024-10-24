@@ -2,6 +2,21 @@
 
 set -e
 
+# -----------------------------
+# Logging Configuration
+# -----------------------------
+LOGFILE="/var/log/opengovernance_install.log"
+
+# Ensure the log directory exists
+mkdir -p "$(dirname "$LOGFILE")"
+
+# Redirect all output to the log file and the console
+exec > >(tee -i "$LOGFILE") 2>&1
+
+# -----------------------------
+# Function Definitions
+# -----------------------------
+
 # Function to display informational messages
 function echo_info() {
   printf "\n\033[1;34m%s\033[0m\n\n" "$1"
@@ -12,24 +27,39 @@ function echo_error() {
   printf "\n\033[0;31m%s\033[0m\n\n" "$1"
 }
 
-# Initialize variables
-DOMAIN=""
-EMAIL=""
-ENABLE_HTTPS=false
-
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [-d DOMAIN] [-e EMAIL]"
+  echo "Usage: $0 [-d DOMAIN] [-e EMAIL] [--dry-run]"
   echo ""
   echo "Options:"
   echo "  -d, --domain    Specify the domain for OpenGovernance."
   echo "  -e, --email     Specify the email for Let's Encrypt certificate generation."
+  echo "  --dry-run       Perform a trial run with no changes made."
   echo "  -h, --help      Display this help message."
   exit 1
 }
 
+# Function to validate email format
+function validate_email() {
+  local email_regex="^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+  if [[ ! "$EMAIL" =~ $email_regex ]]; then
+    echo_error "Invalid email format: $EMAIL"
+    exit 1
+  fi
+}
+
+# Function to validate domain format
+function validate_domain() {
+  local domain_regex="^(([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\.)+([A-Za-z]{2,})$"
+  if [[ ! "$DOMAIN" =~ $domain_regex ]]; then
+    echo_error "Invalid domain format: $DOMAIN"
+    exit 1
+  fi
+}
+
 # Function to parse command-line arguments
 function parse_args() {
+  DRY_RUN=false
   while [[ "$#" -gt 0 ]]; do
     case $1 in
       -d|--domain)
@@ -40,6 +70,10 @@ function parse_args() {
         EMAIL="$2"
         shift 2
         ;;
+      --dry-run)
+        DRY_RUN=true
+        shift
+        ;;
       -h|--help)
         usage
         ;;
@@ -49,6 +83,15 @@ function parse_args() {
         ;;
     esac
   done
+
+  # Validate DOMAIN and EMAIL if they are set
+  if [ -n "$DOMAIN" ]; then
+    validate_domain
+  fi
+
+  if [ -n "$EMAIL" ]; then
+    validate_email
+  fi
 }
 
 # Function to check prerequisites (Step 1)
@@ -68,13 +111,22 @@ function check_prerequisites() {
     echo "Please install Helm and try again."
     exit 1
   fi
+
+  # Check if necessary Kubernetes resources are available
+  REQUIRED_KUBECTL_RESOURCES=("ingress" "svc" "pods" "namespace")
+  for resource in "${REQUIRED_KUBECTL_RESOURCES[@]}"; do
+    if ! kubectl api-resources | grep -qw "$resource"; then
+      echo_error "Error: Kubernetes resource '$resource' is not available."
+      exit 1
+    fi
+  done
 }
 
 # Function to capture DOMAIN and EMAIL variables when needed
 function configure_email_and_domain() {
   echo_info "Configuring DOMAIN and EMAIL"
 
-  # Capture DOMAIN if not set
+  # Capture DOMAIN if not set via arguments
   if [ -z "$DOMAIN" ]; then
     while true; do
       echo ""
@@ -88,11 +140,16 @@ function configure_email_and_domain() {
       echo "You entered: $DOMAIN"
       read -p "Is this correct? (Y/n): " yn < /dev/tty
       case $yn in
-          "" | [Yy]* ) break;;
-          [Nn]* ) echo "Let's try again."
-                  DOMAIN=""
-                  ;;
-          * ) echo "Please answer y or n.";;
+          "" | [Yy]* ) 
+              validate_domain
+              break
+              ;;
+          [Nn]* ) 
+              echo "Let's try again."
+              DOMAIN=""
+              ;;
+          * ) 
+              echo "Please answer y or n.";;
       esac
     done
   fi
@@ -112,11 +169,16 @@ function configure_email_and_domain() {
         echo "You entered: $EMAIL"
         read -p "Is this correct? (Y/n): " yn < /dev/tty
         case $yn in
-            "" | [Yy]* ) break;;
-            [Nn]* ) echo "Let's try again."
-                    EMAIL=""
-                    ;;
-            * ) echo "Please answer y or n.";;
+            "" | [Yy]* ) 
+                validate_email
+                break
+                ;;
+            [Nn]* ) 
+                echo "Let's try again."
+                EMAIL=""
+                ;;
+            * ) 
+                echo "Please answer y or n.";;
         esac
       done
     fi
@@ -133,7 +195,7 @@ function check_opengovernance_status() {
   APP_HEALTHY=false
 
   # Check if app is installed
-  if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
+  if helm ls -n opengovernance | grep -qw opengovernance; then
     APP_INSTALLED=true
     echo_info "OpenGovernance is installed. Checking health status."
 
@@ -161,8 +223,19 @@ function uninstall_and_reinstall_opengovernance() {
     case $yn in
         [Yy]* )
           # Uninstall OpenGovernance
-          helm uninstall opengovernance -n opengovernance
-          kubectl delete namespace opengovernance
+          if helm uninstall opengovernance -n opengovernance; then
+            echo_info "Helm release 'opengovernance' uninstalled successfully."
+          else
+            echo_error "Failed to uninstall Helm release 'opengovernance'."
+            exit 1
+          fi
+
+          if kubectl delete namespace opengovernance; then
+            echo_info "Namespace 'opengovernance' deleted successfully."
+          else
+            echo_error "Failed to delete namespace 'opengovernance'."
+            exit 1
+          fi
 
           # Wait for namespace deletion
           echo_info "Waiting for namespace 'opengovernance' to be deleted."
@@ -190,20 +263,40 @@ function install_opengovernance_with_custom_domain_with_https() {
   echo_info "Step 4 of 10: Installing OpenGovernance with custom domain and HTTPS"
 
   # Add the OpenGovernance Helm repository and update
-  helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
+  if ! helm repo list | grep -qw opengovernance; then
+    helm repo add opengovernance https://opengovern.github.io/charts
+    echo_info "Added OpenGovernance Helm repository."
+  else
+    echo_info "OpenGovernance Helm repository already exists. Skipping add."
+  fi
   helm repo update
 
   # Install OpenGovernance
   echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
-  helm install -n opengovernance opengovernance \
-    opengovernance/opengovernance --create-namespace --timeout=10m \
-    -f - <<EOF
+
+  if [ "$DRY_RUN" = true ]; then
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      --dry-run \
+      -f - <<EOF
 global:
   domain: ${DOMAIN}
 dex:
   config:
     issuer: https://${DOMAIN}/dex
 EOF
+  else
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: https://${DOMAIN}/dex
+EOF
+  fi
+
   echo_info "OpenGovernance application installation completed."
 }
 
@@ -212,20 +305,40 @@ function install_opengovernance_with_custom_domain_no_https() {
   echo_info "Step 4 of 10: Installing OpenGovernance with custom domain and without HTTPS"
 
   # Add the OpenGovernance Helm repository and update
-  helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
+  if ! helm repo list | grep -qw opengovernance; then
+    helm repo add opengovernance https://opengovern.github.io/charts
+    echo_info "Added OpenGovernance Helm repository."
+  else
+    echo_info "OpenGovernance Helm repository already exists. Skipping add."
+  fi
   helm repo update
 
   # Install OpenGovernance
   echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
-  helm install -n opengovernance opengovernance \
-    opengovernance/opengovernance --create-namespace --timeout=10m \
-    -f - <<EOF
+
+  if [ "$DRY_RUN" = true ]; then
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      --dry-run \
+      -f - <<EOF
 global:
   domain: ${DOMAIN}
 dex:
   config:
     issuer: http://${DOMAIN}/dex
 EOF
+  else
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
+EOF
+  fi
+
   echo_info "OpenGovernance application installation completed."
 }
 
@@ -234,13 +347,26 @@ function install_opengovernance() {
   echo_info "Step 4 of 10: Installing OpenGovernance without custom domain"
 
   # Add the OpenGovernance Helm repository and update
-  helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
+  if ! helm repo list | grep -qw opengovernance; then
+    helm repo add opengovernance https://opengovern.github.io/charts
+    echo_info "Added OpenGovernance Helm repository."
+  else
+    echo_info "OpenGovernance Helm repository already exists. Skipping add."
+  fi
   helm repo update
 
   # Install OpenGovernance
   echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
-  helm install -n opengovernance opengovernance \
-    opengovernance/opengovernance --create-namespace --timeout=10m
+
+  if [ "$DRY_RUN" = true ]; then
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      --dry-run
+  else
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m
+  fi
+
   echo_info "OpenGovernance application installation completed."
 }
 
@@ -308,30 +434,41 @@ function setup_cert_manager_and_issuer() {
   echo_info "Step 6 of 10: Setting up cert-manager and Let's Encrypt Issuer"
 
   # Check if cert-manager is installed in any namespace
-  if helm list --all-namespaces | grep cert-manager > /dev/null 2>&1; then
+  if helm list --all-namespaces | grep -qw cert-manager; then
     echo_info "cert-manager is already installed in the cluster. Skipping installation."
   else
     # Add Jetstack Helm repository if not already added
-    if helm repo list | grep jetstack > /dev/null 2>&1; then
-      echo_info "Jetstack Helm repository already exists. Skipping add."
-    else
+    if ! helm repo list | grep -qw jetstack; then
       helm repo add jetstack https://charts.jetstack.io
       echo_info "Added Jetstack Helm repository."
+    else
+      echo_info "Jetstack Helm repository already exists. Skipping add."
     fi
 
     helm repo update
 
     # Install cert-manager in the 'cert-manager' namespace
-    helm install cert-manager jetstack/cert-manager \
-      --namespace cert-manager \
-      --create-namespace \
-      --set installCRDs=true \
-      --set prometheus.enabled=false
+    echo_info "Installing cert-manager in the 'cert-manager' namespace."
+    if [ "$DRY_RUN" = true ]; then
+      helm install cert-manager jetstack/cert-manager \
+        --namespace cert-manager \
+        --create-namespace \
+        --set installCRDs=true \
+        --set prometheus.enabled=false \
+        --dry-run
+    else
+      helm install cert-manager jetstack/cert-manager \
+        --namespace cert-manager \
+        --create-namespace \
+        --set installCRDs=true \
+        --set prometheus.enabled=false
+    fi
 
     echo_info "Waiting for cert-manager pods to be ready..."
-    kubectl wait --for=condition=ready pod \
-      --all --namespace cert-manager \
-      --timeout=120s
+    if ! kubectl wait --for=condition=ready pod --all --namespace cert-manager --timeout=120s; then
+      echo_error "cert-manager pods did not become ready in time."
+      exit 1
+    fi
   fi
 
   # Check if the Let's Encrypt Issuer already exists in 'opengovernance' namespace
@@ -339,7 +476,9 @@ function setup_cert_manager_and_issuer() {
     echo_info "Issuer 'letsencrypt-nginx' already exists in 'opengovernance' namespace. Skipping creation."
   else
     # Create the Let's Encrypt Issuer in the 'opengovernance' namespace
-    kubectl apply -f - <<EOF
+    echo_info "Creating Let's Encrypt Issuer in 'opengovernance' namespace."
+    if [ "$DRY_RUN" = true ]; then
+      kubectl apply -f - <<EOF --dry-run=client
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -356,11 +495,33 @@ spec:
           ingress:
             class: nginx
 EOF
+    else
+      kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-nginx
+  namespace: opengovernance
+spec:
+  acme:
+    email: ${EMAIL}
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-nginx-private-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+EOF
+    fi
 
     echo_info "Waiting for Issuer to be ready (up to 6 minutes)..."
-    kubectl wait --namespace opengovernance \
+    if ! kubectl wait --namespace opengovernance \
       --for=condition=Ready issuer/letsencrypt-nginx \
-      --timeout=360s
+      --timeout=360s; then
+      echo_error "Issuer 'letsencrypt-nginx' did not become ready in time."
+      exit 1
+    fi
   fi
 }
 
@@ -369,24 +530,35 @@ function setup_ingress_controller() {
   echo_info "Step 7 of 10: Installing NGINX Ingress Controller and Retrieving External IP"
 
   # Install NGINX Ingress Controller if not already installed
-  if helm list -n opengovernance | grep ingress-nginx > /dev/null 2>&1; then
+  if helm list -n opengovernance | grep -qw ingress-nginx; then
     echo_info "NGINX Ingress Controller is already installed. Skipping installation."
   else
-    if helm repo list | grep ingress-nginx > /dev/null 2>&1; then
-      echo_info "Ingress-nginx Helm repository already exists. Skipping add."
-    else
+    if ! helm repo list | grep -qw ingress-nginx; then
       helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
       echo_info "Added ingress-nginx Helm repository."
+    else
+      echo_info "Ingress-nginx Helm repository already exists. Skipping add."
     fi
 
     helm repo update
 
-    helm install ingress-nginx ingress-nginx/ingress-nginx \
-      --namespace opengovernance \
-      --create-namespace \
-      --set controller.replicaCount=2 \
-      --set controller.resources.requests.cpu=100m \
-      --set controller.resources.requests.memory=90Mi
+    echo_info "Installing NGINX Ingress Controller in 'opengovernance' namespace."
+    if [ "$DRY_RUN" = true ]; then
+      helm install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace opengovernance \
+        --create-namespace \
+        --set controller.replicaCount=2 \
+        --set controller.resources.requests.cpu=100m \
+        --set controller.resources.requests.memory=90Mi \
+        --dry-run
+    else
+      helm install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace opengovernance \
+        --create-namespace \
+        --set controller.replicaCount=2 \
+        --set controller.resources.requests.cpu=100m \
+        --set controller.resources.requests.memory=90Mi
+    fi
   fi
 
   echo_info "Waiting for Ingress Controller to obtain an external IP (2-6 minutes)..."
@@ -496,7 +668,12 @@ EOF
   fi
 
   # Apply the Ingress configuration
-  echo "$DESIRED_INGRESS" | kubectl apply -f -
+  echo_info "Applying Ingress configuration."
+  if [ "$DRY_RUN" = true ]; then
+    echo "$DESIRED_INGRESS" | kubectl apply -f - --dry-run=client
+  else
+    echo "$DESIRED_INGRESS" | kubectl apply -f -
+  fi
   echo_info "Ingress 'opengovernance-ingress' has been applied."
 }
 
@@ -511,7 +688,8 @@ function perform_helm_upgrade_no_custom_domain() {
 
   echo_info "Upgrading OpenGovernance Helm release with external IP: $INGRESS_EXTERNAL_IP"
 
-  helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m -f - <<EOF
+  if [ "$DRY_RUN" = true ]; then
+    helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m --dry-run -f - <<EOF
 global:
   domain: "${INGRESS_EXTERNAL_IP}"
   debugMode: true
@@ -519,6 +697,16 @@ dex:
   config:
     issuer: "http://${INGRESS_EXTERNAL_IP}/dex"
 EOF
+  else
+    helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m -f - <<EOF
+global:
+  domain: "${INGRESS_EXTERNAL_IP}"
+  debugMode: true
+dex:
+  config:
+    issuer: "http://${INGRESS_EXTERNAL_IP}/dex"
+EOF
+  fi
 
   echo_info "Helm upgrade completed successfully."
 }
@@ -527,10 +715,19 @@ EOF
 function restart_pods() {
   echo_info "Step 10 of 10: Restarting Relevant Pods"
 
-  kubectl delete pods -l app=nginx-proxy -n opengovernance
-  kubectl delete pods -l app.kubernetes.io/name=dex -n opengovernance
+  if kubectl get pods -n opengovernance -l app=nginx-proxy | grep -qw nginx-proxy; then
+    kubectl delete pods -l app=nginx-proxy -n opengovernance
+    echo_info "nginx-proxy pods have been restarted."
+  else
+    echo_info "No nginx-proxy pods found to restart."
+  fi
 
-  echo_info "Relevant pods have been restarted."
+  if kubectl get pods -n opengovernance -l app.kubernetes.io/name=dex | grep -qw dex; then
+    kubectl delete pods -l app.kubernetes.io/name=dex -n opengovernance
+    echo_info "dex pods have been restarted."
+  else
+    echo_info "No dex pods found to restart."
+  fi
 }
 
 # Function to display completion message (Step 11)
