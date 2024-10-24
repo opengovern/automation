@@ -286,23 +286,6 @@ function setup_ingress_controller() {
   done
 }
 
-# Function to update OpenGovernance Configuration (Step 7)
-function update_opengovernance_config() {
-  echo_info "Step 7 of 10: Updating OpenGovernance Configuration"
-
-  helm upgrade opengovernance opengovernance/opengovernance \
-    -n opengovernance \
-    --reuse-values \
-    -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: https://${DOMAIN}/dex
-EOF
-
-  echo_info "OpenGovernance application configuration updated."
-}
 
 # Function to deploy Ingress Resources (Step 8)
 function deploy_ingress_resources() {
@@ -381,7 +364,6 @@ fi
 check_pods_and_jobs
 setup_cert_manager_and_issuer
 setup_ingress_controller
-update_opengovernance_config
 deploy_ingress_resources
 restart_pods
 display_completion_message
