@@ -61,6 +61,7 @@ SLEEP_INTERVAL=10  # Check every 10 seconds
 ELAPSED=0
 
 while true; do
+  # Get the count of pods that are not in Running, Succeeded, or Completed state
   NOT_READY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $3}' | grep -v -E 'Running|Succeeded|Completed' | wc -l)
   if [ "$NOT_READY_PODS" -eq 0 ]; then
     echo_info "All Pods are running and/or healthy."
@@ -77,5 +78,34 @@ while true; do
   sleep $SLEEP_INTERVAL
   ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
 done
+
+# Step 6: Check the status of 'migrator-job' pods
+echo_info "Step 6: Checking the status of 'migrator-job' pods"
+
+# Get the list of pods starting with 'migrator-job'
+MIGRATOR_PODS=$(kubectl get pods -n opengovernance -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep '^migrator-job')
+
+if [ -z "$MIGRATOR_PODS" ]; then
+  echo_info "No 'migrator-job' pods found."
+else
+  # Flag to check if all migrator-job pods are completed
+  ALL_COMPLETED=true
+  for POD in $MIGRATOR_PODS; do
+    STATUS=$(kubectl get pod "$POD" -n opengovernance -o jsonpath='{.status.phase}')
+    if [ "$STATUS" != "Succeeded" ] && [ "$STATUS" != "Completed" ]; then
+      echo_error "Pod '$POD' is in '$STATUS' state. It needs to be in 'Completed' state."
+      ALL_COMPLETED=false
+    else
+      echo_info "Pod '$POD' is in 'Completed' state."
+    fi
+  done
+
+  if [ "$ALL_COMPLETED" = false ]; then
+    echo_error "One or more 'migrator-job' pods are not in 'Completed' state."
+    exit 1
+  else
+    echo_info "All 'migrator-job' pods are in 'Completed' state."
+  fi
+fi
 
 echo_info "All steps completed successfully."
