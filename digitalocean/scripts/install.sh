@@ -49,8 +49,7 @@ function configure_email_and_domain() {
     while true; do
       read -p "Please enter your domain for OpenGovernance (or press Enter to skip): " DOMAIN < /dev/tty
       if [ -z "$DOMAIN" ]; then
-        echo_info "No domain entered. Proceeding without a custom domain."
-        DOMAIN=""
+        echo_info "No domain entered."
         break
       fi
       echo "You entered: $DOMAIN"
@@ -64,7 +63,7 @@ function configure_email_and_domain() {
   fi
 
   # Only proceed to capture EMAIL if DOMAIN is set and not empty
-  if [ -n "$DOMAIN" ]; then
+  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; then
     # Capture EMAIL if not set or set to default
     if [ -z "$EMAIL" ] || [ "$EMAIL" = "$DEFAULT_EMAIL" ]; then
       if [ -z "$EMAIL" ]; then
@@ -138,18 +137,11 @@ function uninstall_and_reinstall_opengovernance() {
           done
           echo_info "Namespace 'opengovernance' has been deleted."
 
-          # Reinstall OpenGovernance with custom domain
-          install_opengovernance_with_custom_domain
-          check_pods_and_jobs
-          # Proceed with the rest of the steps
-          setup_cert_manager_and_issuer
-          setup_ingress_controller
-          deploy_ingress_resources
-          restart_pods
-          display_completion_message
+          # Run installation logic again
+          run_installation_logic
           break
           ;;
-        [Nn]* )
+        [Nn]* | "" )
           echo_info "Skipping uninstallation and reinstallation of OpenGovernance."
           echo_info "Please resolve the pod issues manually or rerun the script."
           exit 0
@@ -431,6 +423,66 @@ function provide_port_forward_instructions() {
   echo "Password: password"
 }
 
+# Function to run installation logic based on user input
+function run_installation_logic() {
+  # Determine if DOMAIN and EMAIL are set and not defaults
+  DOMAIN_SET=false
+  EMAIL_SET=false
+
+  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; then
+    DOMAIN_SET=true
+  fi
+
+  if [ -n "$EMAIL" ] && [ "$EMAIL" != "$DEFAULT_EMAIL" ]; then
+    EMAIL_SET=true
+  fi
+
+  if [ "$DOMAIN_SET" = false ] && [ "$EMAIL_SET" = false ]; then
+    # Install without custom domain
+    echo_info "Installing OpenGovernance without custom domain."
+    echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
+    sleep 10
+    install_opengovernance
+    check_pods_and_jobs
+    provide_port_forward_instructions
+  elif [ "$DOMAIN_SET" = true ] && [ "$EMAIL_SET" = true ]; then
+    # Install with custom domain
+    echo_info "Installing OpenGovernance with custom domain: $DOMAIN"
+    echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
+    sleep 10
+    install_opengovernance_with_custom_domain
+    check_pods_and_jobs
+    setup_cert_manager_and_issuer
+    setup_ingress_controller
+    deploy_ingress_resources
+    restart_pods
+    display_completion_message
+  else
+    # DOMAIN and/or EMAIL are set to defaults
+    echo_info "DOMAIN and/or EMAIL are set to default values."
+    while true; do
+      echo "Do you want to proceed with installation without a custom domain and HTTPS?"
+      read -p "(Y/n): " yn < /dev/tty
+      case $yn in
+          "" | [Yy]* )
+              DOMAIN=""
+              EMAIL=""
+              install_opengovernance
+              check_pods_and_jobs
+              provide_port_forward_instructions
+              break
+              ;;
+          [Nn]* )
+              configure_email_and_domain
+              run_installation_logic
+              break
+              ;;
+          * ) echo "Please answer y or n.";;
+      esac
+    done
+  fi
+}
+
 # -----------------------------
 # Main Execution Flow
 # -----------------------------
@@ -439,57 +491,25 @@ check_prerequisites
 configure_email_and_domain
 check_opengovernance_status
 
-# Decision-making logic
-
-if [ -z "$DOMAIN" ]; then
-  # DOMAIN is not set
-  echo_info "DOMAIN is not set."
-  echo_info "The installation will proceed without a custom domain and HTTPS."
-  echo_info "Custom domain and HTTPS can also be configured post-installation."
-
-  if [ "$APP_INSTALLED" = false ]; then
-    echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
-    sleep 10
-    install_opengovernance
-    check_pods_and_jobs
-  else
-    echo_info "OpenGovernance is already installed and healthy. Skipping installation."
-  fi
-  provide_port_forward_instructions
-else
-  # DOMAIN is set
-  echo_info "DOMAIN is set to: $DOMAIN"
-
-  if [ "$APP_INSTALLED" = false ]; then
-    echo_info "The installation will proceed with this domain in 10 seconds. Press Ctrl+C to cancel."
-    sleep 10
-    install_opengovernance_with_custom_domain
-    check_pods_and_jobs
-    # Proceed with the rest of the steps
+if [ "$APP_INSTALLED" = false ]; then
+  # Run installation logic
+  run_installation_logic
+elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = false ]; then
+  # Uninstall and reinstall with user's consent
+  uninstall_and_reinstall_opengovernance
+elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
+  # App is installed and healthy
+  # Check if DOMAIN and EMAIL are valid and not defaults
+  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ] && \
+     [ -n "$EMAIL" ] && [ "$EMAIL" != "$DEFAULT_EMAIL" ]; then
+    echo_info "Completing post-installation steps for custom domain configuration."
     setup_cert_manager_and_issuer
     setup_ingress_controller
     deploy_ingress_resources
     restart_pods
     display_completion_message
-  elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = false ]; then
-    # Prompt user for confirmation before reinstalling
-    uninstall_and_reinstall_opengovernance
   else
-    echo_info "OpenGovernance is already installed and healthy. Skipping installation."
-    # Proceed with configuration steps if necessary
-    read -p "Do you want to configure HTTPS and custom domain settings? (y/N): " yn < /dev/tty
-    case $yn in
-        [Yy]* )
-            setup_cert_manager_and_issuer
-            setup_ingress_controller
-            deploy_ingress_resources
-            restart_pods
-            display_completion_message
-            ;;
-        [Nn]* | "" )
-            echo_info "Skipping configuration of HTTPS and custom domain settings."
-            ;;
-        * ) echo "Please answer y or n.";;
-    esac
+    echo_info "OpenGovernance is already installed and healthy."
+    echo_info "No further actions are required."
   fi
 fi
