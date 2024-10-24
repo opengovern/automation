@@ -234,7 +234,7 @@ function setup_cert_manager_and_issuer() {
     helm install cert-manager jetstack/cert-manager \
       --namespace cert-manager \
       --create-namespace \
-      --set installCRDs=true \
+      --set crds.enabled=true \
       --set prometheus.enabled=false
 
     echo_info "Waiting for cert-manager pods to be ready..."
@@ -298,9 +298,9 @@ function setup_ingress_controller() {
       --set controller.resources.requests.memory=90Mi
   fi
 
-  echo_info "Waiting for Ingress Controller to obtain an external IP (up to 5 minutes)... This usually takes between 2-5 minutes."
+  echo_info "Waiting for Ingress Controller to obtain an external IP (2-6 minutes)"
   START_TIME=$(date +%s)
-  TIMEOUT=300
+  TIMEOUT=360
   while true; do
     INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
     if [ -n "$INGRESS_EXTERNAL_IP" ]; then
