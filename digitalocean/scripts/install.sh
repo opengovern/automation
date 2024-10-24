@@ -111,80 +111,31 @@ function configure_email_and_domain() {
   fi
 }
 
-# Function to check and handle upgrade or reinstall
-function check_and_handle_upgrade_or_reinstall() {
-  echo_info "Checking if app is installed and unhealthy, and if a newer version is available."
+# Function to check if OpenGovernance is installed and healthy
+function check_opengovernance_status() {
+  echo_info "Checking if OpenGovernance is installed and healthy."
+
+  APP_INSTALLED=false
+  APP_HEALTHY=false
 
   # Check if app is installed
   if helm ls -n opengovernance | grep opengovernance > /dev/null 2>&1; then
-    # App is installed
+    APP_INSTALLED=true
     echo_info "OpenGovernance is installed. Checking health status."
 
-    # Check if app is unhealthy
-    UNHEALTHY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $1,$3}' | grep -E "CrashLoopBackOff|Error|Failed" || true)
-    if [ -n "$UNHEALTHY_PODS" ]; then
+    # Check if all pods are healthy
+    UNHEALTHY_PODS=$(kubectl get pods -n opengovernance --no-headers | awk '{print $1,$3}' | grep -E "CrashLoopBackOff|Error|Failed|Pending|Terminating" || true)
+    if [ -z "$UNHEALTHY_PODS" ]; then
+      APP_HEALTHY=true
+      echo_info "All OpenGovernance pods are healthy."
+    else
       echo_error "Detected unhealthy pods:"
       echo "$UNHEALTHY_PODS"
-
-      # Check if newer version is available
-      echo_info "Checking for newer version of OpenGovernance."
-
-      # Update Helm repo
-      helm repo update > /dev/null 2>&1
-
-      # Check if jq is installed
-      if command -v jq &> /dev/null; then
-        echo_info "jq is available. Using jq for version parsing."
-
-        # Get current installed version using jq
-        CURRENT_VERSION=$(helm ls -n opengovernance -o json | jq -r '.[0].chart' | sed 's/^opengovernance-//')
-
-        # Get latest available version using jq
-        LATEST_VERSION=$(helm search repo opengovernance/opengovernance --versions -o json | jq -r '.[0].version')
-      else
-        echo_info "jq is not available. Using grep/awk/sed for version parsing."
-
-        # Get current installed version
-        CURRENT_CHART=$(helm ls -n opengovernance -o yaml | grep 'chart:' | awk '{print $2}')
-        # Extract version from chart name
-        CURRENT_VERSION=$(echo "$CURRENT_CHART" | sed 's/^opengovernance-//')
-
-        # Get latest available version
-        LATEST_VERSION=$(helm search repo opengovernance/opengovernance --versions | awk '/opengovernance\/opengovernance/ {print $2}' | head -n1)
-      fi
-
-      echo "Current version: $CURRENT_VERSION"
-      echo "Latest version: $LATEST_VERSION"
-
-      # Compare versions
-      if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-        echo_info "A newer version of OpenGovernance is available. Proceeding to uninstall and reinstall."
-
-        # Uninstall the app
-        helm uninstall opengovernance -n opengovernance
-
-        # Delete the namespace
-        kubectl delete namespace opengovernance
-
-        # Wait for namespace deletion
-        echo_info "Waiting for namespace 'opengovernance' to be deleted."
-        while kubectl get namespace opengovernance > /dev/null 2>&1; do
-          sleep 5
-        done
-
-        # Proceed to reinstall
-      else
-        echo_info "No newer version available. Skipping reinstallation."
-      fi
-    else
-      echo_info "All pods are healthy. No action needed."
     fi
   else
-    # App is not installed
     echo_info "OpenGovernance is not installed."
   fi
 }
-
 
 # Function to install OpenGovernance with custom domain (Step 3)
 function install_opengovernance_with_custom_domain() {
@@ -370,7 +321,7 @@ function setup_ingress_controller() {
   START_TIME=$(date +%s)
   TIMEOUT=300
   while true; do
-    INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
     if [ -n "$INGRESS_EXTERNAL_IP" ]; then
       echo "Ingress Controller External IP: $INGRESS_EXTERNAL_IP"
       break
@@ -463,9 +414,9 @@ function provide_port_forward_instructions() {
 
 check_prerequisites
 configure_email_and_domain
-check_and_handle_upgrade_or_reinstall
+check_opengovernance_status
 
-# Decision-making logic moved to main execution flow
+# Decision-making logic
 
 if [ "$EMAIL" = "$DEFAULT_EMAIL" ] && [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
   # Both EMAIL and DOMAIN are set to default values
@@ -501,7 +452,11 @@ if [ -z "$EMAIL" ] && [ -z "$DOMAIN" ]; then
   echo_info "Custom domain and HTTPS can also be configured post-installation."
   echo_info "The script will continue in 10 seconds. Press Ctrl+C to cancel."
   sleep 10
-  install_opengovernance
+  if [ "$APP_INSTALLED" = false ]; then
+    install_opengovernance
+  else
+    echo_info "OpenGovernance is already installed and healthy. Skipping installation."
+  fi
   check_pods_and_jobs
   provide_port_forward_instructions
 elif [ "$EMAIL" != "$DEFAULT_EMAIL" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; then
@@ -511,9 +466,25 @@ elif [ "$EMAIL" != "$DEFAULT_EMAIL" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; the
   echo "Domain: $DOMAIN"
   echo_info "The installation will proceed with these values in 10 seconds. Press Ctrl+C to cancel."
   sleep 10
-  install_opengovernance_with_custom_domain
-  # Only run these steps after successful completion of 'install_opengovernance_with_custom_domain'
-  check_pods_and_jobs
+  if [ "$APP_INSTALLED" = false ]; then
+    install_opengovernance_with_custom_domain
+    check_pods_and_jobs
+  elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = false ]; then
+    echo_info "Reinstalling OpenGovernance due to unhealthy pods."
+    # Uninstall and reinstall
+    helm uninstall opengovernance -n opengovernance
+    kubectl delete namespace opengovernance
+    # Wait for namespace deletion
+    echo_info "Waiting for namespace 'opengovernance' to be deleted."
+    while kubectl get namespace opengovernance > /dev/null 2>&1; do
+      sleep 5
+    done
+    install_opengovernance_with_custom_domain
+    check_pods_and_jobs
+  else
+    echo_info "OpenGovernance is already installed and healthy. Skipping installation."
+  fi
+  # Proceed with the rest of the steps regardless
   setup_cert_manager_and_issuer
   setup_ingress_controller
   deploy_ingress_resources
