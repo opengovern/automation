@@ -72,10 +72,10 @@ function configure_email_and_domain() {
         echo_info "EMAIL is set to the default value."
       fi
       while true; do
-        read -p "Please enter your email: " EMAIL < /dev/tty
+        read -p "Please enter your email (or press Enter to skip): " EMAIL < /dev/tty
         if [ -z "$EMAIL" ]; then
-          echo_error "Email cannot be empty. Please enter a valid email."
-          continue
+          echo_info "No email entered."
+          break
         fi
         echo "You entered: $EMAIL"
         read -p "Is this correct? (Y/n): " yn < /dev/tty
@@ -151,9 +151,9 @@ function uninstall_and_reinstall_opengovernance() {
   done
 }
 
-# Function to install OpenGovernance with custom domain (Step 3)
-function install_opengovernance_with_custom_domain() {
-  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain"
+# Function to install OpenGovernance with custom domain and with HTTPS
+function install_opengovernance_with_custom_domain_with_https() {
+  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain and HTTPS"
 
   # Add the OpenGovernance Helm repository and update
   helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
@@ -169,6 +169,28 @@ global:
 dex:
   config:
     issuer: https://${DOMAIN}/dex
+EOF
+  echo_info "OpenGovernance application installation completed."
+}
+
+# Function to install OpenGovernance with custom domain and without HTTPS
+function install_opengovernance_with_custom_domain_no_https() {
+  echo_info "Step 3 of 10: Installing OpenGovernance with custom domain and without HTTPS"
+
+  # Add the OpenGovernance Helm repository and update
+  helm repo add opengovernance https://opengovern.github.io/charts 2> /dev/null || true
+  helm repo update
+
+  # Install OpenGovernance
+  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
+  helm install -n opengovernance opengovernance \
+    opengovernance/opengovernance --create-namespace --timeout=10m \
+    -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
 EOF
   echo_info "OpenGovernance application installation completed."
 }
@@ -356,17 +378,9 @@ function setup_ingress_controller() {
 function deploy_ingress_resources() {
   echo_info "Step 8 of 10: Deploying Ingress Resources"
 
-  # Check if the Ingress already exists
-  if kubectl get ingress opengovernance-ingress -n opengovernance > /dev/null 2>&1; then
-    echo_info "Ingress 'opengovernance-ingress' already exists."
-    echo_info "Updating existing Ingress in 10 seconds. Press Ctrl+C to cancel."
-    sleep 10
-  else
-    echo_info "Creating new Ingress resource."
-  fi
-
-  # Apply the Ingress configuration
-  kubectl apply -f - <<EOF
+  # Define desired Ingress configuration based on whether HTTPS is enabled
+  if [ "$ENABLE_HTTPS" = true ]; then
+    read -r -d '' DESIRED_INGRESS <<EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -393,8 +407,50 @@ spec:
                 port:
                   number: 80
 EOF
+  else
+    read -r -d '' DESIRED_INGRESS <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  namespace: opengovernance
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+  fi
 
-  echo_info "Ingress resource has been applied."
+  # Check if the Ingress already exists
+  if kubectl get ingress opengovernance-ingress -n opengovernance > /dev/null 2>&1; then
+    echo_info "Ingress 'opengovernance-ingress' already exists. Checking for differences."
+
+    # Use kubectl diff to check for differences
+    DIFF_OUTPUT=$(kubectl diff -f - <<< "$DESIRED_INGRESS" || true)
+
+    if [[ -n "$DIFF_OUTPUT" ]]; then
+      echo_info "Existing Ingress differs from desired configuration."
+      echo_info "Updating existing Ingress in 10 seconds. Press Ctrl+C to cancel."
+      sleep 10
+      echo "$DESIRED_INGRESS" | kubectl apply -f -
+      echo_info "Ingress 'opengovernance-ingress' has been updated."
+    else
+      echo_info "Existing Ingress matches the desired configuration. No changes needed."
+    fi
+  else
+    echo_info "Creating new Ingress resource."
+    echo "$DESIRED_INGRESS" | kubectl apply -f -
+    echo_info "Ingress 'opengovernance-ingress' has been created."
+  fi
 }
 
 # Function to restart relevant pods (Step 9)
@@ -413,12 +469,18 @@ function display_completion_message() {
 
   echo "Please allow a few minutes for the changes to propagate and for services to become fully operational."
 
+  if [ "$ENABLE_HTTPS" = true ]; then
+    PROTOCOL="https"
+  else
+    PROTOCOL="http"
+  fi
+
   echo_info "After Setup:"
   echo "1. Create a DNS A record pointing your domain to the Ingress Controller's external IP."
   echo "   - Type: A"
   echo "   - Name (Key): ${DOMAIN}"
   echo "   - Value: ${INGRESS_EXTERNAL_IP}"
-  echo "2. After the DNS changes take effect, open https://${DOMAIN}."
+  echo "2. After the DNS changes take effect, open ${PROTOCOL}://${DOMAIN}."
   echo "   - You can log in with the following credentials:"
   echo "     - Username: admin@opengovernance.io"
   echo "     - Password: password"
@@ -449,7 +511,7 @@ function run_installation_logic() {
     EMAIL_SET=true
   fi
 
-  if [ "$DOMAIN_SET" = false ] && [ "$EMAIL_SET" = false ]; then
+  if [ "$DOMAIN_SET" = false ]; then
     # Install without custom domain
     echo_info "Installing OpenGovernance without custom domain."
     echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
@@ -458,13 +520,26 @@ function run_installation_logic() {
     check_pods_and_jobs
     provide_port_forward_instructions
   elif [ "$DOMAIN_SET" = true ] && [ "$EMAIL_SET" = true ]; then
-    # Install with custom domain
-    echo_info "Installing OpenGovernance with custom domain: $DOMAIN"
+    # Install with custom domain and HTTPS
+    ENABLE_HTTPS=true
+    echo_info "Installing OpenGovernance with custom domain: $DOMAIN and HTTPS"
     echo_info "The installation will start in 10 seconds. Press Ctrl+C to cancel."
     sleep 10
-    install_opengovernance_with_custom_domain
+    install_opengovernance_with_custom_domain_with_https
     check_pods_and_jobs
+    setup_ingress_controller
     setup_cert_manager_and_issuer
+    deploy_ingress_resources
+    restart_pods
+    display_completion_message
+  elif [ "$DOMAIN_SET" = true ] && [ "$EMAIL_SET" = false ]; then
+    # Install with custom domain and without HTTPS
+    ENABLE_HTTPS=false
+    echo_info "No email provided."
+    echo_info "Proceeding with installation with custom domain without HTTPS in 10 seconds. Press Ctrl+C to cancel."
+    sleep 10
+    install_opengovernance_with_custom_domain_no_https
+    check_pods_and_jobs
     setup_ingress_controller
     deploy_ingress_resources
     restart_pods
@@ -511,15 +586,25 @@ elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = false ]; then
   uninstall_and_reinstall_opengovernance
 elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
   # App is installed and healthy
-  # Check if DOMAIN and EMAIL are valid and not defaults
-  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ] && \
-     [ -n "$EMAIL" ] && [ "$EMAIL" != "$DEFAULT_EMAIL" ]; then
-    echo_info "Completing post-installation steps for custom domain configuration."
-    setup_cert_manager_and_issuer
-    setup_ingress_controller
-    deploy_ingress_resources
-    restart_pods
-    display_completion_message
+  # Check if DOMAIN is valid and not default
+  if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$DEFAULT_DOMAIN" ]; then
+    # Determine if HTTPS should be enabled based on EMAIL
+    if [ -n "$EMAIL" ] && [ "$EMAIL" != "$DEFAULT_EMAIL" ]; then
+      ENABLE_HTTPS=true
+      echo_info "Completing post-installation steps for custom domain configuration with HTTPS."
+      setup_ingress_controller
+      setup_cert_manager_and_issuer
+      deploy_ingress_resources
+      restart_pods
+      display_completion_message
+    else
+      ENABLE_HTTPS=false
+      echo_info "Completing post-installation steps for custom domain configuration without HTTPS."
+      setup_ingress_controller
+      deploy_ingress_resources
+      restart_pods
+      display_completion_message
+    fi
   else
     echo_info "OpenGovernance is already installed and healthy."
     echo_info "No further actions are required."
