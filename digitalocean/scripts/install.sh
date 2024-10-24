@@ -286,7 +286,6 @@ function setup_ingress_controller() {
   done
 }
 
-
 # Function to deploy Ingress Resources (Step 8)
 function deploy_ingress_resources() {
   echo_info "Step 8 of 10: Deploying Ingress Resources"
@@ -347,6 +346,17 @@ function display_completion_message() {
   echo "     - Password: password"
 }
 
+# Function to provide port-forwarding instructions
+function provide_port_forward_instructions() {
+  echo_info "Installation completed successfully."
+
+  echo_info "To access the OpenGovernance application, please run the following command in a separate terminal:"
+  echo -e "\033[1;32mkubectl port-forward -n opengovernance svc/nginx-proxy 8080:80\033[0m"
+  echo "Then open http://localhost:8080/ in your browser, and sign in with the following credentials:"
+  echo "Username: admin@opengovernance.io"
+  echo "Password: password"
+}
+
 # -----------------------------
 # Main Execution Flow
 # -----------------------------
@@ -357,13 +367,17 @@ configure_email_and_domain
 # Decide which installation function to run based on DOMAIN and EMAIL
 if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ] && [ "$EMAIL" != "your-email@example.com" ] && [ "$DOMAIN" != "opengovernance.example.io" ]; then
   install_opengovernance_with_custom_domain
+
+  # Only run these steps after successful completion of 'install_opengovernance_with_custom_domain'
+  check_pods_and_jobs
+  setup_cert_manager_and_issuer
+  setup_ingress_controller
+  deploy_ingress_resources
+  restart_pods
+  display_completion_message
 else
   install_opengovernance
-fi
 
-check_pods_and_jobs
-setup_cert_manager_and_issuer
-setup_ingress_controller
-deploy_ingress_resources
-restart_pods
-display_completion_message
+  # After 'install_opengovernance', provide port-forwarding instructions
+  provide_port_forward_instructions
+fi
