@@ -523,13 +523,18 @@ function install_opengovernance() {
         ;;
       4)
         # Barebones (Requires kubectl port forwarding)
-        ISSUER="http://localhost/dex"
+        ISSUER="http://${INGRESS_EXTERNAL_IP}/dex"
         ;;
       *)
         echo_error "Unsupported installation type: $INSTALL_TYPE"
         exit 1
         ;;
     esac
+
+    # Set DOMAIN based on INSTALL_TYPE
+    if [ "$INSTALL_TYPE" -eq 4 ]; then
+      DOMAIN="$INGRESS_EXTERNAL_IP"
+    fi
 
     if [ "$DRY_RUN" = true ]; then
       helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
@@ -585,7 +590,7 @@ EOF
         ;;
       4)
         # Barebones (Requires kubectl port forwarding)
-        DESIRED_ISSUER="http://localhost/dex"
+        DESIRED_ISSUER="http://${INGRESS_EXTERNAL_IP}/dex"
         ;;
       *)
         echo_error "Unsupported installation type: $INSTALL_TYPE"
@@ -897,33 +902,31 @@ function restart_pods() {
   echo_info "Pods restarted successfully." "$INDENT"
 }
 
-# Function to install barebones install (Assumed Implementation)
+# Function to install barebones install
 function install_barebones_install() {
   echo_info "Performing Barebones Install of OpenGovernance."
 
-  # Install with minimal configuration
+  # Install with default configuration without custom parameters
   if [ "$DRY_RUN" = true ]; then
-    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
-      --dry-run \
-      -f - <<EOF
-global:
-  domain: og.app.domain
-dex:
-  config:
-    issuer: http://og.app.domain/dex
-EOF
+    helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m --dry-run
   else
-    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
-      -f - <<EOF
-global:
-  domain: og.app.domain
-dex:
-  config:
-    issuer: http://og.app.domain/dex
-EOF
+    helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m
   fi
 
   echo_info "Barebones Install completed." "$INDENT"
+
+  # Attempt to set up port-forwarding
+  set +e  # Temporarily disable exit on error
+  if kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80; then
+    echo_error "OpenGovernance is running. Access it at http://localhost:8080"
+    echo "To sign in, use the following default credentials:"
+    echo "  Username: admin@opengovernance.io"
+    echo "  Password: password"
+    echo "Open http://localhost:8080/ in your browser and sign in."
+  else
+    provide_port_forward_instructions
+  fi
+  set -e  # Re-enable exit on error
 }
 
 # Function to install no HTTPS install (Simple install with hostname)
@@ -984,6 +987,18 @@ EOF
   echo_info "Minimal Install completed." "$INDENT"
 }
 
+# Function to provide port-forward instructions
+function provide_port_forward_instructions() {
+  echo_error "OpenGovernance is running but not accessible via Ingress."
+  echo "You can access it using port-forwarding as follows:"
+  echo "kubectl port-forward -n opengovernance service/nginx-proxy 8080:80"
+  echo "Then, access it at http://localhost:8080"
+  echo ""
+  echo "To sign in, use the following default credentials:"
+  echo "  Username: admin@opengovernance.io"
+  echo "  Password: password"
+}
+
 # Function to display completion message with protocol, DNS instructions, and default login details
 function display_completion_message() {
   echo_info "Installation Complete"
@@ -1000,6 +1015,8 @@ function display_completion_message() {
   echo ""
   if [ "$INSTALL_TYPE" -ne 3 ] && [ "$INSTALL_TYPE" -ne 4 ]; then
     echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+  elif [ "$INSTALL_TYPE" -eq 4 ]; then
+    echo "Access your OpenGovernance instance at: ${protocol}://${INGRESS_EXTERNAL_IP}"
   else
     echo "Access your OpenGovernance instance using the external IP: ${INGRESS_EXTERNAL_IP}"
   fi
@@ -1026,18 +1043,6 @@ function display_completion_message() {
   fi
 
   echo "-----------------------------------------------------"
-}
-
-# Function to provide port-forward instructions
-function provide_port_forward_instructions() {
-  echo_error "OpenGovernance is running but not accessible via Ingress."
-  echo "You can access it using port-forwarding as follows:"
-  echo "kubectl port-forward -n opengovernance service/nginx-proxy 8080:80"
-  echo "Then, access it at http://localhost:8080"
-  echo ""
-  echo "To sign in, use the following default credentials:"
-  echo "  Username: admin@opengovernance.io"
-  echo "  Password: password"
 }
 
 # Function to check and perform upgrade if needed
@@ -1081,16 +1086,16 @@ function run_installation_logic() {
     # Perform installation based on installation type
     case $INSTALL_TYPE in
       1)
-        install_standard_install
+        install_opengovernance  # Standard Install
         ;;
       2)
-        install_no_https_install
+        install_no_https_install  # No HTTPS Install
         ;;
       3)
-        install_minimal_install
+        install_minimal_install  # Minimal Install
         ;;
       4)
-        install_barebones_install
+        install_barebones_install  # Barebones Install
         ;;
       *)
         echo_error "Unsupported installation type: $INSTALL_TYPE"
@@ -1155,6 +1160,7 @@ function run_installation_logic() {
       if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
         deploy_ingress_resources
       fi
+
       restart_pods
       display_completion_message
     else
@@ -1231,7 +1237,7 @@ function run_installation_logic() {
               ENABLE_HTTPS=true
               echo "You selected Standard Install. Please provide your domain and email."
               configure_email_and_domain
-              install_standard_install
+              install_opengovernance
               ;;
             2)
               ENABLE_HTTPS=false
@@ -1258,7 +1264,7 @@ function run_installation_logic() {
               echo "Invalid option. Defaulting to 1) Standard Install."
               ENABLE_HTTPS=true
               configure_email_and_domain
-              install_standard_install
+              install_opengovernance
               ;;
           esac
 
@@ -1304,6 +1310,227 @@ function run_installation_logic() {
       esac
     fi
   fi
+}
+
+# Function to set up Cert-Manager and Issuer for Let's Encrypt
+function setup_cert_manager_and_issuer() {
+  echo_info "Setting up Cert-Manager and Issuer for Let's Encrypt."
+
+  # Function to check if Cert-Manager is installed in any namespace
+  function is_cert_manager_installed() {
+    echo_info "Checking if Cert-Manager is installed in any namespace..." "$INDENT"
+
+    # Check if there are any Helm releases with the name "cert-manager"
+    if helm list -A | grep -qw "cert-manager"; then
+      echo_info "Cert-Manager is already installed via Helm in the following namespaces:" "$INDENT"
+      helm list -A | grep "cert-manager" | awk '{print $1, "in namespace", $2}'
+      return 0
+    fi
+
+    # Check if cert-manager namespace exists and has relevant deployments
+    if kubectl get namespaces | grep -qw "cert-manager"; then
+      echo_info "Cert-Manager namespace exists. Checking for Cert-Manager deployments..." "$INDENT"
+      
+      # Check if there are cert-manager deployments
+      if kubectl get deployments -n cert-manager | grep -q "cert-manager"; then
+        echo_info "Cert-Manager components are installed in the 'cert-manager' namespace." "$INDENT"
+        return 0
+      fi
+    fi
+
+    echo_info "Cert-Manager is not installed in any namespace." "$INDENT"
+    return 1
+  }
+
+  # Function to wait for the ClusterIssuer to be ready
+  function wait_for_clusterissuer_ready() {
+    local max_attempts=10
+    local sleep_time=30
+    local attempts=0
+
+    echo_info "Waiting for ClusterIssuer 'letsencrypt' to become ready (timeout 5 minutes)..." "$INDENT"
+
+    while [ $attempts -lt $max_attempts ]; do
+      local ready_status=$(kubectl get clusterissuer letsencrypt -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
+
+      if [ "$ready_status" == "True" ]; then
+        echo_info "ClusterIssuer 'letsencrypt' is ready." "$INDENT"
+        return 0
+      fi
+
+      attempts=$((attempts + 1))
+      echo_info "ClusterIssuer 'letsencrypt' not ready yet. Checking again in $sleep_time seconds... (Attempt $attempts/$max_attempts)" "$INDENT"
+      sleep $sleep_time
+    done
+
+    echo_error "ClusterIssuer 'letsencrypt' did not become ready within the expected time." "$INDENT"
+    exit 1
+  }
+
+  # Check if Cert-Manager is already installed
+  if is_cert_manager_installed; then
+    echo_info "Cert-Manager already installed. Skipping installation." "$INDENT"
+  else
+    echo_info "Installing Cert-Manager via Helm in the opengovernance namespace." "$INDENT"
+    helm repo add jetstack https://charts.jetstack.io
+    helm repo update
+    helm install cert-manager jetstack/cert-manager --namespace opengovernance --create-namespace --version v1.11.0 --set installCRDs=true
+    echo_info "Cert-Manager installed in the opengovernance namespace." "$INDENT"
+  fi
+
+  # Apply ClusterIssuer for Let's Encrypt
+  kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-private-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+EOF
+
+  echo_info "ClusterIssuer for Let's Encrypt created." "$INDENT"
+
+  # Wait for ClusterIssuer to be ready
+  wait_for_clusterissuer_ready
+}
+
+# Function to set up barebones install (Assumed Implementation)
+function install_barebones_install() {
+  echo_info "Performing Barebones Install of OpenGovernance."
+
+  # Install with default configuration without custom parameters
+  if [ "$DRY_RUN" = true ]; then
+    helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m --dry-run
+  else
+    helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m
+  fi
+
+  echo_info "Barebones Install completed." "$INDENT"
+
+  # Attempt to set up port-forwarding
+  set +e  # Temporarily disable exit on error
+  if kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80; then
+    echo_error "OpenGovernance is running. Access it at http://localhost:8080"
+    echo "To sign in, use the following default credentials:"
+    echo "  Username: admin@opengovernance.io"
+    echo "  Password: password"
+    echo "Open http://localhost:8080/ in your browser and sign in."
+  else
+    provide_port_forward_instructions
+  fi
+  set -e  # Re-enable exit on error
+}
+
+# Function to install no HTTPS install (Simple install with hostname)
+function install_no_https_install() {
+  echo_info "Performing No HTTPS Install of OpenGovernance."
+
+  # Install with simple configuration without SSL
+  if [ "$DRY_RUN" = true ]; then
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      --dry-run \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
+EOF
+  else
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
+EOF
+  fi
+
+  echo_info "No HTTPS Install completed." "$INDENT"
+}
+
+# Function to install minimal install (Simple install with no hostname)
+function install_minimal_install() {
+  echo_info "Performing Minimal Install of OpenGovernance."
+
+  # Install with minimal configuration without hostname
+  if [ "$DRY_RUN" = true ]; then
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      --dry-run \
+      -f - <<EOF
+global:
+  domain: ""
+dex:
+  config:
+    issuer: http://localhost/dex
+EOF
+  else
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ""
+dex:
+  config:
+    issuer: http://localhost/dex
+EOF
+  fi
+
+  echo_info "Minimal Install completed." "$INDENT"
+}
+
+# Function to display completion message with protocol, DNS instructions, and default login details
+function display_completion_message() {
+  echo_info "Installation Complete"
+
+  # Determine the protocol (http or https)
+  local protocol="http"
+  if [ "$ENABLE_HTTPS" = true ]; then
+    protocol="https"
+  fi
+
+  echo ""
+  echo "-----------------------------------------------------"
+  echo "OpenGovernance has been successfully installed and configured."
+  echo ""
+  if [ "$INSTALL_TYPE" -ne 3 ] && [ "$INSTALL_TYPE" -ne 4 ]; then
+    echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+  elif [ "$INSTALL_TYPE" -eq 4 ]; then
+    echo "Access your OpenGovernance instance at: ${protocol}://${INGRESS_EXTERNAL_IP}"
+  else
+    echo "Access your OpenGovernance instance using the external IP: ${INGRESS_EXTERNAL_IP}"
+  fi
+  echo ""
+  echo "To sign in, use the following default credentials:"
+  echo "  Username: admin@opengovernance.io"
+  echo "  Password: password"
+  echo ""
+
+  # DNS A record setup instructions if domain is configured and not minimal
+  if [ -n "$DOMAIN" ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+    echo "To ensure proper access to your instance, please verify or set up the following DNS A records:"
+    echo ""
+    echo "  Domain: ${DOMAIN}"
+    echo "  Record Type: A"
+    echo "  Value: ${INGRESS_EXTERNAL_IP}"
+    echo ""
+    echo "Note: It may take some time for DNS changes to propagate."
+  fi
+
+  # If Ingress is not properly configured or it's a Barebones install, provide port-forward instructions
+  if [ "$DEPLOY_SUCCESS" = false ] || [ "$INSTALL_TYPE" -eq 4 ]; then
+    provide_port_forward_instructions
+  fi
+
+  echo "-----------------------------------------------------"
 }
 
 # -----------------------------
