@@ -20,6 +20,10 @@ exec > >(tee -i "$LOGFILE") 2>&1
 # Define the indent string for nested outputs
 INDENT="    "
 
+# Initialize DOMAIN and EMAIL to ensure no dependency on environment variables
+DOMAIN=""
+EMAIL=""
+
 # Function to display informational messages
 function echo_info() {
   local message="$1"
@@ -99,7 +103,7 @@ function parse_args() {
     esac
   done
 
-  # Validate DOMAIN and EMAIL if they are set
+  # Validate DOMAIN and EMAIL if they are set via arguments
   if [ -n "$DOMAIN" ]; then
     validate_domain
   fi
@@ -888,7 +892,7 @@ function run_installation_logic() {
     # App is not installed, proceed to install
     echo_info "OpenGovernance is not installed."
     
-    # Check if domain and email are set
+    # Check if domain and email are set via arguments
     if [ -z "$DOMAIN" ] && [ -z "$EMAIL" ]; then
       echo_info "Neither DOMAIN nor EMAIL is set. Please specify your installation preferences." "$INDENT"
       echo "Select the type of installation you would like to perform:"
