@@ -569,9 +569,60 @@ EOF
 function setup_cert_manager_and_issuer() {
   echo_info "Step 11 of 12: Setting up Cert-Manager and Issuer for Let's Encrypt."
 
-  # Check if cert-manager is already installed
-  if helm ls -n opengovernance | grep -qw cert-manager; then
-    echo_info "Cert-Manager already installed in the opengovernance namespace. Skipping installation." "$INDENT"
+  # Function to check if Cert-Manager is installed in any namespace
+  function is_cert_manager_installed() {
+    echo_info "Checking if Cert-Manager is installed in any namespace..." "$INDENT"
+
+    # Check if there are any Helm releases with the name "cert-manager"
+    if helm list -A | grep -qw "cert-manager"; then
+      echo_info "Cert-Manager is already installed via Helm in the following namespaces:" "$INDENT"
+      helm list -A | grep "cert-manager" | awk '{print $1, "in namespace", $2}'
+      return 0
+    fi
+
+    # Check if cert-manager namespace exists and has relevant deployments
+    if kubectl get namespaces | grep -qw "cert-manager"; then
+      echo_info "Cert-Manager namespace exists. Checking for Cert-Manager deployments..." "$INDENT"
+      
+      # Check if there are cert-manager deployments
+      if kubectl get deployments -n cert-manager | grep -q "cert-manager"; then
+        echo_info "Cert-Manager components are installed in the 'cert-manager' namespace." "$INDENT"
+        return 0
+      fi
+    fi
+
+    echo_info "Cert-Manager is not installed in any namespace." "$INDENT"
+    return 1
+  }
+
+  # Function to wait for the ClusterIssuer to be ready
+  function wait_for_clusterissuer_ready() {
+    local max_attempts=10
+    local sleep_time=30
+    local attempts=0
+
+    echo_info "Waiting for ClusterIssuer 'letsencrypt' to become ready (timeout 5 minutes)..." "$INDENT"
+
+    while [ $attempts -lt $max_attempts ]; do
+      local ready_status=$(kubectl get clusterissuer letsencrypt -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
+
+      if [ "$ready_status" == "True" ]; then
+        echo_info "ClusterIssuer 'letsencrypt' is ready." "$INDENT"
+        return 0
+      fi
+
+      attempts=$((attempts + 1))
+      echo_info "ClusterIssuer 'letsencrypt' not ready yet. Checking again in $sleep_time seconds... (Attempt $attempts/$max_attempts)" "$INDENT"
+      sleep $sleep_time
+    done
+
+    echo_error "ClusterIssuer 'letsencrypt' did not become ready within the expected time." "$INDENT"
+    return 1
+  }
+
+  # Check if Cert-Manager is already installed
+  if is_cert_manager_installed; then
+    echo_info "Cert-Manager already installed. Skipping installation." "$INDENT"
   else
     echo_info "Installing Cert-Manager via Helm in the opengovernance namespace." "$INDENT"
     helm repo add jetstack https://charts.jetstack.io
@@ -580,7 +631,7 @@ function setup_cert_manager_and_issuer() {
     echo_info "Cert-Manager installed in the opengovernance namespace." "$INDENT"
   fi
 
-  # Apply ClusterIssuer
+  # Apply ClusterIssuer for Let's Encrypt
   kubectl apply -f - <<EOF
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -600,9 +651,10 @@ EOF
 
   echo_info "ClusterIssuer for Let's Encrypt created." "$INDENT"
 
-  # Wait for ClusterIssuer to be ready (Issue 3)
+  # Wait for ClusterIssuer to be ready
   wait_for_clusterissuer_ready
 }
+
 
 # Function to wait for ClusterIssuer to be ready (Issue 3)
 function wait_for_clusterissuer_ready() {
@@ -633,7 +685,9 @@ function wait_for_clusterissuer_ready() {
 function restart_pods() {
   echo_info "Step 12 of 12: Restarting OpenGovernance Pods to Apply Changes."
 
-  kubectl rollout restart deployment -n opengovernance --all
+  # Restart only the specified deployments
+  kubectl rollout restart deployment nginx-proxy -n opengovernance
+  kubectl rollout restart deployment opengovernance-dex -n opengovernance
 
   echo_info "Pods restarted successfully." "$INDENT"
 }
@@ -726,17 +780,37 @@ EOF
 }
 
 # Function to display completion message
+# Function to display completion message with protocol and DNS instructions
 function display_completion_message() {
-  echo_info "Step 13 of 12: Installation Complete"
+  echo_info "Step 13 of 13: Installation Complete"
+
+  # Determine the protocol (http or https)
+  local protocol="http"
+  if [ "$ENABLE_HTTPS" = true ]; then
+    protocol="https"
+  fi
 
   echo ""
   echo "-----------------------------------------------------"
   echo "OpenGovernance has been successfully installed and configured."
   echo ""
-  echo "Access your OpenGovernance instance at: https://${DOMAIN}"
+  echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
   echo ""
+
+  # DNS A record setup instructions if domain is configured
+  if [ -n "$DOMAIN" ]; then
+    echo "To ensure proper access to your instance, please verify or set up the following DNS A records:"
+    echo ""
+    echo "  Domain: ${DOMAIN}"
+    echo "  Record Type: A"
+    echo "  Value: [External IP address assigned to your ingress controller]"
+    echo ""
+    echo "Note: It may take some time for DNS changes to propagate."
+  fi
+
   echo "-----------------------------------------------------"
 }
+
 
 # Function to provide port-forward instructions
 function provide_port_forward_instructions() {
