@@ -112,9 +112,9 @@ function parse_args() {
   fi
 }
 
-# Function to check prerequisites (Step 1)
+# Function to check prerequisites
 function check_prerequisites() {
-  echo_info "Step 1 of 12: Checking Prerequisites"
+  echo_info "Checking Prerequisites"
 
   # Check if kubectl is connected to a cluster
   if ! kubectl cluster-info > /dev/null 2>&1; then
@@ -144,9 +144,9 @@ function check_prerequisites() {
   fi
 }
 
-# Function to check if OpenGovernance is installed (Step 2)
+# Function to check if OpenGovernance is installed
 function check_opengovernance_installation() {
-  echo_info "Step 2 of 12: Checking OpenGovernance Installation"
+  echo_info "Checking OpenGovernance Installation"
 
   # Check if the OpenGovernance Helm repository is added
   if ! helm repo list | grep -qw "opengovernance"; then
@@ -177,9 +177,9 @@ function check_opengovernance_installation() {
   fi
 }
 
-# Function to check OpenGovernance health status (Step 3)
+# Function to check OpenGovernance health status
 function check_opengovernance_health() {
-  echo_info "Step 3 of 12: Checking OpenGovernance Health Status"
+  echo_info "Checking OpenGovernance Health Status"
 
   # Check if the 'opengovernance' namespace exists
   if ! kubectl get namespace opengovernance > /dev/null 2>&1; then
@@ -203,9 +203,9 @@ function check_opengovernance_health() {
   fi
 }
 
-# Function to check OpenGovernance configuration (Step 4)
+# Function to check OpenGovernance configuration
 function check_opengovernance_config() {
-  echo_info "Step 4 of 12: Checking OpenGovernance Configuration"
+  echo_info "Checking OpenGovernance Configuration"
 
   # Initialize variables
   custom_host_name=false
@@ -255,11 +255,11 @@ function check_opengovernance_config() {
   fi
 
   # Output results
-  echo_info "Configuration Check Results:" "$INDENT"
-  echo_info "Custom Hostname: $custom_host_name" "$INDENT$INDENT"
-  echo_info "App Configured Hostname: $CURRENT_DOMAIN" "$INDENT$INDENT"
-  echo_info "Dex Configuration OK: $dex_configuration_ok" "$INDENT$INDENT"
-  echo_info "SSL/TLS Configured in Ingress: $ssl_configured" "$INDENT$INDENT"
+  echo_info "Configuration Check Results:"
+  echo_info "  Custom Hostname: $custom_host_name" "$INDENT$INDENT"
+  echo_info "  App Configured Hostname: $CURRENT_DOMAIN" "$INDENT$INDENT"
+  echo_info "  Dex Configuration OK: $dex_configuration_ok" "$INDENT$INDENT"
+  echo_info "  SSL/TLS Configured in Ingress: $ssl_configured" "$INDENT$INDENT"
 
   # Export variables for use in other functions
   export custom_host_name
@@ -267,9 +267,9 @@ function check_opengovernance_config() {
   export CURRENT_DOMAIN
 }
 
-# Function to check OpenGovernance readiness (Step 5)
+# Function to check OpenGovernance readiness
 function check_opengovernance_readiness() {
-  echo_info "Step 5 of 12: Checking OpenGovernance Readiness"
+  echo_info "Checking OpenGovernance Readiness"
 
   # Check the readiness of all pods in the 'opengovernance' namespace
   local not_ready_pods
@@ -286,7 +286,7 @@ function check_opengovernance_readiness() {
   fi
 }
 
-# Function to check pods and migrator jobs (Step 6)
+# Function to check pods and migrator jobs
 function check_pods_and_jobs() {
   local attempts=0
   local max_attempts=12  # 12 attempts * 30 seconds = 6 minutes
@@ -305,9 +305,9 @@ function check_pods_and_jobs() {
   exit 1
 }
 
-# Function to configure email and domain (Step 7)
+# Function to configure email and domain
 function configure_email_and_domain() {
-  echo_info "Step 7 of 12: Configuring DOMAIN and EMAIL"
+  echo_info "Configuring DOMAIN and EMAIL"
 
   # If DOMAIN is not set, prompt the user
   if [ -z "$DOMAIN" ]; then
@@ -363,9 +363,9 @@ function configure_email_and_domain() {
   fi
 }
 
-# Function to install or upgrade OpenGovernance (Step 8)
+# Function to install or upgrade OpenGovernance
 function install_opengovernance() {
-  echo_info "Step 8 of 12: Installing or Upgrading OpenGovernance"
+  echo_info "Installing or Upgrading OpenGovernance"
 
   # Add the OpenGovernance Helm repository and update
   if ! helm repo list | grep -qw opengovernance; then
@@ -463,9 +463,9 @@ EOF
   fi
 }
 
-# Function to set up Ingress Controller (Step 9)
+# Function to set up Ingress Controller
 function setup_ingress_controller() {
-  echo_info "Step 9 of 12: Setting up Ingress Controller."
+  echo_info "Setting up Ingress Controller."
 
   # Define the namespace for ingress-nginx (Keeping it in opengovernance namespace)
   local INGRESS_NAMESPACE="opengovernance"
@@ -502,7 +502,7 @@ function setup_ingress_controller() {
   fi
 }
 
-# Function to wait for ingress-nginx controller to obtain an external IP (Issue 2)
+# Function to wait for ingress-nginx controller to obtain an external IP
 function wait_for_ingress_ip() {
   local namespace="$1"
   local timeout=360  # 6 minutes
@@ -516,6 +516,7 @@ function wait_for_ingress_ip() {
 
     if [ -n "$EXTERNAL_IP" ]; then
       echo_info "Ingress-nginx controller has been assigned external IP: $EXTERNAL_IP" "$INDENT"
+      export INGRESS_EXTERNAL_IP="$EXTERNAL_IP"
       return 0
     fi
 
@@ -528,9 +529,9 @@ function wait_for_ingress_ip() {
   exit 1
 }
 
-# Function to deploy ingress resources (Step 10)
+# Function to deploy ingress resources
 function deploy_ingress_resources() {
-  echo_info "Step 10 of 12: Deploying Ingress Resources."
+  echo_info "Deploying Ingress Resources."
 
   if [ -z "$DOMAIN" ]; then
     # Case 1: No Custom Hostname
@@ -625,10 +626,9 @@ EOF
   kubectl get ingress opengovernance-ingress -n opengovernance
 }
 
-
-# Function to set up Cert-Manager and Issuer for Let's Encrypt (Step 11)
+# Function to set up Cert-Manager and Issuer for Let's Encrypt
 function setup_cert_manager_and_issuer() {
-  echo_info "Step 11 of 12: Setting up Cert-Manager and Issuer for Let's Encrypt."
+  echo_info "Setting up Cert-Manager and Issuer for Let's Encrypt."
 
   # Function to check if Cert-Manager is installed in any namespace
   function is_cert_manager_installed() {
@@ -678,7 +678,7 @@ function setup_cert_manager_and_issuer() {
     done
 
     echo_error "ClusterIssuer 'letsencrypt' did not become ready within the expected time." "$INDENT"
-    return 1
+    exit 1
   }
 
   # Check if Cert-Manager is already installed
@@ -716,35 +716,9 @@ EOF
   wait_for_clusterissuer_ready
 }
 
-
-# Function to wait for ClusterIssuer to be ready (Issue 3)
-function wait_for_clusterissuer_ready() {
-  local timeout=300  # 5 minutes
-  local interval=30
-  local elapsed=0
-
-  echo_info "Waiting for ClusterIssuer 'letsencrypt' to be ready (up to 5 minutes)."
-
-  while [ $elapsed -lt $timeout ]; do
-    ISSUER_READY=$(kubectl get clusterissuer letsencrypt -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
-
-    if [ "$ISSUER_READY" == "True" ]; then
-      echo_info "ClusterIssuer 'letsencrypt' is ready." "$INDENT"
-      return 0
-    fi
-
-    echo_info "ClusterIssuer 'letsencrypt' is not ready yet. Retrying in $interval seconds..." "$INDENT"
-    sleep $interval
-    elapsed=$((elapsed + interval))
-  done
-
-  echo_error "ClusterIssuer 'letsencrypt' did not become ready within 5 minutes." "$INDENT"
-  exit 1
-}
-
-# Function to restart pods (Step 12)
+# Function to restart pods
 function restart_pods() {
-  echo_info "Step 12 of 12: Restarting OpenGovernance Pods to Apply Changes."
+  echo_info "Restarting OpenGovernance Pods to Apply Changes."
 
   # Restart only the specified deployments
   kubectl rollout restart deployment nginx-proxy -n opengovernance
@@ -842,7 +816,7 @@ EOF
 
 # Function to display completion message with protocol, DNS instructions, and default login details
 function display_completion_message() {
-  echo_info "Step 13 of 13: Installation Complete"
+  echo_info "Installation Complete"
 
   # Determine the protocol (http or https)
   local protocol="http"
@@ -867,7 +841,7 @@ function display_completion_message() {
     echo ""
     echo "  Domain: ${DOMAIN}"
     echo "  Record Type: A"
-    echo "  Value: [External IP address assigned to your ingress controller]"
+    echo "  Value: ${INGRESS_EXTERNAL_IP}"
     echo ""
     echo "Note: It may take some time for DNS changes to propagate."
   fi
@@ -880,7 +854,6 @@ function display_completion_message() {
   echo "-----------------------------------------------------"
 }
 
-
 # Function to provide port-forward instructions
 function provide_port_forward_instructions() {
   echo_error "OpenGovernance is running but not accessible via Ingress."
@@ -892,8 +865,6 @@ function provide_port_forward_instructions() {
   echo "  Username: admin@opengovernance.io"
   echo "  Password: password"
 }
-
-
 
 # Function to check and perform upgrade if needed
 function check_and_perform_upgrade() {
@@ -1044,6 +1015,9 @@ function run_installation_logic() {
     fi
   fi
 }
+
+# Function to deploy ingress resources
+# (Already defined above; ensure it's the updated version)
 
 # -----------------------------
 # Main Execution Flow
