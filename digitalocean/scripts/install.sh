@@ -891,15 +891,18 @@ function run_installation_logic() {
   if ! check_opengovernance_installation; then
     # App is not installed, proceed to install
     echo_info "OpenGovernance is not installed."
-    
+
     # Check if domain and email are set via arguments
     if [ -z "$DOMAIN" ] && [ -z "$EMAIL" ]; then
       echo_info "Neither DOMAIN nor EMAIL is set. Please specify your installation preferences." "$INDENT"
       echo "Select the type of installation you would like to perform:"
-      PS3="Enter the number corresponding to your choice: "
-      options=("Barebones Install" "Simple Install" "Standard Install with HTTPS" "Exit")
-      select opt in "${options[@]}"; do
-        case $REPLY in
+      echo "1) Barebones Install"
+      echo "2) Simple Install"
+      echo "3) Standard Install with HTTPS"
+      echo "4) Exit"
+      while true; do
+        read -p "Enter the number corresponding to your choice: " choice < /dev/tty
+        case $choice in
           1)
             ENABLE_HTTPS=false
             echo "You selected Barebones Install. Please provide your domain and email."
@@ -1010,10 +1013,13 @@ function run_installation_logic() {
           echo ""
           echo "OpenGovernance is installed but not fully configured."
           echo "Please select an option to proceed:"
-          PS3="Enter the number corresponding to your choice: "
-          options=("Barebones Install (Requires Port-Forwarding)" "Simple Install" "Standard Install with HTTPS" "Exit")
-          select opt in "${options[@]}"; do
-            case $REPLY in
+          echo "1) Barebones Install (Requires Port-Forwarding)"
+          echo "2) Simple Install"
+          echo "3) Standard Install with HTTPS"
+          echo "4) Exit"
+          while true; do
+            read -p "Enter the number corresponding to your choice: " choice < /dev/tty
+            case $choice in
               1)
                 ENABLE_HTTPS=false
                 install_barebones_install
