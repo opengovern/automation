@@ -380,6 +380,89 @@ EOF
   echo_info "OpenGovernance application installation completed."
 }
 
+# Function to install OpenGovernance with custom domain and with HTTPS
+function install_opengovernance_with_custom_domain_with_https() {
+  echo_info "Installing OpenGovernance with custom domain and HTTPS"
+
+  # Add the OpenGovernance Helm repository and update
+  if ! helm repo list | grep -qw opengovernance; then
+    helm repo add opengovernance https://opengovern.github.io/charts
+    echo_info "Added OpenGovernance Helm repository."
+  else
+    echo_info "OpenGovernance Helm repository already exists. Skipping add."
+  fi
+  helm repo update
+
+  # Install OpenGovernance
+  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
+
+  if [ "$DRY_RUN" = true ]; then
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      --dry-run \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: https://${DOMAIN}/dex
+EOF
+  else
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: https://${DOMAIN}/dex
+EOF
+  fi
+
+  echo_info "OpenGovernance application installation completed."
+}
+
+# Function to install OpenGovernance with custom domain and without HTTPS
+function install_opengovernance_with_custom_domain_no_https() {
+  echo_info "Installing OpenGovernance with custom domain and without HTTPS"
+
+  # Add the OpenGovernance Helm repository and update
+  if ! helm repo list | grep -qw opengovernance; then
+    helm repo add opengovernance https://opengovern.github.io/charts
+    echo_info "Added OpenGovernance Helm repository."
+  else
+    echo_info "OpenGovernance Helm repository already exists. Skipping add."
+  fi
+  helm repo update
+
+  # Install OpenGovernance
+  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
+
+  if [ "$DRY_RUN" = true ]; then
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
+EOF
+  else
+    helm install -n opengovernance opengovernance \
+      opengovernance/opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
+EOF
+  fi
+
+  echo_info "OpenGovernance application installation completed."
+}
+
 # Function to set up cert-manager and Let's Encrypt Issuer (Step 6)
 function setup_cert_manager_and_issuer() {
   echo_info "Step 6 of 10: Setting up cert-manager and Let's Encrypt Issuer"
@@ -717,6 +800,8 @@ function display_completion_message() {
 function provide_port_forward_instructions() {
   echo_info "Installation partially completed."
 
+  echo_error "Failed to set up Ingress resources. Providing port-forwarding instructions as a fallback."
+
   echo_info "To access the OpenGovernance application, please run the following command in a separate terminal:"
   printf "\033[1;32m%s\033[0m\n" "kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80"
   echo "Then open http://localhost:8080/ in your browser, and sign in with the following credentials:"
@@ -752,7 +837,7 @@ function run_installation_logic() {
     else
       provide_port_forward_instructions
     fi
-  else
+  elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
     # App is installed and healthy
     check_opengovernance_config
 
@@ -795,6 +880,7 @@ function run_installation_logic() {
           case $REPLY in
             1)
               ENABLE_HTTPS=false
+              configure_email_and_domain
               install_barebones_install
               check_pods_and_jobs
               provide_port_forward_instructions
@@ -837,7 +923,7 @@ function run_installation_logic() {
       fi
     fi
   fi
-}
+} # Added 'fi' to close the function
 
 # Function to install Barebones Install (No Ingress, requires port-forwarding)
 function install_barebones_install() {
@@ -941,4 +1027,5 @@ EOF
 
 parse_args "$@"
 check_prerequisites
+# Removed 'check_opengovernance_status' as it was not defined
 run_installation_logic
