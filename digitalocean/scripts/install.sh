@@ -106,12 +106,15 @@ function parse_args() {
 
   if [ -n "$EMAIL" ]; then
     validate_email
+    ENABLE_HTTPS=true
+  else
+    ENABLE_HTTPS=false
   fi
 }
 
 # Function to check prerequisites (Step 1)
 function check_prerequisites() {
-  echo_info "Step 1 of 10: Checking Prerequisites"
+  echo_info "Step 1 of 12: Checking Prerequisites"
 
   # Check if kubectl is connected to a cluster
   if ! kubectl cluster-info > /dev/null 2>&1; then
@@ -143,7 +146,7 @@ function check_prerequisites() {
 
 # Function to check if OpenGovernance is installed (Step 2)
 function check_opengovernance_installation() {
-  echo_info "Step 2 of 10: Checking OpenGovernance Installation"
+  echo_info "Step 2 of 12: Checking OpenGovernance Installation"
 
   # Check if the OpenGovernance Helm repository is added
   if ! helm repo list | grep -qw "opengovernance"; then
@@ -176,25 +179,33 @@ function check_opengovernance_installation() {
 
 # Function to check OpenGovernance health status (Step 3)
 function check_opengovernance_health() {
-  echo_info "Step 3 of 10: Checking OpenGovernance Health Status"
+  echo_info "Step 3 of 12: Checking OpenGovernance Health Status"
+
+  # Check if the 'opengovernance' namespace exists
+  if ! kubectl get namespace opengovernance > /dev/null 2>&1; then
+    echo_error "Namespace 'opengovernance' does not exist." "$INDENT"
+    APP_HEALTHY=false
+    return 1
+  fi
 
   # Check the health of the OpenGovernance deployment
   local unhealthy_pods
-  unhealthy_pods=$(kubectl get pods -n opengovernance --no-headers | grep -v -E 'Running|Completed|Succeeded')
+  # Extract the STATUS column (3rd column) and exclude 'Running' and 'Completed'
+  unhealthy_pods=$(kubectl get pods -n opengovernance --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
   if [ -z "$unhealthy_pods" ]; then
     echo_info "All OpenGovernance pods are healthy." "$INDENT"
     APP_HEALTHY=true
   else
-    echo_error "Some OpenGovernance pods are unhealthy." "$INDENT"
-    echo "$unhealthy_pods"
+    echo_error "Some OpenGovernance pods are not healthy." "$INDENT"
+    kubectl get pods -n opengovernance
     APP_HEALTHY=false
   fi
 }
 
 # Function to check OpenGovernance configuration (Step 4)
 function check_opengovernance_config() {
-  echo_info "Step 4 of 10: Checking OpenGovernance Configuration"
+  echo_info "Step 4 of 12: Checking OpenGovernance Configuration"
 
   # Initialize variables
   custom_host_name=false
@@ -258,26 +269,27 @@ function check_opengovernance_config() {
 
 # Function to check OpenGovernance readiness (Step 5)
 function check_opengovernance_readiness() {
-  echo_info "Step 5 of 10: Checking OpenGovernance Readiness"
+  echo_info "Step 5 of 12: Checking OpenGovernance Readiness"
 
   # Check the readiness of all pods in the 'opengovernance' namespace
   local not_ready_pods
-  not_ready_pods=$(kubectl get pods -n opengovernance --no-headers | awk '{print $2}' | grep -v -E '([0-9]+)/\1')
+  # Extract the STATUS column (3rd column) and exclude 'Running' and 'Completed'
+  not_ready_pods=$(kubectl get pods -n opengovernance --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
   if [ -z "$not_ready_pods" ]; then
     echo_info "All OpenGovernance pods are ready." "$INDENT"
     return 0
   else
-    echo_error "Some OpenGovernance pods are not ready." "$INDENT"
+    echo_error "Some OpenGovernance pods are not healthy." "$INDENT"
     kubectl get pods -n opengovernance
     return 1
   fi
 }
 
-# Function to check pods and migrator jobs (Simplified)
+# Function to check pods and migrator jobs (Step 6)
 function check_pods_and_jobs() {
   local attempts=0
-  local max_attempts=10
+  local max_attempts=12  # 12 attempts * 30 seconds = 6 minutes
   local sleep_time=30
 
   while [ $attempts -lt $max_attempts ]; do
@@ -293,11 +305,11 @@ function check_pods_and_jobs() {
   exit 1
 }
 
-# Function to configure email and domain (Step 6)
+# Function to configure email and domain (Step 7)
 function configure_email_and_domain() {
-  echo_info "Step 6 of 10: Configuring DOMAIN and EMAIL"
+  echo_info "Step 7 of 12: Configuring DOMAIN and EMAIL"
 
-  # Capture DOMAIN if not set via arguments
+  # If DOMAIN is not set, prompt the user
   if [ -z "$DOMAIN" ]; then
     while true; do
       echo ""
@@ -324,63 +336,36 @@ function configure_email_and_domain() {
     done
   fi
 
-  # Proceed to capture EMAIL if DOMAIN is set and user chooses SSL
-  if [ -n "$DOMAIN" ]; then
-    # Determine if EMAIL was provided via arguments or not
-    if [ -n "$EMAIL" ]; then
-      # If EMAIL is provided, assume SSL setup
-      ENABLE_HTTPS=true
-      echo_info "Email provided. Proceeding with SSL/TLS setup." "$INDENT"
-    else
-      # Ask the user if they want to set up SSL/TLS
-      echo ""
-      echo "Do you want to set up SSL/TLS with Let's Encrypt?"
-      select yn in "Yes" "No"; do
+  # If EMAIL is not set but required (when DOMAIN is set and HTTPS is desired)
+  if [ -n "$DOMAIN" ] && [ "$ENABLE_HTTPS" = true ] && [ -z "$EMAIL" ]; then
+    while true; do
+      echo "Enter your email for HTTPS certificate generation via Let's Encrypt."
+      read -p "Email: " EMAIL < /dev/tty
+      if [ -z "$EMAIL" ]; then
+        echo_error "Email is required for SSL/TLS setup." "$INDENT"
+      else
+        echo "You entered: $EMAIL"
+        read -p "Is this correct? (Y/n): " yn < /dev/tty
         case $yn in
-            Yes )
-                ENABLE_HTTPS=true
-                # Capture EMAIL
-                while true; do
-                  echo "Enter your email for HTTPS certificate generation via Let's Encrypt."
-                  read -p "Email: " EMAIL < /dev/tty
-                  if [ -z "$EMAIL" ]; then
-                    echo_error "Email is required for SSL/TLS setup." "$INDENT"
-                  else
-                    echo "You entered: $EMAIL"
-                    read -p "Is this correct? (Y/n): " yn < /dev/tty
-                    case $yn in
-                        "" | [Yy]* )
-                            validate_email
-                            break
-                            ;;
-                        [Nn]* )
-                            echo "Let's try again."
-                            EMAIL=""
-                            ;;
-                        * )
-                            echo "Please answer y or n.";;
-                    esac
-                  fi
-                done
+            "" | [Yy]* )
+                validate_email
                 break
                 ;;
-            No )
-                ENABLE_HTTPS=false
-                break
+            [Nn]* )
+                echo "Let's try again."
+                EMAIL=""
                 ;;
-            * ) echo "Please select 1 or 2.";;
+            * )
+                echo "Please answer y or n.";;
         esac
-      done
-    fi
-  else
-    EMAIL=""
-    ENABLE_HTTPS=false
+      fi
+    done
   fi
 }
 
-# Function to install OpenGovernance (Step 7)
+# Function to install or upgrade OpenGovernance (Step 8)
 function install_opengovernance() {
-  echo_info "Step 7 of 10: Installing OpenGovernance"
+  echo_info "Step 8 of 12: Installing or Upgrading OpenGovernance"
 
   # Add the OpenGovernance Helm repository and update
   if ! helm repo list | grep -qw opengovernance; then
@@ -391,131 +376,390 @@ function install_opengovernance() {
   fi
   helm repo update
 
-  # Install OpenGovernance
-  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient." "$INDENT"
+  if [ "$APP_INSTALLED" = false ]; then
+    echo_info "Installing OpenGovernance via Helm." "$INDENT"
 
-  # Determine the issuer based on SSL configuration
-  if [ "$ENABLE_HTTPS" = true ]; then
-    ISSUER="https://${DOMAIN}/dex"
+    # Determine the issuer based on SSL configuration
+    if [ "$ENABLE_HTTPS" = true ]; then
+      ISSUER="https://${DOMAIN}/dex"
+    else
+      ISSUER="http://${DOMAIN}/dex"
+    fi
+
+    if [ "$DRY_RUN" = true ]; then
+      helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+        --dry-run \
+        -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: ${ISSUER}
+EOF
+    else
+      helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+        -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: ${ISSUER}
+EOF
+    fi
+
+    echo_info "OpenGovernance application installation completed." "$INDENT"
   else
-    ISSUER="http://${DOMAIN}/dex"
+    echo_info "OpenGovernance is already installed. Checking for necessary upgrades or configurations." "$INDENT"
+
+    # Fetch current Helm values
+    CURRENT_HELM_VALUES=$(helm get values opengovernance -n opengovernance --output yaml)
+
+    # Determine if desired domain or HTTPS settings differ from current
+    DESIRED_DOMAIN="$DOMAIN"
+    DESIRED_ENABLE_HTTPS="$ENABLE_HTTPS"
+
+    # Extract current domain from Helm values
+    CURRENT_DOMAIN_HELM=$(echo "$CURRENT_HELM_VALUES" | grep -E '^\s*domain:' | awk '{print $2}')
+
+    # Extract current issuer from Helm values
+    CURRENT_ISSUER_HELM=$(echo "$CURRENT_HELM_VALUES" | grep -E '^\s*issuer:' | awk '{print $2}')
+
+    # Determine desired issuer
+    if [ "$ENABLE_HTTPS" = true ]; then
+      DESIRED_ISSUER="https://${DOMAIN}/dex"
+    else
+      DESIRED_ISSUER="http://${DOMAIN}/dex"
+    fi
+
+    # Check if domain or issuer needs to be updated
+    if [ "$DESIRED_DOMAIN" != "$CURRENT_DOMAIN_HELM" ] || [ "$DESIRED_ISSUER" != "$CURRENT_ISSUER_HELM" ]; then
+      echo_info "Detected changes in DOMAIN or HTTPS configuration. Upgrading OpenGovernance via Helm." "$INDENT"
+
+      if [ "$DRY_RUN" = true ]; then
+        helm upgrade opengovernance opengovernance/opengovernance -n opengovernance --timeout=10m \
+          --dry-run \
+          -f - <<EOF
+global:
+  domain: ${DESIRED_DOMAIN}
+dex:
+  config:
+    issuer: ${DESIRED_ISSUER}
+EOF
+      else
+        helm upgrade opengovernance opengovernance/opengovernance -n opengovernance --timeout=10m \
+          -f - <<EOF
+global:
+  domain: ${DESIRED_DOMAIN}
+dex:
+  config:
+    issuer: ${DESIRED_ISSUER}
+EOF
+      fi
+
+      echo_info "OpenGovernance application upgrade completed." "$INDENT"
+    else
+      echo_info "No changes detected in DOMAIN or HTTPS configuration. Skipping Helm upgrade." "$INDENT"
+    fi
+  fi
+}
+
+# Function to set up Ingress Controller (Step 9)
+function setup_ingress_controller() {
+  echo_info "Step 9 of 12: Setting up Ingress Controller."
+
+  # Define the namespace for ingress-nginx (Keeping it in opengovernance namespace)
+  local INGRESS_NAMESPACE="opengovernance"
+
+  # Check if the namespace exists, if not, create it
+  if ! kubectl get namespace "$INGRESS_NAMESPACE" > /dev/null 2>&1; then
+    kubectl create namespace "$INGRESS_NAMESPACE"
+    echo_info "Created namespace $INGRESS_NAMESPACE." "$INDENT"
   fi
 
+  # Handle existing ClusterRole ingress-nginx
+  if kubectl get clusterrole ingress-nginx > /dev/null 2>&1; then
+    # Check the current release namespace annotation
+    CURRENT_RELEASE_NAMESPACE=$(kubectl get clusterrole ingress-nginx -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' 2>/dev/null || true)
+    if [ "$CURRENT_RELEASE_NAMESPACE" != "$INGRESS_NAMESPACE" ]; then
+      echo_info "ClusterRole 'ingress-nginx' exists with release namespace '$CURRENT_RELEASE_NAMESPACE'. Deleting to avoid conflicts." "$INDENT"
+      kubectl delete clusterrole ingress-nginx
+      kubectl delete clusterrolebinding ingress-nginx
+    fi
+  fi
+
+  # Check if ingress-nginx is already installed in the opengovernance namespace
+  if helm ls -n "$INGRESS_NAMESPACE" | grep -qw ingress-nginx; then
+    echo_info "Ingress Controller already installed in the $INGRESS_NAMESPACE namespace. Skipping installation." "$INDENT"
+  else
+    echo_info "Installing ingress-nginx via Helm in the $INGRESS_NAMESPACE namespace." "$INDENT"
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm repo update
+    helm install ingress-nginx ingress-nginx/ingress-nginx -n "$INGRESS_NAMESPACE" --create-namespace
+    echo_info "Ingress Controller installed in the $INGRESS_NAMESPACE namespace." "$INDENT"
+
+    # Wait for ingress-nginx controller to obtain an external IP (up to 6 minutes)
+    wait_for_ingress_ip "$INGRESS_NAMESPACE"
+  fi
+}
+
+# Function to wait for ingress-nginx controller to obtain an external IP (Issue 2)
+function wait_for_ingress_ip() {
+  local namespace="$1"
+  local timeout=360  # 6 minutes
+  local interval=30
+  local elapsed=0
+
+  echo_info "Waiting for ingress-nginx controller to obtain an external IP (up to 6 minutes)."
+
+  while [ $elapsed -lt $timeout ]; do
+    EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n "$namespace" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+
+    if [ -n "$EXTERNAL_IP" ]; then
+      echo_info "Ingress-nginx controller has been assigned external IP: $EXTERNAL_IP" "$INDENT"
+      return 0
+    fi
+
+    echo_info "Ingress-nginx controller does not have an external IP yet. Retrying in $interval seconds..." "$INDENT"
+    sleep $interval
+    elapsed=$((elapsed + interval))
+  done
+
+  echo_error "Ingress-nginx controller did not obtain an external IP within 6 minutes." "$INDENT"
+  exit 1
+}
+
+# Function to deploy ingress resources (Step 10)
+function deploy_ingress_resources() {
+  echo_info "Step 10 of 12: Deploying Ingress Resources."
+
+  # Define the Ingress resource
+  cat <<EOF | kubectl apply -n opengovernance -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt"
+spec:
+  tls:
+  - hosts:
+    - ${DOMAIN}
+    secretName: opengovernance-tls
+  rules:
+  - host: ${DOMAIN}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: opengovernance-service
+            port:
+              number: 80
+EOF
+
+  echo_info "Ingress resources deployed." "$INDENT"
+
+  # Optional: Verify Ingress is correctly configured
+  kubectl get ingress opengovernance-ingress -n opengovernance
+}
+
+# Function to set up Cert-Manager and Issuer for Let's Encrypt (Step 11)
+function setup_cert_manager_and_issuer() {
+  echo_info "Step 11 of 12: Setting up Cert-Manager and Issuer for Let's Encrypt."
+
+  # Check if cert-manager is already installed
+  if helm ls -n opengovernance | grep -qw cert-manager; then
+    echo_info "Cert-Manager already installed in the opengovernance namespace. Skipping installation." "$INDENT"
+  else
+    echo_info "Installing Cert-Manager via Helm in the opengovernance namespace." "$INDENT"
+    helm repo add jetstack https://charts.jetstack.io
+    helm repo update
+    helm install cert-manager jetstack/cert-manager --namespace opengovernance --create-namespace --version v1.11.0 --set installCRDs=true
+    echo_info "Cert-Manager installed in the opengovernance namespace." "$INDENT"
+  fi
+
+  # Apply ClusterIssuer
+  kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-private-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+EOF
+
+  echo_info "ClusterIssuer for Let's Encrypt created." "$INDENT"
+
+  # Wait for ClusterIssuer to be ready (Issue 3)
+  wait_for_clusterissuer_ready
+}
+
+# Function to wait for ClusterIssuer to be ready (Issue 3)
+function wait_for_clusterissuer_ready() {
+  local timeout=300  # 5 minutes
+  local interval=30
+  local elapsed=0
+
+  echo_info "Waiting for ClusterIssuer 'letsencrypt' to be ready (up to 5 minutes)."
+
+  while [ $elapsed -lt $timeout ]; do
+    ISSUER_READY=$(kubectl get clusterissuer letsencrypt -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+
+    if [ "$ISSUER_READY" == "True" ]; then
+      echo_info "ClusterIssuer 'letsencrypt' is ready." "$INDENT"
+      return 0
+    fi
+
+    echo_info "ClusterIssuer 'letsencrypt' is not ready yet. Retrying in $interval seconds..." "$INDENT"
+    sleep $interval
+    elapsed=$((elapsed + interval))
+  done
+
+  echo_error "ClusterIssuer 'letsencrypt' did not become ready within 5 minutes." "$INDENT"
+  exit 1
+}
+
+# Function to restart pods (Step 12)
+function restart_pods() {
+  echo_info "Step 12 of 12: Restarting OpenGovernance Pods to Apply Changes."
+
+  kubectl rollout restart deployment -n opengovernance --all
+
+  echo_info "Pods restarted successfully." "$INDENT"
+}
+
+# Function to install barebones install (Assumed Implementation)
+function install_barebones_install() {
+  echo_info "Performing Barebones Install of OpenGovernance."
+
+  # Install with minimal configuration
   if [ "$DRY_RUN" = true ]; then
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      --dry-run \
+      -f - <<EOF
+global:
+  domain: og.app.domain
+dex:
+  config:
+    issuer: http://og.app.domain/dex
+EOF
+  else
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      -f - <<EOF
+global:
+  domain: og.app.domain
+dex:
+  config:
+    issuer: http://og.app.domain/dex
+EOF
+  fi
+
+  echo_info "Barebones Install completed." "$INDENT"
+}
+
+# Function to install simple install (Assumed Implementation)
+function install_simple_install() {
+  echo_info "Performing Simple Install of OpenGovernance."
+
+  # Install with simple configuration
+  if [ "$DRY_RUN" = true ]; then
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       --dry-run \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
 dex:
   config:
-    issuer: ${ISSUER}
+    issuer: http://${DOMAIN}/dex
 EOF
   else
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
 dex:
   config:
-    issuer: ${ISSUER}
+    issuer: http://${DOMAIN}/dex
 EOF
   fi
 
-  echo_info "OpenGovernance application installation completed." "$INDENT"
+  echo_info "Simple Install completed." "$INDENT"
 }
 
-# Function to check for newer Helm chart and perform upgrade if necessary (modified)
-function check_and_perform_upgrade() {
-  echo_info "Checking for newer 'opengovernance' Helm chart version"
+# Function to install standard install with HTTPS (Assumed Implementation)
+function install_standard_install() {
+  echo_info "Performing Standard Install of OpenGovernance with HTTPS."
 
-  # Ensure the Helm repository is updated
-  helm repo update
-
-  # Get the latest chart version available for 'opengovernance'
-  latest_chart_version=$(helm search repo opengovernance/opengovernance --devel -o json | grep -o '"version":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
-
-  # Get the currently deployed chart version of 'opengovernance'
-  current_chart_version=$(helm list -n opengovernance --filter '^opengovernance$' -o json | grep -o '"chart":"[^"]*"' | awk -F':' '{print $2}' | awk -F'"' '{print $2}' | awk -F'-' '{print $2}')
-
-  if [ "$latest_chart_version" != "$current_chart_version" ]; then
-    echo_info "A newer 'opengovernance' chart version is available: $latest_chart_version (current: $current_chart_version)" "$INDENT"
-
-    echo "The 'opengovernance' application will be upgraded to the latest version in 10 seconds."
-    echo "Press Ctrl+C to cancel the upgrade."
-
-    for i in {10..1}; do
-      echo -ne "Upgrading in $i seconds...\r"
-      sleep 1
-    done
-    echo
-
-    # Perform the Helm upgrade
-    perform_helm_upgrade
-
-    # Continue with the rest of the steps
-  else
-    echo_info "You are already using the latest 'opengovernance' chart version: $current_chart_version" "$INDENT"
-  fi
-}
-
-# Function to perform Helm upgrade (Step 10)
-function perform_helm_upgrade() {
-  echo_info "Performing Helm Upgrade with New Configuration"
-
-  if [ -z "$DOMAIN" ]; then
-    echo_error "Error: DOMAIN is not set." "$INDENT"
-    exit 1
-  fi
-
-  echo_info "Upgrading OpenGovernance Helm release with domain: $DOMAIN" "$INDENT"
-
-  # Add the OpenGovernance Helm repository and update (if not already added)
-  if ! helm repo list | grep -qw opengovernance; then
-    helm repo add opengovernance https://opengovern.github.io/charts
-    echo_info "Added OpenGovernance Helm repository." "$INDENT"
-  else
-    echo_info "OpenGovernance Helm repository already exists. Skipping add." "$INDENT"
-  fi
-  helm repo update
-
-  # Determine the issuer based on SSL configuration
-  if [ "$ENABLE_HTTPS" = true ]; then
-    ISSUER="https://${DOMAIN}/dex"
-  else
-    ISSUER="http://${DOMAIN}/dex"
-  fi
-
+  # Install with HTTPS configuration
   if [ "$DRY_RUN" = true ]; then
-    helm upgrade -n opengovernance opengovernance \
-      opengovernance/opengovernance --timeout=10m --dry-run \
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      --dry-run \
       -f - <<EOF
 global:
-  domain: "${DOMAIN}"
-  debugMode: true
+  domain: ${DOMAIN}
 dex:
   config:
-    issuer: "${ISSUER}"
+    issuer: https://${DOMAIN}/dex
 EOF
   else
-    helm upgrade -n opengovernance opengovernance \
-      opengovernance/opengovernance --timeout=10m \
+    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       -f - <<EOF
 global:
-  domain: "${DOMAIN}"
-  debugMode: true
+  domain: ${DOMAIN}
 dex:
   config:
-    issuer: "${ISSUER}"
+    issuer: https://${DOMAIN}/dex
 EOF
   fi
 
-  echo_info "Helm upgrade completed successfully." "$INDENT"
+  echo_info "Standard Install with HTTPS completed." "$INDENT"
 }
 
-# [Rest of the script remains the same, adjusted as per modifications]
+# Function to display completion message
+function display_completion_message() {
+  echo_info "Step 13 of 12: Installation Complete"
+
+  echo ""
+  echo "-----------------------------------------------------"
+  echo "OpenGovernance has been successfully installed and configured."
+  echo ""
+  echo "Access your OpenGovernance instance at: https://${DOMAIN}"
+  echo ""
+  echo "-----------------------------------------------------"
+}
+
+# Function to provide port-forward instructions
+function provide_port_forward_instructions() {
+  echo_error "OpenGovernance is running but not accessible via Ingress."
+  echo "You can access it using port-forwarding as follows:"
+  echo "kubectl port-forward -n opengovernance service/opengovernance-service 8080:80"
+  echo "Then, access it at http://localhost:8080"
+}
+
+# Function to check and perform upgrade if needed
+function check_and_perform_upgrade() {
+  echo_info "Checking for OpenGovernance chart updates."
+
+  helm repo update
+
+  if helm search repo opengovernance/opengovernance | grep -q "opengovernance"; then
+    echo_info "Newer OpenGovernance chart version available. Proceeding with upgrade." "$INDENT"
+    # The actual upgrade is handled in install_opengovernance based on helm get values
+    install_opengovernance
+  else
+    echo_info "OpenGovernance is already at the latest version." "$INDENT"
+  fi
+}
 
 # Function to run installation logic
 function run_installation_logic() {
@@ -536,7 +780,6 @@ function run_installation_logic() {
     if [ "$ENABLE_HTTPS" = true ]; then
       setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
     fi
-    perform_helm_upgrade || DEPLOY_SUCCESS=false
     restart_pods || DEPLOY_SUCCESS=false
     set -e  # Re-enable exit on error
 
@@ -567,79 +810,87 @@ function run_installation_logic() {
       # App is healthy
       check_opengovernance_config
 
-      if [ -n "$DOMAIN" ] && [ "$CURRENT_DOMAIN" != "$DOMAIN" ]; then
-        echo_info "Provided DOMAIN differs from the current configuration."
-        echo_info "Proceeding to upgrade OpenGovernance with new DOMAIN settings."
+      if [ -n "$DOMAIN" ]; then
+        if [ "$CURRENT_DOMAIN" != "$DOMAIN" ]; then
+          echo_info "Provided DOMAIN differs from the current configuration."
+          echo_info "Proceeding to upgrade OpenGovernance with new DOMAIN settings."
 
-        if [ -n "$EMAIL" ]; then
-          ENABLE_HTTPS=true
-        else
-          ENABLE_HTTPS=false
-        fi
+          install_opengovernance
+          check_pods_and_jobs
+          setup_ingress_controller
 
-        perform_helm_upgrade
-        check_pods_and_jobs
-        setup_ingress_controller
+          if [ "$ENABLE_HTTPS" = true ]; then
+            setup_cert_manager_and_issuer
+          fi
 
-        if [ "$ENABLE_HTTPS" = true ]; then
+          deploy_ingress_resources
+          restart_pods
+          display_completion_message
+
+        elif [ "$ENABLE_HTTPS" = true ] && [ "$ssl_configured" != "true" ]; then
+          echo_info "SSL/TLS is not configured. Proceeding to configure SSL/TLS with Let's Encrypt."
+
+          install_opengovernance
+          check_pods_and_jobs
+          setup_ingress_controller
           setup_cert_manager_and_issuer
+          deploy_ingress_resources
+          restart_pods
+          display_completion_message
+
+        elif [ "$custom_host_name" == "true" ] && [ "$ssl_configured" == "true" ]; then
+          echo_info "OpenGovernance is fully configured with custom hostname and SSL/TLS."
+        else
+          # Existing logic for handling other cases
+          echo ""
+          echo "OpenGovernance is installed but not fully configured."
+          echo "Please select an option to proceed:"
+          PS3="Enter the number corresponding to your choice: "
+          options=("Barebones Install (Requires Port-Forwarding)" "Simple Install" "Standard Install with HTTPS" "Exit")
+          select opt in "${options[@]}"; do
+            case $REPLY in
+              1)
+                ENABLE_HTTPS=false
+                install_barebones_install
+                check_pods_and_jobs
+                provide_port_forward_instructions
+                break
+                ;;
+              2)
+                ENABLE_HTTPS=false
+                configure_email_and_domain
+                install_simple_install
+                check_pods_and_jobs
+                setup_ingress_controller
+                deploy_ingress_resources
+                restart_pods
+                display_completion_message
+                break
+                ;;
+              3)
+                ENABLE_HTTPS=true
+                configure_email_and_domain
+                install_standard_install
+                check_pods_and_jobs
+                setup_ingress_controller
+                setup_cert_manager_and_issuer
+                deploy_ingress_resources
+                restart_pods
+                display_completion_message
+                break
+                ;;
+              4)
+                echo_info "Exiting the script."
+                exit 0
+                ;;
+              *)
+                echo "Invalid option. Please enter 1, 2, 3, or 4."
+                ;;
+            esac
+          done
         fi
-
-        deploy_ingress_resources
-        restart_pods
-        display_completion_message
-
-      elif [ "$custom_host_name" == "true" ] && [ "$ssl_configured" == "true" ]; then
-        echo_info "OpenGovernance is fully configured with custom hostname and SSL/TLS."
       else
-        # Existing logic for handling other cases
-        echo ""
-        echo "OpenGovernance is installed but not fully configured."
-        echo "Please select an option to proceed:"
-        PS3="Enter the number corresponding to your choice: "
-        options=("Barebones Install (Requires Port-Forwarding)" "Simple Install" "Standard Install with HTTPS" "Exit")
-        select opt in "${options[@]}"; do
-          case $REPLY in
-            1)
-              ENABLE_HTTPS=false
-              install_barebones_install
-              check_pods_and_jobs
-              provide_port_forward_instructions
-              break
-              ;;
-            2)
-              ENABLE_HTTPS=false
-              configure_email_and_domain
-              install_simple_install
-              check_pods_and_jobs
-              setup_ingress_controller
-              deploy_ingress_resources
-              perform_helm_upgrade
-              restart_pods
-              display_completion_message
-              break
-              ;;
-            3)
-              ENABLE_HTTPS=true
-              configure_email_and_domain
-              perform_helm_upgrade
-              check_pods_and_jobs
-              setup_ingress_controller
-              setup_cert_manager_and_issuer
-              deploy_ingress_resources
-              restart_pods
-              display_completion_message
-              break
-              ;;
-            4)
-              echo_info "Exiting the script."
-              exit 0
-              ;;
-            *)
-              echo "Invalid option. Please enter 1, 2, 3, or 4."
-              ;;
-          esac
-        done
+        echo_info "No domain provided and OpenGovernance is running with default settings."
       fi
     fi
   fi
