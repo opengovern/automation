@@ -1,10 +1,7 @@
-#!/bin/bash
-
-set -e
-
 # -----------------------------
 # Logging Configuration
 # -----------------------------
+DEBUG_MODE=false  # Set to true to enable debug mode
 LOGFILE="$HOME/opengovernance_install.log"
 
 # Ensure the log directory exists
@@ -23,8 +20,10 @@ exec 3>> "$LOGFILE"
 # Function to display informational messages to console and log
 function echo_info() {
   local message="$1"
-  # Print concise message to console
-  printf "%s\n" "$message"
+  # Only display message if in debug mode
+  if [ "$DEBUG_MODE" = true ]; then
+    printf "%s\n" "$message"
+  fi
   # Log detailed message
   echo "$message" >&3
 }
@@ -32,7 +31,7 @@ function echo_info() {
 # Function to display error messages to console and log
 function echo_error() {
   local message="$1"
-  # Print concise error message to console
+  # Always print concise error message to console
   printf "Error: %s\n" "$message"
   # Log detailed error message
   echo "Error: $message" >&3
@@ -40,7 +39,7 @@ function echo_error() {
 
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE]"
+  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--debug]"
   echo ""
   echo "Options:"
   echo "  --silent-install    Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
@@ -52,34 +51,12 @@ function usage() {
   echo "                       3) Minimal Install"
   echo "                       4) Basic Install with no Network Ingress (barebones)"
   echo "                       Default: 1"
+  echo "  --debug             Enable debug mode for detailed output."
   echo "  -h, --help          Display this help message."
   exit 1
 }
 
-# Function to validate email format
-function validate_email() {
-  local email_regex="^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
-  if [[ ! "$EMAIL" =~ $email_regex ]]; then
-    echo_error "Invalid email format: $EMAIL"
-    exit 1
-  fi
-}
-
-# Function to validate domain format
-function validate_domain() {
-  local domain_regex="^(([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\.)+[A-Za-z]{2,}$"
-  if [[ ! "$DOMAIN" =~ $domain_regex ]]; then
-    echo_error "Invalid domain format: $DOMAIN"
-    exit 1
-  fi
-}
-
-# Function to run helm commands quietly (output only to log)
-function helm_quiet() {
-  helm "$@" >&3 2>&3
-}
-
-# Function to parse command-line arguments
+# Modify the parse_args function to include a --debug flag
 function parse_args() {
   SILENT_INSTALL=false
   while [[ "$#" -gt 0 ]]; do
@@ -99,6 +76,10 @@ function parse_args() {
       -t|--type)
         INSTALL_TYPE="$2"
         shift 2
+        ;;
+      --debug)
+        DEBUG_MODE=true
+        shift
         ;;
       -h|--help)
         usage
@@ -199,22 +180,22 @@ function choose_install_type() {
     1)
       INSTALL_TYPE=1
       ENABLE_HTTPS=true
-      echo "You selected Install with HTTP(s). Please provide your domain and email."
+      #echo "You selected Install with HTTP(s). Please provide your domain and email."
       ;;
     2)
       INSTALL_TYPE=2
       ENABLE_HTTPS=false
-      echo "You selected Install without HTTP(s). Please provide your domain."
+      #echo "You selected Install without HTTP(s). Please provide your domain."
       ;;
     3)
       INSTALL_TYPE=3
       ENABLE_HTTPS=false
-      echo "You selected Minimal Install. Using external IP as domain."
+      #echo "You selected Minimal Install. Using external IP as domain."
       ;;
     4)
       INSTALL_TYPE=4
       ENABLE_HTTPS=false
-      echo "You selected Basic Install with no Network Ingress (barebones)."
+      #echo "You selected Basic Install with no Network Ingress (barebones)."
       ;;
     5)
       echo_info "Exiting the script."
@@ -223,7 +204,7 @@ function choose_install_type() {
     *)
       INSTALL_TYPE=1
       ENABLE_HTTPS=true
-      echo "Invalid option. Defaulting to 1) Install with HTTP(s)."
+      #echo "Invalid option. Defaulting to 1) Install with HTTP(s)."
       ;;
   esac
 
