@@ -495,7 +495,6 @@ function configure_email_and_domain() {
   esac
 }
 
-
 # Function to install or upgrade OpenGovernance
 function install_opengovernance() {
   echo_info "Installing or Upgrading OpenGovernance"
