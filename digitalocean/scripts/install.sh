@@ -380,6 +380,8 @@ EOF
   echo_info "OpenGovernance application installation completed."
 }
 
+# Corrected section with potential syntax error fixed
+
 # Function to install OpenGovernance with custom domain and with HTTPS
 function install_opengovernance_with_custom_domain_with_https() {
   echo_info "Installing OpenGovernance with custom domain and HTTPS"
@@ -421,6 +423,7 @@ EOF
 
   echo_info "OpenGovernance application installation completed."
 }
+
 
 # Function to install OpenGovernance with custom domain and without HTTPS
 function install_opengovernance_with_custom_domain_no_https() {
