@@ -13,6 +13,9 @@ mkdir -p "$(dirname "$LOGFILE")"
 # Redirect all output to the log file and the console
 exec > >(tee -i "$LOGFILE") 2>&1
 
+# Open file descriptor 3 for appending to the log file only
+exec 3>> "$LOGFILE"
+
 # -----------------------------
 # Function Definitions
 # -----------------------------
@@ -20,10 +23,12 @@ exec > >(tee -i "$LOGFILE") 2>&1
 # Define the indent string for nested outputs
 INDENT="    "
 
-# Initialize DOMAIN, EMAIL, and INSTALL_TYPE to ensure no dependency on environment variables
+# Initialize DOMAIN, EMAIL, INSTALL_TYPE, SILENT_INSTALL, and DEPLOY_SUCCESS
 DOMAIN=""
 EMAIL=""
-INSTALL_TYPE=1  # Default installation type
+INSTALL_TYPE=1          # Default installation type
+SILENT_INSTALL=false   # Default to interactive mode
+DEPLOY_SUCCESS=false   # Initialize DEPLOY_SUCCESS
 
 # Function to display informational messages
 function echo_info() {
@@ -49,9 +54,10 @@ function echo_error() {
 
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--dry-run]"
+  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--dry-run]"
   echo ""
   echo "Options:"
+  echo "  --silent-install    Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
   echo "  -d, --domain        Specify the domain for OpenGovernance."
   echo "  -e, --email         Specify the email for Let's Encrypt certificate generation."
   echo "  -t, --type          Specify the installation type:"
@@ -83,11 +89,20 @@ function validate_domain() {
   fi
 }
 
+# Function to run helm commands quietly (output only to log)
+function helm_quiet() {
+  helm "$@" >&3 2>&3
+}
+
 # Function to parse command-line arguments
 function parse_args() {
   DRY_RUN=false
   while [[ "$#" -gt 0 ]]; do
     case $1 in
+      --silent-install)
+        SILENT_INSTALL=true
+        shift
+        ;;
       -d|--domain)
         DOMAIN="$2"
         shift 2
@@ -120,23 +135,27 @@ function parse_args() {
     usage
   fi
 
-  # Validate DOMAIN and EMAIL if they are set via arguments
+  # Validate DOMAIN and EMAIL based on INSTALL_TYPE and SILENT_INSTALL
   case $INSTALL_TYPE in
     1)
       # Standard (Custom hostname + SSL)
       if [ -n "$DOMAIN" ]; then
         validate_domain
       else
-        echo_error "Installation type 1 requires a DOMAIN." "$INDENT"
-        usage
+        if [ "$SILENT_INSTALL" = true ]; then
+          echo_error "Installation type 1 requires a DOMAIN in silent mode." "$INDENT"
+          usage
+        fi
       fi
 
       if [ -n "$EMAIL" ]; then
         validate_email
         ENABLE_HTTPS=true
       else
-        echo_error "Installation type 1 requires an EMAIL for SSL/TLS setup." "$INDENT"
-        usage
+        if [ "$SILENT_INSTALL" = true ]; then
+          echo_error "Installation type 1 requires an EMAIL in silent mode." "$INDENT"
+          usage
+        fi
       fi
       ;;
     2)
@@ -144,8 +163,10 @@ function parse_args() {
       if [ -n "$DOMAIN" ]; then
         validate_domain
       else
-        echo_error "Installation type 2 requires a DOMAIN." "$INDENT"
-        usage
+        if [ "$SILENT_INSTALL" = true ]; then
+          echo_error "Installation type 2 requires a DOMAIN in silent mode." "$INDENT"
+          usage
+        fi
       fi
       ENABLE_HTTPS=false
       ;;
@@ -164,6 +185,65 @@ function parse_args() {
   esac
 }
 
+# Function to choose installation type in interactive mode
+function choose_install_type() {
+  echo ""
+  echo "Select Installation Type:"
+  echo "1) Standard (Custom hostname + SSL)"
+  echo "2) No HTTPS (Simple install with hostname)"
+  echo "3) Minimal (Simple install with no hostname)"
+  echo "4) Barebones (Requires kubectl port forwarding)"
+  echo "5) Exit"
+
+  # Prompt the user, with default 1 after timeout or pressing Enter
+  read -t 10 -p "Enter the number corresponding to your choice [Default: 1]: " choice < /dev/tty || choice=1
+
+  # If no choice is made, default to 1
+  choice=${choice:-1}
+
+  # Ensure the choice is within 1-5
+  if ! [[ "$choice" =~ ^[1-5]$ ]]; then
+    echo "Invalid option. Defaulting to 1) Standard Install."
+    choice=1
+  fi
+
+  # Bold the selection
+  echo ""
+  echo -e "You selected: \033[1m$choice) $(get_install_type_description $choice)\033[0m"
+
+  # Set INSTALL_TYPE and possibly set ENABLE_HTTPS based on choice
+  case $choice in
+    1)
+      INSTALL_TYPE=1
+      ENABLE_HTTPS=true
+      echo "You selected Standard Install. Please provide your domain and email."
+      ;;
+    2)
+      INSTALL_TYPE=2
+      ENABLE_HTTPS=false
+      echo "You selected No HTTPS Install. Please provide your domain."
+      ;;
+    3)
+      INSTALL_TYPE=3
+      ENABLE_HTTPS=false
+      echo "You selected Minimal Install. Using external IP as domain."
+      ;;
+    4)
+      INSTALL_TYPE=4
+      ENABLE_HTTPS=false
+      echo "You selected Barebones Install. Skipping Ingress setup."
+      ;;
+    5)
+      echo_info "Exiting the script."
+      exit 0
+      ;;
+    *)
+      INSTALL_TYPE=1
+      ENABLE_HTTPS=true
+      echo "Invalid option. Defaulting to 1) Standard Install."
+      ;;
+  esac
+}
 
 
 # Function to check prerequisites
@@ -203,15 +283,12 @@ function cleanup_failed_install() {
   echo_error "OpenGovernance installation failed. Initiating cleanup..." "$INDENT"
   echo_info "Cleaning up failed installation in 10 seconds..." "$INDENT"
 
-  # Countdown timer
-  for i in {10..1}; do
-    echo_info "Cleaning up in $i seconds..." "$INDENT"
-    sleep 1
-  done
+  # Wait for 10 seconds without countdown
+  sleep 10
 
-  # Uninstall the Helm release
+  # Uninstall the Helm release quietly
   echo_info "Uninstalling OpenGovernance Helm release..." "$INDENT"
-  helm uninstall opengovernance -n opengovernance || echo_error "Failed to uninstall Helm release." "$INDENT"
+  helm_quiet uninstall opengovernance -n opengovernance || echo_error "Failed to uninstall Helm release." "$INDENT"
 
   # Delete the namespace
   echo_info "Deleting 'opengovernance' namespace..." "$INDENT"
@@ -292,7 +369,29 @@ function check_opengovernance_config() {
   # Initialize variables
   custom_host_name=false
   dex_configuration_ok=false
-  ssl_configured=false
+  ssl_configured=false  # Default to false
+
+  # Retrieve the current Helm values
+  CURRENT_HELM_VALUES=$(helm get values opengovernance -n opengovernance --output yaml)
+
+  # Extract HELM_VALUES_DEX_ISSUER using awk
+  HELM_VALUES_DEX_ISSUER=$(echo "$CURRENT_HELM_VALUES" | awk '
+    /^dex:/ { in_dex=1; next }
+    /^global:/ { in_dex=0 }
+    in_dex && /^[[:space:]]+config:/ { in_config=1; next }
+    in_config && /^[[:space:]]+issuer:/ {
+      sub(/^[[:space:]]*issuer:[[:space:]]*/, "")
+      print
+      exit
+    }
+  ')
+
+  # Check if HELM_VALUES_DEX_ISSUER is not null and starts with "https://"
+  if [[ -n "$HELM_VALUES_DEX_ISSUER" && "$HELM_VALUES_DEX_ISSUER" == https://* ]]; then
+    dex_configuration_ok=true
+  else
+    dex_configuration_ok=false
+  fi
 
   # Retrieve the app hostname by looking up the environment variables
   ENV_VARS=$(kubectl get deployment metadata-service -n opengovernance \
@@ -316,24 +415,14 @@ function check_opengovernance_config() {
     dex_configuration_ok=true
   fi
 
-  # Enhanced SSL configuration check
-  if [[ "$custom_host_name" == true ]] && \
-     echo "$redirect_uris" | grep -q "https://$CURRENT_DOMAIN"; then
+  # Retrieve Ingress external IP
+  INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
 
-    if kubectl get ingress opengovernance-ingress -n opengovernance &> /dev/null; then
-      # Use kubectl describe to get Ingress details
-      INGRESS_DETAILS=$(kubectl describe ingress opengovernance-ingress -n opengovernance)
-
-      # Check for TLS configuration in the Ingress specifically for the CURRENT_DOMAIN
-      if echo "$INGRESS_DETAILS" | grep -q "tls:" && echo "$INGRESS_DETAILS" | grep -q "host: $CURRENT_DOMAIN"; then
-
-        # Check if the Ingress Controller has an assigned external IP
-        INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-        if [ -n "$INGRESS_EXTERNAL_IP" ]; then
-          ssl_configured=true
-        fi
-      fi
-    fi
+  # Enhanced SSL configuration check based on the new criteria
+  if [ "$APP_HEALTHY" = true ] && [ -n "$INGRESS_EXTERNAL_IP" ] && [[ "$HELM_VALUES_DEX_ISSUER" == https://* ]]; then
+    ssl_configured=true
+  else
+    ssl_configured=false
   fi
 
   # Output results
@@ -347,7 +436,10 @@ function check_opengovernance_config() {
   export custom_host_name
   export ssl_configured
   export CURRENT_DOMAIN
+  export HELM_VALUES_DEX_ISSUER
+  export INGRESS_EXTERNAL_IP
 }
+
 
 # Function to check OpenGovernance readiness
 function check_opengovernance_readiness() {
@@ -395,62 +487,64 @@ function configure_email_and_domain() {
   case $INSTALL_TYPE in
     1)
       # Standard (Custom hostname + SSL)
-      if [ -z "$DOMAIN" ]; then
-        while true; do
-          echo ""
-          echo "Enter your domain for OpenGovernance (required for custom hostname)."
-          read -p "Domain: " DOMAIN < /dev/tty
-          if [ -z "$DOMAIN" ]; then
-            echo_error "Domain is required for installation type 1." "$INDENT"
-            continue
-          fi
-          echo "You entered: $DOMAIN"
-          read -p "Is this correct? (Y/n): " yn < /dev/tty
-          case $yn in
-              "" | [Yy]* )
-                  validate_domain
-                  break
-                  ;;
-              [Nn]* )
-                  echo "Let's try again."
-                  DOMAIN=""
-                  ;;
-              * )
-                  echo "Please answer y or n.";;
-          esac
-        done
-      fi
-
-      if [ -z "$EMAIL" ]; then
-        while true; do
-          echo ""
-          echo "Enter your email for HTTPS/TLS setup and Let's Encrypt certificate issuance."
-          echo "This email is secure and private. You can change it later."
-          read -p "Email: " EMAIL < /dev/tty
-          if [ -z "$EMAIL" ]; then
-            echo_error "Email is required for installation type 1." "$INDENT"
-          else
-            echo "You entered: $EMAIL"
+      if [ "$SILENT_INSTALL" = false ]; then
+        if [ -z "$DOMAIN" ]; then
+          while true; do
+            echo ""
+            echo "Enter your domain for OpenGovernance (required for custom hostname)."
+            read -p "Domain: " DOMAIN < /dev/tty
+            if [ -z "$DOMAIN" ]; then
+              echo_error "Domain is required for installation type 1." "$INDENT"
+              continue
+            fi
+            echo "You entered: $DOMAIN"
             read -p "Is this correct? (Y/n): " yn < /dev/tty
             case $yn in
                 "" | [Yy]* )
-                    validate_email
+                    validate_domain
                     break
                     ;;
                 [Nn]* )
                     echo "Let's try again."
-                    EMAIL=""
+                    DOMAIN=""
                     ;;
                 * )
                     echo "Please answer y or n.";;
             esac
-          fi
-        done
+          done
+        fi
+
+        if [ -z "$EMAIL" ]; then
+          while true; do
+            echo ""
+            echo "Enter your email for HTTPS/TLS setup and Let's Encrypt certificate issuance."
+            echo "This email is secure and private. You can change it later."
+            read -p "Email: " EMAIL < /dev/tty
+            if [ -z "$EMAIL" ]; then
+              echo_error "Email is required for installation type 1." "$INDENT"
+            else
+              echo "You entered: $EMAIL"
+              read -p "Is this correct? (Y/n): " yn < /dev/tty
+              case $yn in
+                  "" | [Yy]* )
+                      validate_email
+                      break
+                      ;;
+                  [Nn]* )
+                      echo "Let's try again."
+                      EMAIL=""
+                      ;;
+                  * )
+                      echo "Please answer y or n.";;
+              esac
+            fi
+          done
+        fi
       fi
       ;;
     2)
       # No HTTPS (Simple install with hostname)
-      if [ -z "$DOMAIN" ]; then
+      if [ "$SILENT_INSTALL" = false ] && [ -z "$DOMAIN" ]; then
         while true; do
           echo ""
           echo "Enter your domain for OpenGovernance (required for hostname)."
@@ -497,14 +591,14 @@ function configure_email_and_domain() {
 function install_opengovernance() {
   echo_info "Installing or Upgrading OpenGovernance"
 
-  # Add the OpenGovernance Helm repository and update
-  if ! helm repo list | grep -qw opengovernance; then
-    helm repo add opengovernance https://opengovern.github.io/charts
+  # Add the OpenGovernance Helm repository and update quietly
+  if ! helm repo list | grep -qw "opengovernance"; then
+    helm_quiet repo add opengovernance https://opengovern.github.io/charts
     echo_info "Added OpenGovernance Helm repository." "$INDENT"
   else
     echo_info "OpenGovernance Helm repository already exists. Skipping add." "$INDENT"
   fi
-  helm repo update
+  helm_quiet repo update
 
   if [ "$APP_INSTALLED" = false ]; then
     echo_info "Installing OpenGovernance via Helm." "$INDENT"
@@ -539,7 +633,7 @@ function install_opengovernance() {
     fi
 
     if [ "$DRY_RUN" = true ]; then
-      helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
         --dry-run \
         -f - <<EOF
 global:
@@ -549,7 +643,7 @@ dex:
     issuer: ${ISSUER}
 EOF
     else
-      helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+      helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
         -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -605,7 +699,7 @@ EOF
       echo_info "Detected changes in DOMAIN or HTTPS configuration. Upgrading OpenGovernance via Helm." "$INDENT"
 
       if [ "$DRY_RUN" = true ]; then
-        helm upgrade opengovernance opengovernance/opengovernance -n opengovernance --timeout=10m \
+        helm_quiet upgrade opengovernance opengovernance/opengovernance -n opengovernance --timeout=10m \
           --dry-run \
           -f - <<EOF
 global:
@@ -615,7 +709,7 @@ dex:
     issuer: ${DESIRED_ISSUER}
 EOF
       else
-        helm upgrade opengovernance opengovernance/opengovernance -n opengovernance --timeout=10m \
+        helm_quiet upgrade opengovernance opengovernance/opengovernance -n opengovernance --timeout=10m \
           -f - <<EOF
 global:
   domain: ${DESIRED_DOMAIN}
@@ -661,9 +755,9 @@ function setup_ingress_controller() {
     echo_info "Ingress Controller already installed in the $INGRESS_NAMESPACE namespace. Skipping installation." "$INDENT"
   else
     echo_info "Installing ingress-nginx via Helm in the $INGRESS_NAMESPACE namespace." "$INDENT"
-    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-    helm repo update
-    helm install ingress-nginx ingress-nginx/ingress-nginx -n "$INGRESS_NAMESPACE" --create-namespace
+    helm_quiet repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm_quiet repo update
+    helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$INGRESS_NAMESPACE" --create-namespace
     echo_info "Ingress Controller installed in the $INGRESS_NAMESPACE namespace." "$INDENT"
 
     # Wait for ingress-nginx controller to obtain an external IP (up to 6 minutes)
@@ -863,9 +957,10 @@ function setup_cert_manager_and_issuer() {
     echo_info "Cert-Manager already installed. Skipping installation." "$INDENT"
   else
     echo_info "Installing Cert-Manager via Helm in the opengovernance namespace." "$INDENT"
-    helm repo add jetstack https://charts.jetstack.io
-    helm repo update
-    helm install cert-manager jetstack/cert-manager --namespace opengovernance --create-namespace --version v1.11.0 --set installCRDs=true
+    helm_quiet repo add jetstack https://charts.jetstack.io
+    helm_quiet repo update
+    helm_quiet install cert-manager jetstack/cert-manager --namespace opengovernance --create-namespace --version v1.11.0 --set installCRDs=true
+
     echo_info "Cert-Manager installed in the opengovernance namespace." "$INDENT"
   fi
 
@@ -910,17 +1005,18 @@ function install_barebones_install() {
 
   # Install with default configuration without custom parameters
   if [ "$DRY_RUN" = true ]; then
-    helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m --dry-run
+    helm_quiet install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m --dry-run
   else
-    helm install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m
+    helm_quiet install -n opengovernance opengovernance opengovernance/opengovernance --create-namespace --timeout=10m
   fi
 
   echo_info "Barebones Install completed." "$INDENT"
 
   # Attempt to set up port-forwarding
   set +e  # Temporarily disable exit on error
-  if kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80; then
-    echo_error "OpenGovernance is running. Access it at http://localhost:8080"
+  if kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80 &>/dev/null & then
+    # Port-forwarding started successfully in the background
+    echo_info "OpenGovernance is running. Access it at http://localhost:8080" "$INDENT"
     echo "To sign in, use the following default credentials:"
     echo "  Username: admin@opengovernance.io"
     echo "  Password: password"
@@ -937,7 +1033,7 @@ function install_no_https_install() {
 
   # Install with simple configuration without SSL
   if [ "$DRY_RUN" = true ]; then
-    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+    helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       --dry-run \
       -f - <<EOF
 global:
@@ -947,7 +1043,7 @@ dex:
     issuer: http://${DOMAIN}/dex
 EOF
   else
-    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+    helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -966,7 +1062,7 @@ function install_minimal_install() {
 
   # Install with minimal configuration without hostname
   if [ "$DRY_RUN" = true ]; then
-    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+    helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       --dry-run \
       -f - <<EOF
 global:
@@ -976,7 +1072,7 @@ dex:
     issuer: http://localhost/dex
 EOF
   else
-    helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+    helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       -f - <<EOF
 global:
   domain: ""
@@ -1047,7 +1143,7 @@ function display_completion_message() {
   echo "-----------------------------------------------------"
 }
 
-# Helper function to get installation type description
+# Function to display installation type description
 function get_install_type_description() {
   local type="$1"
   case $type in
@@ -1066,6 +1162,11 @@ function run_installation_logic() {
   if ! check_opengovernance_installation; then
     # App is not installed, proceed to install
     echo_info "OpenGovernance is not installed."
+
+    # If in interactive mode, prompt for installation type
+    if [ "$SILENT_INSTALL" = false ]; then
+      choose_install_type
+    fi
 
     # Configure email and domain based on installation type
     configure_email_and_domain
