@@ -81,6 +81,7 @@ function helm_quiet() {
 
 # Function to parse command-line arguments
 function parse_args() {
+  SILENT_INSTALL=false
   while [[ "$#" -gt 0 ]]; do
     case $1 in
       --silent-install)
@@ -486,10 +487,15 @@ function configure_email_and_domain() {
 function install_opengovernance_with_https() {
   echo_info "Proceeding with OpenGovernance installation with HTTPS."
 
+  # Add Helm repository and update
+  echo_info "Adding OpenGovernance Helm repository."
+  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
+  helm_quiet repo update
+
   # Perform Helm installation with custom configuration
   echo_info "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -505,10 +511,15 @@ EOF
 function install_opengovernance_with_hostname_only() {
   echo_info "Proceeding with OpenGovernance installation without HTTPS."
 
+  # Add Helm repository and update
+  echo_info "Adding OpenGovernance Helm repository."
+  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
+  helm_quiet repo update
+
   # Perform Helm installation with custom configuration
   echo_info "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -530,7 +541,10 @@ function install_opengovernance_with_public_ip() {
   # b. Perform Helm installation with external IP as domain and issuer
   echo_info "Performing installation with external IP as domain and issuer."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
+  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
+  helm_quiet repo update
+
+  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -558,19 +572,19 @@ EOF
 function install_opengovernance_no_ingress() {
   echo_info "Proceeding with Basic Install of OpenGovernance without Network Ingress (barebones)."
 
-  # a. Add Helm repository and update
-  helm_quiet repo add opengovernance https://opengovern.github.io/charts
+  # Add Helm repository and update
+  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
-  # b. Install OpenGovernance via Helm
+  # Perform Helm installation
   echo_info "Installing OpenGovernance via Helm without Ingress."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m
+  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait
 
-  # c. Check if the application is up
+  # Check if the application is up
   check_pods_and_jobs
 
-  # d. Set up port-forwarding
+  # Set up port-forwarding
   echo_info "Setting up port-forwarding to access OpenGovernance locally."
 
   # Start port-forwarding in the background
@@ -597,7 +611,7 @@ function install_opengovernance_no_ingress() {
 function setup_ingress_controller() {
   echo_info "Setting up Ingress Controller."
 
-  # Define the namespace for ingress-nginx (Keeping it in opengovernance namespace)
+  # Define the namespace for ingress-nginx (Using a separate namespace)
   local INGRESS_NAMESPACE="opengovernance"
 
   # Check if the namespace exists, if not, create it
@@ -617,14 +631,14 @@ function setup_ingress_controller() {
     fi
   fi
 
-  # Check if ingress-nginx is already installed in the opengovernance namespace
+  # Check if ingress-nginx is already installed in the ingress-nginx namespace
   if helm ls -n "$INGRESS_NAMESPACE" | grep -qw ingress-nginx; then
     echo_info "Ingress Controller already installed. Skipping installation."
   else
     echo_info "Installing ingress-nginx via Helm."
-    helm_quiet repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm_quiet repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
     helm_quiet repo update
-    helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$INGRESS_NAMESPACE" --create-namespace
+    helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$INGRESS_NAMESPACE" --create-namespace --wait
     echo_info "Ingress Controller installed."
 
     # Wait for ingress-nginx controller to obtain an external IP (up to 6 minutes)
@@ -816,9 +830,9 @@ function setup_cert_manager_and_issuer() {
     echo_info "Cert-Manager is already installed. Skipping installation."
   else
     echo_info "Installing Cert-Manager via Helm."
-    helm_quiet repo add jetstack https://charts.jetstack.io
+    helm_quiet repo add jetstack https://charts.jetstack.io || true
     helm_quiet repo update
-    helm_quiet install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.11.0 --set installCRDs=true
+    helm_quiet install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
     echo_info "Cert-Manager installed."
   fi
 
@@ -855,79 +869,6 @@ function restart_pods() {
   kubectl rollout restart deployment opengovernance-dex -n opengovernance
 
   echo_info "Pods restarted successfully."
-}
-
-# Function to install OpenGovernance with public IP (Minimal Install)
-function install_opengovernance_with_public_ip() {
-  echo_info "Performing Minimal Install of OpenGovernance."
-
-  # a. Install Ingress Controller and wait for external IP
-  setup_ingress_controller
-
-  # b. Perform Helm installation with external IP as domain and issuer
-  echo_info "Performing installation with external IP as domain and issuer."
-
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
-    -f - <<EOF
-global:
-  domain: ${INGRESS_EXTERNAL_IP}
-dex:
-  config:
-    issuer: http://${INGRESS_EXTERNAL_IP}/dex
-EOF
-
-  # c. Check if the application is running
-  check_pods_and_jobs
-
-  # d. Deploy Ingress resources without host and TLS
-  deploy_ingress_resources
-
-  # e. Re-check if the application is running
-  check_pods_and_jobs
-
-  # f. Restart Dex and NGINX services by restarting their pods
-  restart_pods
-
-  echo_info "Minimal Install of OpenGovernance completed."
-}
-
-# Function to install OpenGovernance without Ingress (Barebones)
-function install_opengovernance_no_ingress() {
-  echo_info "Performing Basic Install of OpenGovernance without Network Ingress (barebones)."
-
-  # a. Add Helm repository and update
-  helm_quiet repo add opengovernance https://opengovern.github.io/charts
-  helm_quiet repo update
-
-  # b. Install OpenGovernance via Helm
-  echo_info "Installing OpenGovernance via Helm without Ingress."
-
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m
-
-  # c. Check if the application is up
-  check_pods_and_jobs
-
-  # d. Set up port-forwarding
-  echo_info "Setting up port-forwarding to access OpenGovernance locally."
-
-  # Start port-forwarding in the background
-  kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80 &
-  PORT_FORWARD_PID=$!
-
-  # Give port-forwarding some time to establish
-  sleep 5
-
-  # Check if port-forwarding is still running
-  if ps -p $PORT_FORWARD_PID > /dev/null 2>&1; then
-    echo_info "Port-forwarding established successfully."
-    echo_info "OpenGovernance is accessible at http://localhost:8080"
-    echo "To sign in, use the following default credentials:"
-    echo "  Username: admin@opengovernance.io"
-    echo "  Password: password"
-    echo "You can terminate port-forwarding by killing the background process (PID: $PORT_FORWARD_PID)."
-  else
-    provide_port_forward_instructions
-  fi
 }
 
 # Function to provide port-forward instructions
@@ -1000,163 +941,180 @@ function get_install_type_description() {
     *) echo "Unknown" ;;
   esac
 }
-    # Function to run installation logic
-    function run_installation_logic() {
-      # Check if OpenGovernance is installed
-      if ! check_opengovernance_installation; then
-        # OpenGovernance is not installed, proceed with installation
-        echo_info "OpenGovernance is not installed."
-    
-        # If not in silent mode, prompt for installation type
-        if [ "$SILENT_INSTALL" = false ]; then
-          choose_install_type
+
+# Function to run installation logic
+function run_installation_logic() {
+  # Check if OpenGovernance is installed
+  if ! check_opengovernance_installation; then
+    # OpenGovernance is not installed, proceed with installation
+    echo_info "OpenGovernance is not installed."
+
+    # If not in silent mode, prompt for installation type
+    if [ "$SILENT_INSTALL" = false ]; then
+      echo_info "Starting interactive installation type selection..."
+      choose_install_type
+    fi
+
+    # Configure email and domain based on installation type
+    configure_email_and_domain
+
+    # Perform installation based on INSTALL_TYPE
+    case $INSTALL_TYPE in
+      1)
+        install_opengovernance_with_https  # Install with HTTP(s)
+        ;;
+      2)
+        install_opengovernance_with_hostname_only  # Install without HTTP(s)
+        ;;
+      3)
+        install_opengovernance_with_public_ip  # Minimal Install
+        ;;
+      4)
+        install_opengovernance_no_ingress  # Basic Install with no Network Ingress (barebones)
+        ;;
+      *)
+        echo_error "Unsupported installation type: $INSTALL_TYPE"
+        exit 1
+        ;;
+    esac
+
+    # Handle post-installation steps based on INSTALL_TYPE
+    if [ "$INSTALL_TYPE" -eq 1 ] || [ "$INSTALL_TYPE" -eq 2 ]; then
+      # For Install with HTTP(s) and Install without HTTP(s)
+      # a. Check pod readiness
+      check_pods_and_jobs
+
+      # b. Set up Ingress Controller
+      setup_ingress_controller
+      DEPLOY_SUCCESS=true
+
+      # c. Deploy Ingress resources
+      deploy_ingress_resources || DEPLOY_SUCCESS=false
+
+      # d. If HTTPS is enabled, set up Cert-Manager and Issuer
+      if [ "$ENABLE_HTTPS" = true ]; then
+        setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
+      fi
+
+      # e. Restart Dex and NGINX services by restarting their deployments
+      restart_pods || DEPLOY_SUCCESS=false
+    elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
+      # For Minimal Install and Barebones Install
+      DEPLOY_SUCCESS=true  # These install functions handle their own setup
+    else
+      DEPLOY_SUCCESS=false
+    fi
+
+    # Display completion message or provide port-forward instructions
+    if [ "$DEPLOY_SUCCESS" = true ]; then
+      display_completion_message
+    else
+      provide_port_forward_instructions
+    fi
+  else
+    # OpenGovernance is already installed, check its health
+    echo_info "OpenGovernance is already installed. Checking health status..."
+    check_opengovernance_health
+
+    if [ "$APP_HEALTHY" = false ]; then
+      # OpenGovernance has health issues, attempt to upgrade
+      echo_info "OpenGovernance has health issues. Attempting to upgrade."
+
+      # Perform upgrade based on INSTALL_TYPE
+      case $INSTALL_TYPE in
+        1)
+          install_opengovernance_with_https  # Upgrade with HTTP(s)
+          ;;
+        2)
+          install_opengovernance_with_hostname_only  # Upgrade without HTTP(s)
+          ;;
+        3)
+          install_opengovernance_with_public_ip  # Minimal Install Upgrade
+          ;;
+        4)
+          install_opengovernance_no_ingress  # Barebones Install Upgrade
+          ;;
+        *)
+          echo_error "Unsupported installation type: $INSTALL_TYPE"
+          exit 1
+          ;;
+      esac
+
+      # Re-check pod readiness after upgrade
+      check_pods_and_jobs
+
+      # Handle post-upgrade steps based on INSTALL_TYPE
+      if [ "$INSTALL_TYPE" -eq 1 ] || [ "$INSTALL_TYPE" -eq 2 ]; then
+        # a. Set up Ingress Controller
+        setup_ingress_controller
+        DEPLOY_SUCCESS=true
+
+        # b. Deploy Ingress resources
+        deploy_ingress_resources || DEPLOY_SUCCESS=false
+
+        # c. If HTTPS is enabled, set up Cert-Manager and Issuer
+        if [ "$ENABLE_HTTPS" = true ]; then
+          setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
         fi
-    
-        # Configure email and domain based on installation type
-        configure_email_and_domain
-    
-        # Perform installation based on INSTALL_TYPE
-        case $INSTALL_TYPE in
-          1)
-            install_opengovernance_with_https  # Install with HTTP(s)
-            ;;
-          2)
-            install_opengovernance_with_hostname_only  # Install without HTTP(s)
-            ;;
-          3)
-            install_opengovernance_with_public_ip  # Minimal Install
-            ;;
-          4)
-            install_opengovernance_no_ingress  # Basic Install with no Network Ingress (barebones)
-            ;;
-          *)
-            echo_error "Unsupported installation type: $INSTALL_TYPE"
-            exit 1
-            ;;
-        esac
-    
-        # Handle post-installation steps based on INSTALL_TYPE
-        if [ "$INSTALL_TYPE" -eq 1 ] || [ "$INSTALL_TYPE" -eq 2 ]; then
-          # For Install with HTTP(s) and Install without HTTP(s)
-          # a. Check pod readiness
-          check_pods_and_jobs
-    
-          # b. Set up Ingress Controller
-          setup_ingress_controller
-          DEPLOY_SUCCESS=true
-    
-          # c. Deploy Ingress resources
-          deploy_ingress_resources || DEPLOY_SUCCESS=false
-    
-          # d. If HTTPS is enabled, set up Cert-Manager and Issuer
-          if [ "$ENABLE_HTTPS" = true ]; then
-            setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
-          fi
-    
-          # e. Restart Dex and NGINX services by restarting their deployments
-          restart_pods || DEPLOY_SUCCESS=false
-        elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
-          # For Minimal Install and Barebones Install
-          DEPLOY_SUCCESS=true  # These install functions handle their own setup
-        else
-          DEPLOY_SUCCESS=false
-        fi
-    
-        # Display completion message or provide port-forward instructions
-        if [ "$DEPLOY_SUCCESS" = true ]; then
-          display_completion_message
-        else
-          provide_port_forward_instructions
-        fi
+
+        # d. Restart Dex and NGINX services by restarting their deployments
+        restart_pods || DEPLOY_SUCCESS=false
+      elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
+        # Minimal Install and Barebones Install handle their own setup
+        DEPLOY_SUCCESS=true
       else
-        # OpenGovernance is already installed, check its health
-        echo_info "OpenGovernance is already installed. Checking health status..."
-        check_opengovernance_health
-    
-        if [ "$APP_HEALTHY" = false ]; then
-          # OpenGovernance has health issues, attempt to upgrade
-          echo_info "OpenGovernance has health issues. Attempting to upgrade."
-    
-          # Perform upgrade based on INSTALL_TYPE
-          case $INSTALL_TYPE in
-            1)
-              install_opengovernance_with_https  # Upgrade with HTTP(s)
-              ;;
-            2)
-              install_opengovernance_with_hostname_only  # Upgrade without HTTP(s)
-              ;;
-            3)
-              install_opengovernance_with_public_ip  # Minimal Install Upgrade
-              ;;
-            4)
-              install_opengovernance_no_ingress  # Barebones Install Upgrade
-              ;;
-            *)
-              echo_error "Unsupported installation type: $INSTALL_TYPE"
-              exit 1
-              ;;
-          esac
-    
-          # Re-check pod readiness after upgrade
-          check_pods_and_jobs
-    
-          # Handle post-upgrade steps based on INSTALL_TYPE
-          if [ "$INSTALL_TYPE" -eq 1 ] || [ "$INSTALL_TYPE" -eq 2 ]; then
-            # a. Set up Ingress Controller
-            setup_ingress_controller
-            DEPLOY_SUCCESS=true
-    
-            # b. Deploy Ingress resources
-            deploy_ingress_resources || DEPLOY_SUCCESS=false
-    
-            # c. If HTTPS is enabled, set up Cert-Manager and Issuer
-            if [ "$ENABLE_HTTPS" = true ]; then
-              setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
-            fi
-    
-            # d. Restart Dex and NGINX services by restarting their deployments
-            restart_pods || DEPLOY_SUCCESS=false
-          elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
-            # Minimal Install and Barebones Install handle their own setup
-            DEPLOY_SUCCESS=true
-          else
-            DEPLOY_SUCCESS=false
-          fi
-    
-          # Display completion message or provide port-forward instructions
-          if [ "$DEPLOY_SUCCESS" = true ]; then
-            display_completion_message
-          else
-            provide_port_forward_instructions
-          fi
-        else
-          # OpenGovernance is healthy, check configuration
-          echo_info "OpenGovernance is healthy. Verifying configuration..."
-          check_opengovernance_config
-    
-          if [ "$ENABLE_HTTPS" = true ] && [ "$ssl_configured" = true ]; then
-            echo_info "OpenGovernance is fully configured with HTTP(s)."
-          else
-            echo_info "OpenGovernance is installed but HTTP(s) is not fully configured."
-    
-            # Proceed with HTTP(s) configuration if applicable
-            if [ "$ENABLE_HTTPS" = true ]; then
-              echo_info "Proceeding with HTTP(s) configuration in 5 seconds..."
-              sleep 5
-    
-              # a. Set up Cert-Manager and Issuer
-              setup_cert_manager_and_issuer
-    
-              # b. Deploy Ingress resources
-              deploy_ingress_resources
-    
-              # c. Restart Dex and NGINX services by restarting their deployments
-              restart_pods
-    
-              # d. Display completion message
-              display_completion_message
-            fi
-          fi
+        DEPLOY_SUCCESS=false
+      fi
+
+      # Display completion message or provide port-forward instructions
+      if [ "$DEPLOY_SUCCESS" = true ]; then
+        display_completion_message
+      else
+        provide_port_forward_instructions
+      fi
+    else
+      # OpenGovernance is healthy, check configuration
+      echo_info "OpenGovernance is healthy. Verifying configuration..."
+      check_opengovernance_config
+
+      if [ "$ENABLE_HTTPS" = true ] && [ "$ssl_configured" = true ]; then
+        echo_info "OpenGovernance is fully configured with HTTP(s)."
+      else
+        echo_info "OpenGovernance is installed but HTTP(s) is not fully configured."
+
+        # Proceed with HTTP(s) configuration if applicable
+        if [ "$ENABLE_HTTPS" = true ]; then
+          echo_info "Proceeding with HTTP(s) configuration in 5 seconds..."
+          sleep 5
+
+          # a. Set up Cert-Manager and Issuer
+          setup_cert_manager_and_issuer
+
+          # b. Deploy Ingress resources
+          deploy_ingress_resources
+
+          # c. Restart Dex and NGINX services by restarting their deployments
+          restart_pods
+
+          # d. Display completion message
+          display_completion_message
         fi
       fi
-    }
+    fi
+  fi
+}
+
+# -----------------------------
+# Main Execution Flow
+# -----------------------------
+
+# Detect if the script is running in an interactive terminal
+if [ -t 0 ]; then
+  INTERACTIVE=true
+else
+  INTERACTIVE=false
+fi
+
+parse_args "$@"
+check_prerequisites
+run_installation_logic
