@@ -779,8 +779,7 @@ EOF
   echo_info "Standard Install with HTTPS completed." "$INDENT"
 }
 
-# Function to display completion message
-# Function to display completion message with protocol and DNS instructions
+# Function to display completion message with protocol, DNS instructions, and default login details
 function display_completion_message() {
   echo_info "Step 13 of 13: Installation Complete"
 
@@ -796,6 +795,10 @@ function display_completion_message() {
   echo ""
   echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
   echo ""
+  echo "To sign in, use the following default credentials:"
+  echo "  Username: admin@opengovernance.io"
+  echo "  Password: password"
+  echo ""
 
   # DNS A record setup instructions if domain is configured
   if [ -n "$DOMAIN" ]; then
@@ -808,9 +811,13 @@ function display_completion_message() {
     echo "Note: It may take some time for DNS changes to propagate."
   fi
 
+  # If Ingress is not properly configured, provide port-forward instructions
+  if [ "$DEPLOY_SUCCESS" = false ]; then
+    provide_port_forward_instructions
+  fi
+
   echo "-----------------------------------------------------"
 }
-
 
 # Function to provide port-forward instructions
 function provide_port_forward_instructions() {
@@ -818,7 +825,12 @@ function provide_port_forward_instructions() {
   echo "You can access it using port-forwarding as follows:"
   echo "kubectl port-forward -n opengovernance service/opengovernance-service 8080:80"
   echo "Then, access it at http://localhost:8080"
+  echo ""
+  echo "To sign in, use the following default credentials:"
+  echo "  Username: admin@opengovernance.io"
+  echo "  Password: password"
 }
+
 
 # Function to check and perform upgrade if needed
 function check_and_perform_upgrade() {
