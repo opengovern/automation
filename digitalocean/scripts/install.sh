@@ -402,6 +402,7 @@ function configure_email_and_domain() {
             echo_error "Domain is required for installation type 1." "$INDENT"
             continue
           fi
+          echo ""
           echo "You entered: $DOMAIN"
           read -p "Is this correct? (Y/n): " yn < /dev/tty
           case $yn in
@@ -421,11 +422,15 @@ function configure_email_and_domain() {
 
       if [ -z "$EMAIL" ]; then
         while true; do
-          echo "Enter your email for HTTPS certificate generation via Let's Encrypt."
+          echo ""
+          echo "Enter your email for HTTPS/TLS setup via Let's Encrypt."
+          echo "This email is secure, private, and can be changed later."
+          echo "Invalid emails may cause certificate issuance and installation errors."
           read -p "Email: " EMAIL < /dev/tty
           if [ -z "$EMAIL" ]; then
             echo_error "Email is required for installation type 1." "$INDENT"
           else
+            echo ""
             echo "You entered: $EMAIL"
             read -p "Is this correct? (Y/n): " yn < /dev/tty
             case $yn in
@@ -455,6 +460,7 @@ function configure_email_and_domain() {
             echo_error "Domain is required for installation type 2." "$INDENT"
             continue
           fi
+          echo ""
           echo "You entered: $DOMAIN"
           read -p "Is this correct? (Y/n): " yn < /dev/tty
           case $yn in
@@ -488,6 +494,7 @@ function configure_email_and_domain() {
       ;;
   esac
 }
+
 
 # Function to install or upgrade OpenGovernance
 function install_opengovernance() {
