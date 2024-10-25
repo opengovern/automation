@@ -380,6 +380,8 @@ EOF
   echo_info "OpenGovernance application installation completed."
 }
 
+# Missing function definitions added below
+
 # Function to install OpenGovernance with custom domain and with HTTPS
 function install_opengovernance_with_custom_domain_with_https() {
   echo_info "Installing OpenGovernance with custom domain and HTTPS"
@@ -397,9 +399,8 @@ function install_opengovernance_with_custom_domain_with_https() {
   echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
 
   if [ "$DRY_RUN" = true ]; then
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
-      --dry-run \
+    helm upgrade --install -n opengovernance opengovernance \
+      opengovernance/opengovernance --timeout=10m --dry-run \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -408,8 +409,8 @@ dex:
     issuer: https://${DOMAIN}/dex
 EOF
   else
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
+    helm upgrade --install -n opengovernance opengovernance \
+      opengovernance/opengovernance --timeout=10m \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -419,7 +420,7 @@ dex:
 EOF
   fi
 
-  echo_info "OpenGovernance application installation completed."
+  echo_info "OpenGovernance application installation (with custom domain and HTTPS) completed."
 }
 
 # Function to install OpenGovernance with custom domain and without HTTPS
@@ -439,8 +440,8 @@ function install_opengovernance_with_custom_domain_no_https() {
   echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
 
   if [ "$DRY_RUN" = true ]; then
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
+    helm upgrade --install -n opengovernance opengovernance \
+      opengovernance/opengovernance --timeout=10m --dry-run \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -449,8 +450,8 @@ dex:
     issuer: http://${DOMAIN}/dex
 EOF
   else
-    helm install -n opengovernance opengovernance \
-      opengovernance/opengovernance --create-namespace --timeout=10m \
+    helm upgrade --install -n opengovernance opengovernance \
+      opengovernance/opengovernance --timeout=10m \
       -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -460,8 +461,10 @@ dex:
 EOF
   fi
 
-  echo_info "OpenGovernance application installation completed."
+  echo_info "OpenGovernance application installation (with custom domain and without HTTPS) completed."
 }
+
+# End of missing function definitions
 
 # Function to set up cert-manager and Let's Encrypt Issuer (Step 6)
 function setup_cert_manager_and_issuer() {
@@ -800,130 +803,12 @@ function display_completion_message() {
 function provide_port_forward_instructions() {
   echo_info "Installation partially completed."
 
-  echo_error "Failed to set up Ingress resources. Providing port-forwarding instructions as a fallback."
-
   echo_info "To access the OpenGovernance application, please run the following command in a separate terminal:"
   printf "\033[1;32m%s\033[0m\n" "kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80"
   echo "Then open http://localhost:8080/ in your browser, and sign in with the following credentials:"
   echo "Username: admin@opengovernance.io"
   echo "Password: password"
 }
-
-# Function to run installation logic
-function run_installation_logic() {
-  # Check if app is installed
-  if ! check_opengovernance_installation; then
-    # App is not installed, proceed to install
-    echo_info "OpenGovernance is not installed."
-    configure_email_and_domain
-    install_opengovernance
-    check_pods_and_jobs
-
-    # Attempt to set up Ingress Controller and related resources
-    set +e  # Temporarily disable exit on error
-    setup_ingress_controller
-    DEPLOY_SUCCESS=true
-
-    deploy_ingress_resources || DEPLOY_SUCCESS=false
-    if [ "$ENABLE_HTTPS" = true ]; then
-      setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
-    fi
-    perform_helm_upgrade || DEPLOY_SUCCESS=false
-    restart_pods || DEPLOY_SUCCESS=false
-    set -e  # Re-enable exit on error
-
-    if [ "$DEPLOY_SUCCESS" = true ]; then
-      display_completion_message
-    else
-      provide_port_forward_instructions
-    fi
-  elif [ "$APP_INSTALLED" = true ] && [ "$APP_HEALTHY" = true ]; then
-    # App is installed and healthy
-    check_opengovernance_config
-
-    # Determine if app is considered complete
-    if [ "$custom_host_name" == "true" ] && [ "$ssl_configured" == "true" ]; then
-      echo_info "OpenGovernance is fully configured with custom hostname and SSL/TLS."
-    else
-      # Decide based on presence of DOMAIN and EMAIL
-      if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
-        echo_info "DOMAIN and EMAIL provided as arguments. Proceeding with Custom Hostname + SSL setup in 5 seconds..."
-        sleep 5
-        ENABLE_HTTPS=true
-        install_opengovernance_with_custom_domain_with_https
-        check_pods_and_jobs
-        setup_ingress_controller
-        setup_cert_manager_and_issuer
-        deploy_ingress_resources
-        perform_helm_upgrade
-        restart_pods
-        display_completion_message
-      elif [ -n "$DOMAIN" ] && [ -z "$EMAIL" ]; then
-        echo_info "DOMAIN provided without EMAIL. Proceeding with Custom Hostname setup in 5 seconds..."
-        sleep 5
-        ENABLE_HTTPS=false
-        install_opengovernance_with_custom_domain_no_https
-        check_pods_and_jobs
-        setup_ingress_controller
-        deploy_ingress_resources
-        perform_helm_upgrade
-        restart_pods
-        display_completion_message
-      else
-        # Ask the user what they want to do
-        echo ""
-        echo "OpenGovernance is installed but not fully configured."
-        echo "Please select an option to proceed:"
-        PS3="Enter the number corresponding to your choice: "
-        options=("Barebones Install (Requires Port-Forwarding)" "Simple Install" "Standard Install with HTTPS" "Exit")
-        select opt in "${options[@]}"; do
-          case $REPLY in
-            1)
-              ENABLE_HTTPS=false
-              configure_email_and_domain
-              install_barebones_install
-              check_pods_and_jobs
-              provide_port_forward_instructions
-              break
-              ;;
-            2)
-              ENABLE_HTTPS=false
-              configure_email_and_domain
-              install_simple_install
-              check_pods_and_jobs
-              setup_ingress_controller
-              deploy_ingress_resources
-              perform_helm_upgrade
-              restart_pods
-              display_completion_message
-              break
-              ;;
-            3)
-              ENABLE_HTTPS=true
-              configure_email_and_domain
-              install_opengovernance_with_custom_domain_with_https
-              check_pods_and_jobs
-              setup_ingress_controller
-              setup_cert_manager_and_issuer
-              deploy_ingress_resources
-              perform_helm_upgrade
-              restart_pods
-              display_completion_message
-              break
-              ;;
-            4)
-              echo_info "Exiting the script."
-              exit 0
-              ;;
-            *)
-              echo "Invalid option. Please enter 1, 2, 3, or 4."
-              ;;
-          esac
-        done
-      fi
-    fi
-  fi
-} # Added 'fi' to close the function
 
 # Function to install Barebones Install (No Ingress, requires port-forwarding)
 function install_barebones_install() {
@@ -1021,11 +906,125 @@ EOF
   echo_info "OpenGovernance simple installation with Ingress completed."
 }
 
+# Function to run installation logic
+function run_installation_logic() {
+  # Check if app is installed
+  if ! check_opengovernance_installation; then
+    # App is not installed, proceed to install
+    echo_info "OpenGovernance is not installed."
+    configure_email_and_domain
+    install_opengovernance
+    check_pods_and_jobs
+
+    # Attempt to set up Ingress Controller and related resources
+    set +e  # Temporarily disable exit on error
+    setup_ingress_controller
+    DEPLOY_SUCCESS=true
+
+    deploy_ingress_resources || DEPLOY_SUCCESS=false
+    if [ "$ENABLE_HTTPS" = true ]; then
+      setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
+    fi
+    perform_helm_upgrade || DEPLOY_SUCCESS=false
+    restart_pods || DEPLOY_SUCCESS=false
+    set -e  # Re-enable exit on error
+
+    if [ "$DEPLOY_SUCCESS" = true ]; then
+      display_completion_message
+    else
+      provide_port_forward_instructions
+    fi
+  else
+    # App is installed and healthy
+    check_opengovernance_config
+
+    # Determine if app is considered complete
+    if [ "$custom_host_name" == "true" ] && [ "$ssl_configured" == "true" ]; then
+      echo_info "OpenGovernance is fully configured with custom hostname and SSL/TLS."
+    else
+      # Decide based on presence of DOMAIN and EMAIL
+      if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
+        echo_info "DOMAIN and EMAIL provided as arguments. Proceeding with Custom Hostname + SSL setup in 5 seconds..."
+        sleep 5
+        ENABLE_HTTPS=true
+        install_opengovernance_with_custom_domain_with_https
+        check_pods_and_jobs
+        setup_ingress_controller
+        setup_cert_manager_and_issuer
+        deploy_ingress_resources
+        perform_helm_upgrade
+        restart_pods
+        display_completion_message
+      elif [ -n "$DOMAIN" ] && [ -z "$EMAIL" ]; then
+        echo_info "DOMAIN provided without EMAIL. Proceeding with Custom Hostname setup in 5 seconds..."
+        sleep 5
+        ENABLE_HTTPS=false
+        install_opengovernance_with_custom_domain_no_https
+        check_pods_and_jobs
+        setup_ingress_controller
+        deploy_ingress_resources
+        perform_helm_upgrade
+        restart_pods
+        display_completion_message
+      else
+        # Ask the user what they want to do
+        echo ""
+        echo "OpenGovernance is installed but not fully configured."
+        echo "Please select an option to proceed:"
+        PS3="Enter the number corresponding to your choice: "
+        options=("Barebones Install (Requires Port-Forwarding)" "Simple Install" "Standard Install with HTTPS" "Exit")
+        select opt in "${options[@]}"; do
+          case $REPLY in
+            1)
+              ENABLE_HTTPS=false
+              install_barebones_install
+              check_pods_and_jobs
+              provide_port_forward_instructions
+              break
+              ;;
+            2)
+              ENABLE_HTTPS=false
+              configure_email_and_domain
+              install_simple_install
+              check_pods_and_jobs
+              setup_ingress_controller
+              deploy_ingress_resources
+              perform_helm_upgrade
+              restart_pods
+              display_completion_message
+              break
+              ;;
+            3)
+              ENABLE_HTTPS=true
+              configure_email_and_domain
+              install_opengovernance_with_custom_domain_with_https
+              check_pods_and_jobs
+              setup_ingress_controller
+              setup_cert_manager_and_issuer
+              deploy_ingress_resources
+              perform_helm_upgrade
+              restart_pods
+              display_completion_message
+              break
+              ;;
+            4)
+              echo_info "Exiting the script."
+              exit 0
+              ;;
+            *)
+              echo "Invalid option. Please enter 1, 2, 3, or 4."
+              ;;
+          esac
+        done
+      fi
+    fi
+  fi
+}
+
 # -----------------------------
 # Main Execution Flow
 # -----------------------------
 
 parse_args "$@"
 check_prerequisites
-# Removed 'check_opengovernance_status' as it was not defined
 run_installation_logic
