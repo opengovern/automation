@@ -532,38 +532,99 @@ function wait_for_ingress_ip() {
 function deploy_ingress_resources() {
   echo_info "Step 10 of 12: Deploying Ingress Resources."
 
-  # Define the Ingress resource
-  cat <<EOF | kubectl apply -n opengovernance -f -
+  if [ -z "$DOMAIN" ]; then
+    # Case 1: No Custom Hostname
+    echo_info "Deploying Ingress without a custom hostname (default settings)." "$INDENT"
+
+    cat <<EOF | kubectl apply -n opengovernance -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: opengovernance-ingress
   annotations:
     kubernetes.io/ingress.class: "nginx"
-    cert-manager.io/cluster-issuer: "letsencrypt"
 spec:
-  tls:
-  - hosts:
-    - ${DOMAIN}
-    secretName: opengovernance-tls
+  ingressClassName: nginx
   rules:
-  - host: ${DOMAIN}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: opengovernance-service
-            port:
-              number: 80
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
 EOF
+
+  elif [ -n "$DOMAIN" ] && [ "$ENABLE_HTTPS" = false ]; then
+    # Case 2: Custom Hostname with HTTP
+    echo_info "Deploying Ingress with a custom hostname and HTTP." "$INDENT"
+
+    cat <<EOF | kubectl apply -n opengovernance -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+
+  elif [ -n "$DOMAIN" ] && [ "$ENABLE_HTTPS" = true ]; then
+    # Case 3: Custom Hostname with HTTPS
+    echo_info "Deploying Ingress with a custom hostname and HTTPS." "$INDENT"
+
+    cat <<EOF | kubectl apply -n opengovernance -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt" # Ensure this matches your ClusterIssuer name
+    nginx.ingress.kubernetes.io/ssl-redirect: "true" # Enforce HTTPS
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ${DOMAIN}
+      secretName: opengovernance-tls # TLS secret managed by Cert-Manager
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+
+  else
+    echo_error "Invalid configuration for Ingress deployment." "$INDENT"
+    exit 1
+  fi
 
   echo_info "Ingress resources deployed." "$INDENT"
 
   # Optional: Verify Ingress is correctly configured
   kubectl get ingress opengovernance-ingress -n opengovernance
 }
+
 
 # Function to set up Cert-Manager and Issuer for Let's Encrypt (Step 11)
 function setup_cert_manager_and_issuer() {
@@ -819,17 +880,19 @@ function display_completion_message() {
   echo "-----------------------------------------------------"
 }
 
+
 # Function to provide port-forward instructions
 function provide_port_forward_instructions() {
   echo_error "OpenGovernance is running but not accessible via Ingress."
   echo "You can access it using port-forwarding as follows:"
-  echo "kubectl port-forward -n opengovernance service/opengovernance-service 8080:80"
+  echo "kubectl port-forward -n opengovernance service/nginx-proxy 8080:80"
   echo "Then, access it at http://localhost:8080"
   echo ""
   echo "To sign in, use the following default credentials:"
   echo "  Username: admin@opengovernance.io"
   echo "  Password: password"
 }
+
 
 
 # Function to check and perform upgrade if needed
