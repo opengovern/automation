@@ -17,12 +17,12 @@ exec > >(tee -i "$LOGFILE") 2>&1
 # Function Definitions
 # -----------------------------
 
-# Function to display informational messages
+# Function to display informational messages with indentation
 function echo_info() {
   printf "\n\033[1;34m%s\033[0m\n\n" "$1"
 }
 
-# Function to display error messages
+# Function to display error messages with indentation
 function echo_error() {
   printf "\n\033[0;31m%s\033[0m\n\n" "$1"
 }
@@ -154,12 +154,12 @@ function check_opengovernance_config() {
     -o jsonpath='{.spec.template.spec.containers[0].env[*]}')
 
   # Extract the primary domain from the environment variables
-  DOMAIN=$(echo "$ENV_VARS" | grep -o '"name":"METADATA_PRIMARY_DOMAIN_URL","value":"[^"]*"' | awk -F'"' '{print $8}')
+  CURRENT_DOMAIN=$(echo "$ENV_VARS" | grep -o '"name":"METADATA_PRIMARY_DOMAIN_URL","value":"[^"]*"' | awk -F'"' '{print $8}')
 
   # Determine if it's a custom hostname or not
-  if [[ $DOMAIN == "og.app.domain" ]]; then
+  if [[ $CURRENT_DOMAIN == "og.app.domain" ]]; then
     custom_host_name=false
-  elif [[ $DOMAIN =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
+  elif [[ $CURRENT_DOMAIN =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
     custom_host_name=true
   fi
 
@@ -167,20 +167,20 @@ function check_opengovernance_config() {
   redirect_uris=$(echo "$ENV_VARS" | grep -o '"name":"METADATA_DEX_PUBLIC_CLIENT_REDIRECT_URIS","value":"[^"]*"' | awk -F'"' '{print $8}')
 
   # Check if the primary domain is present in the redirect URIs
-  if echo "$redirect_uris" | grep -q "$DOMAIN"; then
+  if echo "$redirect_uris" | grep -q "$CURRENT_DOMAIN"; then
     dex_configuration_ok=true
   fi
 
   # Enhanced SSL configuration check
   if [[ $custom_host_name == true ]] && \
-     echo "$redirect_uris" | grep -q "https://$DOMAIN"; then
+     echo "$redirect_uris" | grep -q "https://$CURRENT_DOMAIN"; then
      
     if kubectl get ingress opengovernance-ingress -n opengovernance &> /dev/null; then
       # Use kubectl describe to get Ingress details
       INGRESS_DETAILS=$(kubectl describe ingress opengovernance-ingress -n opengovernance)
 
-      # Check for TLS configuration in the Ingress specifically for the DOMAIN
-      if echo "$INGRESS_DETAILS" | grep -q "tls:" && echo "$INGRESS_DETAILS" | grep -q "host: $DOMAIN"; then
+      # Check for TLS configuration in the Ingress specifically for the CURRENT_DOMAIN
+      if echo "$INGRESS_DETAILS" | grep -q "tls:" && echo "$INGRESS_DETAILS" | grep -q "host: $CURRENT_DOMAIN"; then
         
         # Check if the Ingress Controller has an assigned external IP
         INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
@@ -191,11 +191,11 @@ function check_opengovernance_config() {
     fi
   fi
 
-  # Output results
-  echo "Custom Hostname: $custom_host_name"
-  echo "App Configured Hostname: $DOMAIN"
-  echo "Dex Configuration OK: $dex_configuration_ok"
-  echo "SSL/TLS configured in Ingress: $ssl_configured"
+  # Output results with indentation
+  echo -e "\tCustom Hostname: $custom_host_name"
+  echo -e "\tApp Configured Hostname: $CURRENT_DOMAIN"
+  echo -e "\tDex Configuration OK: $dex_configuration_ok"
+  echo -e "\tSSL/TLS configured in Ingress: $ssl_configured"
 
   # Export variables for use in other functions
   export custom_host_name
@@ -380,91 +380,46 @@ EOF
   echo_info "OpenGovernance application installation completed."
 }
 
-# Missing function definitions added below
+# Function to perform Helm upgrade (merged Change #1)
+function perform_helm_upgrade() {
+  echo_info "Step 9 of 10: Performing Helm Upgrade with new configuration"
 
-# Function to install OpenGovernance with custom domain and with HTTPS
-function install_opengovernance_with_custom_domain_with_https() {
-  echo_info "Installing OpenGovernance with custom domain and HTTPS"
-
-  # Add the OpenGovernance Helm repository and update
-  if ! helm repo list | grep -qw opengovernance; then
-    helm repo add opengovernance https://opengovern.github.io/charts
-    echo_info "Added OpenGovernance Helm repository."
-  else
-    echo_info "OpenGovernance Helm repository already exists. Skipping add."
+  if [ -z "$DOMAIN" ]; then
+    echo_error "Error: DOMAIN is not set."
+    exit 1
   fi
-  helm repo update
 
-  # Install OpenGovernance
-  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
+  echo_info "Upgrading OpenGovernance Helm release with domain: $DOMAIN"
+
+  # Determine the issuer based on SSL configuration
+  if [ "$ENABLE_HTTPS" = true ]; then
+    ISSUER="https://${DOMAIN}/dex"
+  else
+    ISSUER="http://${DOMAIN}/dex"
+  fi
 
   if [ "$DRY_RUN" = true ]; then
-    helm upgrade --install -n opengovernance opengovernance \
-      opengovernance/opengovernance --timeout=10m --dry-run \
-      -f - <<EOF
+    helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m --dry-run -f - <<EOF
 global:
-  domain: ${DOMAIN}
+  domain: "${DOMAIN}"
+  debugMode: true
 dex:
   config:
-    issuer: https://${DOMAIN}/dex
+    issuer: "${ISSUER}"
 EOF
   else
-    helm upgrade --install -n opengovernance opengovernance \
-      opengovernance/opengovernance --timeout=10m \
-      -f - <<EOF
+    helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m -f - <<EOF
 global:
-  domain: ${DOMAIN}
+  domain: "${DOMAIN}"
+  debugMode: true
 dex:
   config:
-    issuer: https://${DOMAIN}/dex
+    issuer: "${ISSUER}"
 EOF
   fi
 
-  echo_info "OpenGovernance application installation (with custom domain and HTTPS) completed."
+  echo_info "Helm upgrade completed successfully."
 }
-
-# Function to install OpenGovernance with custom domain and without HTTPS
-function install_opengovernance_with_custom_domain_no_https() {
-  echo_info "Installing OpenGovernance with custom domain and without HTTPS"
-
-  # Add the OpenGovernance Helm repository and update
-  if ! helm repo list | grep -qw opengovernance; then
-    helm repo add opengovernance https://opengovern.github.io/charts
-    echo_info "Added OpenGovernance Helm repository."
-  else
-    echo_info "OpenGovernance Helm repository already exists. Skipping add."
-  fi
-  helm repo update
-
-  # Install OpenGovernance
-  echo_info "Note: The Helm installation can take 5-7 minutes to complete. Please be patient."
-
-  if [ "$DRY_RUN" = true ]; then
-    helm upgrade --install -n opengovernance opengovernance \
-      opengovernance/opengovernance --timeout=10m --dry-run \
-      -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: http://${DOMAIN}/dex
-EOF
-  else
-    helm upgrade --install -n opengovernance opengovernance \
-      opengovernance/opengovernance --timeout=10m \
-      -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: http://${DOMAIN}/dex
-EOF
-  fi
-
-  echo_info "OpenGovernance application installation (with custom domain and without HTTPS) completed."
-}
-
-# End of missing function definitions
 
 # Function to set up cert-manager and Let's Encrypt Issuer (Step 6)
 function setup_cert_manager_and_issuer() {
@@ -605,7 +560,7 @@ function setup_ingress_controller() {
   while true; do
     INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
     if [ -n "$INGRESS_EXTERNAL_IP" ]; then
-      echo "Ingress Controller External IP: $INGRESS_EXTERNAL_IP"
+      echo -e "\tIngress Controller External IP: $INGRESS_EXTERNAL_IP"
       break
     fi
     CURRENT_TIME=$(date +%s)
@@ -714,7 +669,7 @@ EOF
   echo_info "Ingress 'opengovernance-ingress' has been applied."
 }
 
-# Function to perform Helm upgrade
+# Function to perform Helm upgrade (merged Change #1)
 function perform_helm_upgrade() {
   echo_info "Step 9 of 10: Performing Helm Upgrade with new configuration"
 
@@ -725,6 +680,13 @@ function perform_helm_upgrade() {
 
   echo_info "Upgrading OpenGovernance Helm release with domain: $DOMAIN"
 
+  # Determine the issuer based on SSL configuration
+  if [ "$ENABLE_HTTPS" = true ]; then
+    ISSUER="https://${DOMAIN}/dex"
+  else
+    ISSUER="http://${DOMAIN}/dex"
+  fi
+
   if [ "$DRY_RUN" = true ]; then
     helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m --dry-run -f - <<EOF
 global:
@@ -732,7 +694,7 @@ global:
   debugMode: true
 dex:
   config:
-    issuer: "${ENABLE_HTTPS:+https://${DOMAIN}/dex}${ENABLE_HTTPS:-http://${DOMAIN}/dex}"
+    issuer: "${ISSUER}"
 EOF
   else
     helm upgrade -n opengovernance opengovernance opengovernance/opengovernance --timeout=10m -f - <<EOF
@@ -741,7 +703,7 @@ global:
   debugMode: true
 dex:
   config:
-    issuer: "${ENABLE_HTTPS:+https://${DOMAIN}/dex}${ENABLE_HTTPS:-http://${DOMAIN}/dex}"
+    issuer: "${ISSUER}"
 EOF
   fi
 
@@ -804,7 +766,7 @@ function provide_port_forward_instructions() {
   echo_info "Installation partially completed."
 
   echo_info "To access the OpenGovernance application, please run the following command in a separate terminal:"
-  printf "\033[1;32m%s\033[0m\n" "kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80"
+  printf "\t\033[1;32m%s\033[0m\n" "kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80"
   echo "Then open http://localhost:8080/ in your browser, and sign in with the following credentials:"
   echo "Username: admin@opengovernance.io"
   echo "Password: password"
@@ -942,28 +904,41 @@ function run_installation_logic() {
     if [ "$custom_host_name" == "true" ] && [ "$ssl_configured" == "true" ]; then
       echo_info "OpenGovernance is fully configured with custom hostname and SSL/TLS."
     else
+      # Handle case where OpenGovernance is fully configured but DOMAIN argument is different (Change #2)
+      if [ "$custom_host_name" == "true" ] && [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$CURRENT_DOMAIN" ]; then
+        echo_info "DOMAIN argument (${DOMAIN}) differs from the currently configured domain (${CURRENT_DOMAIN})."
+        echo_info "Updating OpenGovernance with the new domain."
+        configure_email_and_domain
+        perform_helm_upgrade
+        if [ "$ENABLE_HTTPS" = true ]; then
+          setup_cert_manager_and_issuer
+        fi
+        deploy_ingress_resources
+        restart_pods
+        display_completion_message
+        return
+      fi
+
       # Decide based on presence of DOMAIN and EMAIL
       if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
         echo_info "DOMAIN and EMAIL provided as arguments. Proceeding with Custom Hostname + SSL setup in 5 seconds..."
         sleep 5
         ENABLE_HTTPS=true
-        install_opengovernance_with_custom_domain_with_https
+        perform_helm_upgrade
         check_pods_and_jobs
         setup_ingress_controller
         setup_cert_manager_and_issuer
         deploy_ingress_resources
-        perform_helm_upgrade
         restart_pods
         display_completion_message
       elif [ -n "$DOMAIN" ] && [ -z "$EMAIL" ]; then
         echo_info "DOMAIN provided without EMAIL. Proceeding with Custom Hostname setup in 5 seconds..."
         sleep 5
         ENABLE_HTTPS=false
-        install_opengovernance_with_custom_domain_no_https
+        perform_helm_upgrade
         check_pods_and_jobs
         setup_ingress_controller
         deploy_ingress_resources
-        perform_helm_upgrade
         restart_pods
         display_completion_message
       else
@@ -997,12 +972,11 @@ function run_installation_logic() {
             3)
               ENABLE_HTTPS=true
               configure_email_and_domain
-              install_opengovernance_with_custom_domain_with_https
+              perform_helm_upgrade
               check_pods_and_jobs
               setup_ingress_controller
               setup_cert_manager_and_issuer
               deploy_ingress_resources
-              perform_helm_upgrade
               restart_pods
               display_completion_message
               break
