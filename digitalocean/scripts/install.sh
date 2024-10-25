@@ -20,9 +20,10 @@ exec > >(tee -i "$LOGFILE") 2>&1
 # Define the indent string for nested outputs
 INDENT="    "
 
-# Initialize DOMAIN and EMAIL to ensure no dependency on environment variables
+# Initialize DOMAIN, EMAIL, and INSTALL_TYPE to ensure no dependency on environment variables
 DOMAIN=""
 EMAIL=""
+INSTALL_TYPE=1  # Default installation type
 
 # Function to display informational messages
 function echo_info() {
@@ -48,13 +49,19 @@ function echo_error() {
 
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [-d DOMAIN] [-e EMAIL] [--dry-run]"
+  echo "Usage: $0 [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--dry-run]"
   echo ""
   echo "Options:"
-  echo "  -d, --domain    Specify the domain for OpenGovernance."
-  echo "  -e, --email     Specify the email for Let's Encrypt certificate generation."
-  echo "  --dry-run       Perform a trial run with no changes made."
-  echo "  -h, --help      Display this help message."
+  echo "  -d, --domain        Specify the domain for OpenGovernance."
+  echo "  -e, --email         Specify the email for Let's Encrypt certificate generation."
+  echo "  -t, --type          Specify the installation type:"
+  echo "                       1) Standard (Custom hostname + SSL)"
+  echo "                       2) No HTTPS (Simple install with hostname)"
+  echo "                       3) Minimal (Simple install with no hostname)"
+  echo "                       4) Barebones (Requires kubectl port forwarding)"
+  echo "                       Default: 1"
+  echo "  --dry-run           Perform a trial run with no changes made."
+  echo "  -h, --help          Display this help message."
   exit 1
 }
 
@@ -89,6 +96,10 @@ function parse_args() {
         EMAIL="$2"
         shift 2
         ;;
+      -t|--type)
+        INSTALL_TYPE="$2"
+        shift 2
+        ;;
       --dry-run)
         DRY_RUN=true
         shift
@@ -103,17 +114,54 @@ function parse_args() {
     esac
   done
 
-  # Validate DOMAIN and EMAIL if they are set via arguments
-  if [ -n "$DOMAIN" ]; then
-    validate_domain
+  # Validate INSTALL_TYPE
+  if ! [[ "$INSTALL_TYPE" =~ ^[1-4]$ ]]; then
+    echo_error "Invalid installation type: $INSTALL_TYPE"
+    usage
   fi
 
-  if [ -n "$EMAIL" ]; then
-    validate_email
-    ENABLE_HTTPS=true
-  else
-    ENABLE_HTTPS=false
-  fi
+  # Validate DOMAIN and EMAIL if they are set via arguments
+  case $INSTALL_TYPE in
+    1)
+      # Standard (Custom hostname + SSL)
+      if [ -n "$DOMAIN" ]; then
+        validate_domain
+      else
+        echo_error "Installation type 1 requires a DOMAIN." "$INDENT"
+        usage
+      fi
+
+      if [ -n "$EMAIL" ]; then
+        validate_email
+        ENABLE_HTTPS=true
+      else
+        echo_error "Installation type 1 requires an EMAIL for SSL/TLS setup." "$INDENT"
+        usage
+      fi
+      ;;
+    2)
+      # No HTTPS (Simple install with hostname)
+      if [ -n "$DOMAIN" ]; then
+        validate_domain
+      else
+        echo_error "Installation type 2 requires a DOMAIN." "$INDENT"
+        usage
+      fi
+      ENABLE_HTTPS=false
+      ;;
+    3)
+      # Minimal (Simple install with no hostname)
+      ENABLE_HTTPS=false
+      ;;
+    4)
+      # Barebones (Requires kubectl port forwarding)
+      ENABLE_HTTPS=false
+      ;;
+    *)
+      echo_error "Unsupported installation type: $INSTALL_TYPE"
+      usage
+      ;;
+  esac
 }
 
 # Function to check prerequisites
@@ -148,6 +196,28 @@ function check_prerequisites() {
   fi
 }
 
+# Function to clean up failed OpenGovernance installation
+function cleanup_failed_install() {
+  echo_error "OpenGovernance installation failed. Initiating cleanup..." "$INDENT"
+  echo_info "Cleaning up failed installation in 10 seconds..." "$INDENT"
+
+  # Countdown timer
+  for i in {10..1}; do
+    echo_info "Cleaning up in $i seconds..." "$INDENT"
+    sleep 1
+  done
+
+  # Uninstall the Helm release
+  echo_info "Uninstalling OpenGovernance Helm release..." "$INDENT"
+  helm uninstall opengovernance -n opengovernance || echo_error "Failed to uninstall Helm release." "$INDENT"
+
+  # Delete the namespace
+  echo_info "Deleting 'opengovernance' namespace..." "$INDENT"
+  kubectl delete namespace opengovernance || echo_error "Failed to delete namespace." "$INDENT"
+
+  echo_info "Cleanup of failed OpenGovernance installation completed." "$INDENT"
+}
+
 # Function to check if OpenGovernance is installed
 function check_opengovernance_installation() {
   echo_info "Checking OpenGovernance Installation"
@@ -174,9 +244,15 @@ function check_opengovernance_installation() {
     echo_info "OpenGovernance is installed and in 'deployed' state." "$INDENT"
     APP_INSTALLED=true
     return 0
-  else
+  elif [ "$helm_release_status" == "failed" ]; then
     echo_error "Error: OpenGovernance is installed but not in 'deployed' state (current status: $helm_release_status)." "$INDENT"
-    APP_INSTALLED=true
+    cleanup_failed_install
+    APP_INSTALLED=false
+    return 1
+  else
+    echo_error "Error: OpenGovernance is in an unexpected state ('$helm_release_status'). Attempting cleanup..." "$INDENT"
+    cleanup_failed_install
+    APP_INSTALLED=false
     return 1
   fi
 }
@@ -313,58 +389,104 @@ function check_pods_and_jobs() {
 function configure_email_and_domain() {
   echo_info "Configuring DOMAIN and EMAIL"
 
-  # If DOMAIN is not set, prompt the user
-  if [ -z "$DOMAIN" ]; then
-    while true; do
-      echo ""
-      echo "Enter your domain for OpenGovernance (required for custom hostname)."
-      read -p "Domain (or press Enter to skip): " DOMAIN < /dev/tty
+  # Depending on the installation type, prompt for DOMAIN and EMAIL as needed
+  case $INSTALL_TYPE in
+    1)
+      # Standard (Custom hostname + SSL)
       if [ -z "$DOMAIN" ]; then
-        echo_info "No domain entered. Skipping domain configuration." "$INDENT"
-        break
+        while true; do
+          echo ""
+          echo "Enter your domain for OpenGovernance (required for custom hostname)."
+          read -p "Domain: " DOMAIN < /dev/tty
+          if [ -z "$DOMAIN" ]; then
+            echo_error "Domain is required for installation type 1." "$INDENT"
+            continue
+          fi
+          echo "You entered: $DOMAIN"
+          read -p "Is this correct? (Y/n): " yn < /dev/tty
+          case $yn in
+              "" | [Yy]* )
+                  validate_domain
+                  break
+                  ;;
+              [Nn]* )
+                  echo "Let's try again."
+                  DOMAIN=""
+                  ;;
+              * )
+                  echo "Please answer y or n.";;
+          esac
+        done
       fi
-      echo "You entered: $DOMAIN"
-      read -p "Is this correct? (Y/n): " yn < /dev/tty
-      case $yn in
-          "" | [Yy]* )
-              validate_domain
-              break
-              ;;
-          [Nn]* )
-              echo "Let's try again."
-              DOMAIN=""
-              ;;
-          * )
-              echo "Please answer y or n.";;
-      esac
-    done
-  fi
 
-  # If EMAIL is not set but required (when DOMAIN is set and HTTPS is desired)
-  if [ -n "$DOMAIN" ] && [ "$ENABLE_HTTPS" = true ] && [ -z "$EMAIL" ]; then
-    while true; do
-      echo "Enter your email for HTTPS certificate generation via Let's Encrypt."
-      read -p "Email: " EMAIL < /dev/tty
       if [ -z "$EMAIL" ]; then
-        echo_error "Email is required for SSL/TLS setup." "$INDENT"
-      else
-        echo "You entered: $EMAIL"
-        read -p "Is this correct? (Y/n): " yn < /dev/tty
-        case $yn in
-            "" | [Yy]* )
-                validate_email
-                break
-                ;;
-            [Nn]* )
-                echo "Let's try again."
-                EMAIL=""
-                ;;
-            * )
-                echo "Please answer y or n.";;
-        esac
+        while true; do
+          echo "Enter your email for HTTPS certificate generation via Let's Encrypt."
+          read -p "Email: " EMAIL < /dev/tty
+          if [ -z "$EMAIL" ]; then
+            echo_error "Email is required for installation type 1." "$INDENT"
+          else
+            echo "You entered: $EMAIL"
+            read -p "Is this correct? (Y/n): " yn < /dev/tty
+            case $yn in
+                "" | [Yy]* )
+                    validate_email
+                    break
+                    ;;
+                [Nn]* )
+                    echo "Let's try again."
+                    EMAIL=""
+                    ;;
+                * )
+                    echo "Please answer y or n.";;
+            esac
+          fi
+        done
       fi
-    done
-  fi
+      ;;
+    2)
+      # No HTTPS (Simple install with hostname)
+      if [ -z "$DOMAIN" ]; then
+        while true; do
+          echo ""
+          echo "Enter your domain for OpenGovernance (required for hostname)."
+          read -p "Domain: " DOMAIN < /dev/tty
+          if [ -z "$DOMAIN" ]; then
+            echo_error "Domain is required for installation type 2." "$INDENT"
+            continue
+          fi
+          echo "You entered: $DOMAIN"
+          read -p "Is this correct? (Y/n): " yn < /dev/tty
+          case $yn in
+              "" | [Yy]* )
+                  validate_domain
+                  break
+                  ;;
+              [Nn]* )
+                  echo "Let's try again."
+                  DOMAIN=""
+                  ;;
+              * )
+                  echo "Please answer y or n.";;
+          esac
+        done
+      fi
+      ;;
+    3)
+      # Minimal (Simple install with no hostname)
+      # No DOMAIN or EMAIL required
+      echo_info "Minimal installation selected. No DOMAIN or EMAIL required." "$INDENT"
+      ;;
+    4)
+      # Barebones (Requires kubectl port forwarding)
+      # No DOMAIN or EMAIL required
+      echo_info "Barebones installation selected. No DOMAIN or EMAIL required." "$INDENT"
+      ;;
+    *)
+      echo_error "Unsupported installation type: $INSTALL_TYPE"
+      usage
+      ;;
+  esac
 }
 
 # Function to install or upgrade OpenGovernance
@@ -383,12 +505,29 @@ function install_opengovernance() {
   if [ "$APP_INSTALLED" = false ]; then
     echo_info "Installing OpenGovernance via Helm." "$INDENT"
 
-    # Determine the issuer based on SSL configuration
-    if [ "$ENABLE_HTTPS" = true ]; then
-      ISSUER="https://${DOMAIN}/dex"
-    else
-      ISSUER="http://${DOMAIN}/dex"
-    fi
+    # Determine the issuer based on installation type
+    case $INSTALL_TYPE in
+      1)
+        # Standard (Custom hostname + SSL)
+        ISSUER="https://${DOMAIN}/dex"
+        ;;
+      2)
+        # No HTTPS (Simple install with hostname)
+        ISSUER="http://${DOMAIN}/dex"
+        ;;
+      3)
+        # Minimal (Simple install with no hostname)
+        ISSUER="http://localhost/dex"
+        ;;
+      4)
+        # Barebones (Requires kubectl port forwarding)
+        ISSUER="http://localhost/dex"
+        ;;
+      *)
+        echo_error "Unsupported installation type: $INSTALL_TYPE"
+        exit 1
+        ;;
+    esac
 
     if [ "$DRY_RUN" = true ]; then
       helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
@@ -428,12 +567,29 @@ EOF
     # Extract current issuer from Helm values
     CURRENT_ISSUER_HELM=$(echo "$CURRENT_HELM_VALUES" | grep -E '^\s*issuer:' | awk '{print $2}')
 
-    # Determine desired issuer
-    if [ "$ENABLE_HTTPS" = true ]; then
-      DESIRED_ISSUER="https://${DOMAIN}/dex"
-    else
-      DESIRED_ISSUER="http://${DOMAIN}/dex"
-    fi
+    # Determine desired issuer based on installation type
+    case $INSTALL_TYPE in
+      1)
+        # Standard (Custom hostname + SSL)
+        DESIRED_ISSUER="https://${DOMAIN}/dex"
+        ;;
+      2)
+        # No HTTPS (Simple install with hostname)
+        DESIRED_ISSUER="http://${DOMAIN}/dex"
+        ;;
+      3)
+        # Minimal (Simple install with no hostname)
+        DESIRED_ISSUER="http://localhost/dex"
+        ;;
+      4)
+        # Barebones (Requires kubectl port forwarding)
+        DESIRED_ISSUER="http://localhost/dex"
+        ;;
+      *)
+        echo_error "Unsupported installation type: $INSTALL_TYPE"
+        exit 1
+        ;;
+    esac
 
     # Check if domain or issuer needs to be updated
     if [ "$DESIRED_DOMAIN" != "$CURRENT_DOMAIN_HELM" ] || [ "$DESIRED_ISSUER" != "$CURRENT_ISSUER_HELM" ]; then
@@ -537,62 +693,12 @@ function wait_for_ingress_ip() {
 function deploy_ingress_resources() {
   echo_info "Deploying Ingress Resources."
 
-  if [ -z "$DOMAIN" ]; then
-    # Case 1: No Custom Hostname
-    echo_info "Deploying Ingress without a custom hostname (default settings)." "$INDENT"
+  case $INSTALL_TYPE in
+    1)
+      # Standard (Custom hostname + SSL)
+      echo_info "Deploying Ingress with a custom hostname and HTTPS." "$INDENT"
 
-    cat <<EOF | kubectl apply -n opengovernance -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: opengovernance-ingress
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
-spec:
-  ingressClassName: nginx
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: nginx-proxy
-                port:
-                  number: 80
-EOF
-
-  elif [ -n "$DOMAIN" ] && [ "$ENABLE_HTTPS" = false ]; then
-    # Case 2: Custom Hostname with HTTP
-    echo_info "Deploying Ingress with a custom hostname and HTTP." "$INDENT"
-
-    cat <<EOF | kubectl apply -n opengovernance -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: opengovernance-ingress
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: ${DOMAIN}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: nginx-proxy
-                port:
-                  number: 80
-EOF
-
-  elif [ -n "$DOMAIN" ] && [ "$ENABLE_HTTPS" = true ]; then
-    # Case 3: Custom Hostname with HTTPS
-    echo_info "Deploying Ingress with a custom hostname and HTTPS." "$INDENT"
-
-    cat <<EOF | kubectl apply -n opengovernance -f -
+      cat <<EOF | kubectl apply -n opengovernance -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -618,16 +724,74 @@ spec:
                 port:
                   number: 80
 EOF
+      ;;
+    2)
+      # No HTTPS (Simple install with hostname)
+      echo_info "Deploying Ingress with a custom hostname and HTTP." "$INDENT"
 
-  else
-    echo_error "Invalid configuration for Ingress deployment." "$INDENT"
-    exit 1
-  fi
+      cat <<EOF | kubectl apply -n opengovernance -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+      ;;
+    3)
+      # Minimal (Simple install with no hostname)
+      echo_info "Deploying Ingress without a custom hostname (default settings)." "$INDENT"
+
+      cat <<EOF | kubectl apply -n opengovernance -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengovernance-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-proxy
+                port:
+                  number: 80
+EOF
+      ;;
+    4)
+      # Barebones (Requires kubectl port forwarding)
+      echo_info "Barebones installation selected. Skipping Ingress deployment." "$INDENT"
+      ;;
+    *)
+      echo_error "Unsupported installation type: $INSTALL_TYPE" "$INDENT"
+      exit 1
+      ;;
+  esac
 
   echo_info "Ingress resources deployed." "$INDENT"
 
   # Optional: Verify Ingress is correctly configured
-  kubectl get ingress opengovernance-ingress -n opengovernance
+  if [ "$INSTALL_TYPE" -ne 4 ]; then
+    kubectl get ingress opengovernance-ingress -n opengovernance
+  fi
 }
 
 # Function to set up Cert-Manager and Issuer for Let's Encrypt
@@ -760,11 +924,11 @@ EOF
   echo_info "Barebones Install completed." "$INDENT"
 }
 
-# Function to install simple install (Assumed Implementation)
-function install_simple_install() {
-  echo_info "Performing Simple Install of OpenGovernance."
+# Function to install no HTTPS install (Simple install with hostname)
+function install_no_https_install() {
+  echo_info "Performing No HTTPS Install of OpenGovernance."
 
-  # Install with simple configuration
+  # Install with simple configuration without SSL
   if [ "$DRY_RUN" = true ]; then
     helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       --dry-run \
@@ -786,36 +950,36 @@ dex:
 EOF
   fi
 
-  echo_info "Simple Install completed." "$INDENT"
+  echo_info "No HTTPS Install completed." "$INDENT"
 }
 
-# Function to install standard install with HTTPS (Assumed Implementation)
-function install_standard_install() {
-  echo_info "Performing Standard Install of OpenGovernance with HTTPS."
+# Function to install minimal install (Simple install with no hostname)
+function install_minimal_install() {
+  echo_info "Performing Minimal Install of OpenGovernance."
 
-  # Install with HTTPS configuration
+  # Install with minimal configuration without hostname
   if [ "$DRY_RUN" = true ]; then
     helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       --dry-run \
       -f - <<EOF
 global:
-  domain: ${DOMAIN}
+  domain: ""
 dex:
   config:
-    issuer: https://${DOMAIN}/dex
+    issuer: http://localhost/dex
 EOF
   else
     helm install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m \
       -f - <<EOF
 global:
-  domain: ${DOMAIN}
+  domain: ""
 dex:
   config:
-    issuer: https://${DOMAIN}/dex
+    issuer: http://localhost/dex
 EOF
   fi
 
-  echo_info "Standard Install with HTTPS completed." "$INDENT"
+  echo_info "Minimal Install completed." "$INDENT"
 }
 
 # Function to display completion message with protocol, DNS instructions, and default login details
@@ -832,15 +996,19 @@ function display_completion_message() {
   echo "-----------------------------------------------------"
   echo "OpenGovernance has been successfully installed and configured."
   echo ""
-  echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+  if [ "$INSTALL_TYPE" -ne 3 ] && [ "$INSTALL_TYPE" -ne 4 ]; then
+    echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+  else
+    echo "Access your OpenGovernance instance using the external IP: ${INGRESS_EXTERNAL_IP}"
+  fi
   echo ""
   echo "To sign in, use the following default credentials:"
   echo "  Username: admin@opengovernance.io"
   echo "  Password: password"
   echo ""
 
-  # DNS A record setup instructions if domain is configured
-  if [ -n "$DOMAIN" ]; then
+  # DNS A record setup instructions if domain is configured and not minimal
+  if [ -n "$DOMAIN" ] && [ "$INSTALL_TYPE" -ne 3 ]; then
     echo "To ensure proper access to your instance, please verify or set up the following DNS A records:"
     echo ""
     echo "  Domain: ${DOMAIN}"
@@ -850,8 +1018,8 @@ function display_completion_message() {
     echo "Note: It may take some time for DNS changes to propagate."
   fi
 
-  # If Ingress is not properly configured, provide port-forward instructions
-  if [ "$DEPLOY_SUCCESS" = false ]; then
+  # If Ingress is not properly configured or it's a Barebones install, provide port-forward instructions
+  if [ "$DEPLOY_SUCCESS" = false ] || [ "$INSTALL_TYPE" -eq 4 ]; then
     provide_port_forward_instructions
   fi
 
@@ -892,64 +1060,60 @@ function run_installation_logic() {
     # App is not installed, proceed to install
     echo_info "OpenGovernance is not installed."
 
-    # Check if domain and email are set via arguments
-    if [ -z "$DOMAIN" ] && [ -z "$EMAIL" ]; then
-      echo_info "Neither DOMAIN nor EMAIL is set. Please specify your installation preferences." "$INDENT"
-      echo "Select the type of installation you would like to perform:"
-      echo "1) Barebones Install"
-      echo "2) Simple Install"
-      echo "3) Standard Install with HTTPS"
-      echo "4) Exit"
-      while true; do
-        read -p "Enter the number corresponding to your choice: " choice < /dev/tty
-        case $choice in
-          1)
-            ENABLE_HTTPS=false
-            echo "You selected Barebones Install. Please provide your domain and email."
-            configure_email_and_domain
-            install_barebones_install
-            break
-            ;;
-          2)
-            ENABLE_HTTPS=false
-            echo "You selected Simple Install. Please provide your domain and email."
-            configure_email_and_domain
-            install_simple_install
-            break
-            ;;
-          3)
-            ENABLE_HTTPS=true
-            echo "You selected Standard Install with HTTPS. Please provide your domain and email."
-            configure_email_and_domain
-            install_standard_install
-            break
-            ;;
-          4)
-            echo_info "Exiting the script."
-            exit 0
-            ;;
-          *)
-            echo "Invalid option. Please enter 1, 2, 3, or 4."
-            ;;
-        esac
-      done
-    else
-      echo_info "Domain and/or email already provided. Proceeding with installation." "$INDENT"
-      install_opengovernance
-    fi
+    # Configure email and domain based on installation type
+    configure_email_and_domain
+
+    # Perform installation based on installation type
+    case $INSTALL_TYPE in
+      1)
+        install_standard_install
+        ;;
+      2)
+        install_no_https_install
+        ;;
+      3)
+        install_minimal_install
+        ;;
+      4)
+        install_barebones_install
+        ;;
+      *)
+        echo_error "Unsupported installation type: $INSTALL_TYPE"
+        exit 1
+        ;;
+    esac
 
     check_pods_and_jobs
 
     # Attempt to set up Ingress Controller and related resources
     set +e  # Temporarily disable exit on error
-    setup_ingress_controller
-    DEPLOY_SUCCESS=true
+    if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+      setup_ingress_controller
+      DEPLOY_SUCCESS=true
 
-    deploy_ingress_resources || DEPLOY_SUCCESS=false
-    if [ "$ENABLE_HTTPS" = true ]; then
-      setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
+      deploy_ingress_resources || DEPLOY_SUCCESS=false
+      if [ "$ENABLE_HTTPS" = true ]; then
+        setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
+      fi
+      restart_pods || DEPLOY_SUCCESS=false
+    elif [ "$INSTALL_TYPE" -eq 3 ]; then
+      # Minimal install: Use external IP as domain and perform helm upgrade after obtaining external IP
+      setup_ingress_controller
+      DEPLOY_SUCCESS=true
+
+      deploy_ingress_resources || DEPLOY_SUCCESS=false
+      restart_pods || DEPLOY_SUCCESS=false
+
+      # Perform helm upgrade with external IP as domain
+      if [ "$DEPLOY_SUCCESS" = true ]; then
+        echo_info "Performing Helm upgrade with external IP as domain." "$INDENT"
+        DOMAIN="$INGRESS_EXTERNAL_IP"
+        install_opengovernance
+        restart_pods
+      fi
+    else
+      DEPLOY_SUCCESS=false
     fi
-    restart_pods || DEPLOY_SUCCESS=false
     set -e  # Re-enable exit on error
 
     if [ "$DEPLOY_SUCCESS" = true ]; then
@@ -965,13 +1129,17 @@ function run_installation_logic() {
       # App has health issues, proceed to upgrade if newer 'opengovernance' chart is available
       install_opengovernance
       check_pods_and_jobs
-      setup_ingress_controller
+      if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+        setup_ingress_controller
+      fi
 
       if [ "$ENABLE_HTTPS" = true ]; then
         setup_cert_manager_and_issuer
       fi
 
-      deploy_ingress_resources
+      if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+        deploy_ingress_resources
+      fi
       restart_pods
       display_completion_message
     else
@@ -985,13 +1153,17 @@ function run_installation_logic() {
 
           install_opengovernance
           check_pods_and_jobs
-          setup_ingress_controller
+          if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+            setup_ingress_controller
+          fi
 
           if [ "$ENABLE_HTTPS" = true ]; then
             setup_cert_manager_and_issuer
           fi
 
-          deploy_ingress_resources
+          if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+            deploy_ingress_resources
+          fi
           restart_pods
           display_completion_message
 
@@ -1000,9 +1172,13 @@ function run_installation_logic() {
 
           install_opengovernance
           check_pods_and_jobs
-          setup_ingress_controller
+          if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+            setup_ingress_controller
+          fi
           setup_cert_manager_and_issuer
-          deploy_ingress_resources
+          if [ "$INSTALL_TYPE" -ne 4 ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+            deploy_ingress_resources
+          fi
           restart_pods
           display_completion_message
 
@@ -1013,63 +1189,131 @@ function run_installation_logic() {
           echo ""
           echo "OpenGovernance is installed but not fully configured."
           echo "Please select an option to proceed:"
-          echo "1) Barebones Install (Requires Port-Forwarding)"
-          echo "2) Simple Install"
-          echo "3) Standard Install with HTTPS"
-          echo "4) Exit"
-          while true; do
-            read -p "Enter the number corresponding to your choice: " choice < /dev/tty
-            case $choice in
-              1)
-                ENABLE_HTTPS=false
-                install_barebones_install
-                check_pods_and_jobs
-                provide_port_forward_instructions
-                break
-                ;;
-              2)
-                ENABLE_HTTPS=false
-                configure_email_and_domain
-                install_simple_install
-                check_pods_and_jobs
-                setup_ingress_controller
-                deploy_ingress_resources
-                restart_pods
-                display_completion_message
-                break
-                ;;
-              3)
-                ENABLE_HTTPS=true
-                configure_email_and_domain
-                install_standard_install
-                check_pods_and_jobs
-                setup_ingress_controller
-                setup_cert_manager_and_issuer
-                deploy_ingress_resources
-                restart_pods
-                display_completion_message
-                break
-                ;;
-              4)
-                echo_info "Exiting the script."
-                exit 0
-                ;;
-              *)
-                echo "Invalid option. Please enter 1, 2, 3, or 4."
-                ;;
-            esac
-          done
-        fi
-      else
-        echo_info "No domain provided and OpenGovernance is running with default settings."
-      fi
+          echo "1) Standard (Custom hostname + SSL)"
+          echo "2) No HTTPS (Simple install with hostname)"
+          echo "3) Minimal (Simple install with no hostname)"
+          echo "4) Barebones (Requires Port-Forwarding)"
+          echo "5) Exit"
+
+          # Default to 1 if no input is provided within a timeout (e.g., 10 seconds)
+          read -t 10 -p "Enter the number corresponding to your choice [Default: 1]: " choice < /dev/tty || choice=1
+
+          # If no choice is made, default to 1
+          choice=${choice:-1}
+
+          # Ensure the choice is within 1-5
+          if ! [[ "$choice" =~ ^[1-5]$ ]]; then
+            echo "Invalid option. Defaulting to 1) Standard Install."
+            choice=1
+          fi
+
+          # Bold the selection
+          echo ""
+          echo -e "You selected: \033[1m$choice) $(get_install_type_description $choice)\033[0m"
+
+          case $choice in
+            1)
+              ENABLE_HTTPS=true
+              echo "You selected Standard Install. Please provide your domain and email."
+              configure_email_and_domain
+              install_standard_install
+              ;;
+            2)
+              ENABLE_HTTPS=false
+              echo "You selected No HTTPS Install. Please provide your domain."
+              configure_email_and_domain
+              install_no_https_install
+              ;;
+            3)
+              ENABLE_HTTPS=false
+              echo "You selected Minimal Install. Using external IP as domain."
+              # No need to configure domain or email
+              install_minimal_install
+              ;;
+            4)
+              ENABLE_HTTPS=false
+              echo "You selected Barebones Install. Skipping Ingress setup."
+              install_barebones_install
+              ;;
+            5)
+              echo_info "Exiting the script."
+              exit 0
+              ;;
+            *)
+              echo "Invalid option. Defaulting to 1) Standard Install."
+              ENABLE_HTTPS=true
+              configure_email_and_domain
+              install_standard_install
+              ;;
+          esac
+
+          check_pods_and_jobs
+
+          # Attempt to set up Ingress Controller and related resources based on installation type
+          set +e  # Temporarily disable exit on error
+          if [ "$choice" -ne 4 ] && [ "$choice" -ne 3 ]; then
+            setup_ingress_controller
+            DEPLOY_SUCCESS=true
+
+            deploy_ingress_resources || DEPLOY_SUCCESS=false
+            if [ "$ENABLE_HTTPS" = true ]; then
+              setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
+            fi
+            restart_pods || DEPLOY_SUCCESS=false
+          elif [ "$choice" -eq 3 ]; then
+            # Minimal install: Use external IP as domain and perform helm upgrade after obtaining external IP
+            setup_ingress_controller
+            DEPLOY_SUCCESS=true
+
+            deploy_ingress_resources || DEPLOY_SUCCESS=false
+            restart_pods || DEPLOY_SUCCESS=false
+
+            # Perform helm upgrade with external IP as domain
+            if [ "$DEPLOY_SUCCESS" = true ]; then
+              echo_info "Performing Helm upgrade with external IP as domain." "$INDENT"
+              DOMAIN="$INGRESS_EXTERNAL_IP"
+              install_opengovernance
+              restart_pods
+            fi
+          else
+            DEPLOY_SUCCESS=false
+          fi
+          set -e  # Re-enable exit on error
+
+          if [ "$DEPLOY_SUCCESS" = true ]; then
+            display_completion_message
+          else
+            provide_port_forward_instructions
+          fi
+          ;;
+      esac
     fi
   fi
+}
+
+# Helper function to get installation type description
+function get_install_type_description() {
+  local type="$1"
+  case $type in
+    1) echo "Standard (Custom hostname + SSL)" ;;
+    2) echo "No HTTPS (Simple install with hostname)" ;;
+    3) echo "Minimal (Simple install with no hostname)" ;;
+    4) echo "Barebones (Requires Port-Forwarding)" ;;
+    5) echo "Exit" ;;
+    *) echo "Unknown" ;;
+  esac
 }
 
 # -----------------------------
 # Main Execution Flow
 # -----------------------------
+
+# Detect if the script is running in an interactive terminal
+if [ -t 0 ]; then
+  INTERACTIVE=true
+else
+  INTERACTIVE=false
+fi
 
 parse_args "$@"
 check_prerequisites
