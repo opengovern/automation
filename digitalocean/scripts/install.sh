@@ -164,6 +164,8 @@ function parse_args() {
   esac
 }
 
+
+
 # Function to check prerequisites
 function check_prerequisites() {
   echo_info "Checking Prerequisites"
