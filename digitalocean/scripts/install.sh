@@ -260,7 +260,12 @@ function check_opengovernance_installation() {
   if helm repo list | grep -qw "opengovernance" && helm ls -n opengovernance | grep -qw opengovernance; then
     # Check Helm release status
     local helm_release_status
-    helm_release_status=$(helm list -n opengovernance --filter '^opengovernance$' -o json | jq -r '.[].status' || echo "unknown")
+    helm_release_status=$(helm list -n opengovernance --filter '^opengovernance$' -o yaml | awk '
+  BEGIN { status="unknown" }
+  /status:/ { sub(/^status:[[:space:]]*/, "", $0); status=$0 }
+  END { print status }
+')
+
 
     if [ "$helm_release_status" == "deployed" ]; then
       echo_info "Checking for any existing OpenGovernance Installation...Existing installation found."
