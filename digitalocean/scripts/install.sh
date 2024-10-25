@@ -402,7 +402,6 @@ function configure_email_and_domain() {
             echo_error "Domain is required for installation type 1." "$INDENT"
             continue
           fi
-          echo ""
           echo "You entered: $DOMAIN"
           read -p "Is this correct? (Y/n): " yn < /dev/tty
           case $yn in
@@ -423,14 +422,12 @@ function configure_email_and_domain() {
       if [ -z "$EMAIL" ]; then
         while true; do
           echo ""
-          echo "Enter your email for HTTPS/TLS setup via Let's Encrypt."
-          echo "This email is secure, private, and can be changed later."
-          echo "Invalid emails may cause certificate issuance and installation errors."
+          echo "Enter your email for HTTPS/TLS setup and Let's Encrypt certificate issuance."
+          echo "This email is secure and private. You can change it later."
           read -p "Email: " EMAIL < /dev/tty
           if [ -z "$EMAIL" ]; then
             echo_error "Email is required for installation type 1." "$INDENT"
           else
-            echo ""
             echo "You entered: $EMAIL"
             read -p "Is this correct? (Y/n): " yn < /dev/tty
             case $yn in
@@ -460,7 +457,6 @@ function configure_email_and_domain() {
             echo_error "Domain is required for installation type 2." "$INDENT"
             continue
           fi
-          echo ""
           echo "You entered: $DOMAIN"
           read -p "Is this correct? (Y/n): " yn < /dev/tty
           case $yn in
@@ -1059,6 +1055,19 @@ function check_and_perform_upgrade() {
   fi
 }
 
+# Helper function to get installation type description
+function get_install_type_description() {
+  local type="$1"
+  case $type in
+    1) echo "Standard (Custom hostname + SSL)" ;;
+    2) echo "No HTTPS (Simple install with hostname)" ;;
+    3) echo "Minimal (Simple install with no hostname)" ;;
+    4) echo "Barebones (Requires Port-Forwarding)" ;;
+    5) echo "Exit" ;;
+    *) echo "Unknown" ;;
+  esac
+}
+
 # Function to run installation logic
 function run_installation_logic() {
   # Check if app is installed
@@ -1295,19 +1304,6 @@ function run_installation_logic() {
       esac
     fi
   fi
-}
-
-# Helper function to get installation type description
-function get_install_type_description() {
-  local type="$1"
-  case $type in
-    1) echo "Standard (Custom hostname + SSL)" ;;
-    2) echo "No HTTPS (Simple install with hostname)" ;;
-    3) echo "Minimal (Simple install with no hostname)" ;;
-    4) echo "Barebones (Requires Port-Forwarding)" ;;
-    5) echo "Exit" ;;
-    *) echo "Unknown" ;;
-  esac
 }
 
 # -----------------------------
