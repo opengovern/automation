@@ -220,9 +220,9 @@ function check_opengovernance_config() {
   CURRENT_DOMAIN=$(echo "$ENV_VARS" | grep -o '"name":"METADATA_PRIMARY_DOMAIN_URL","value":"[^"]*"' | awk -F'"' '{print $8}')
 
   # Determine if it's a custom hostname or not
-  if [[ $CURRENT_DOMAIN == "og.app.domain" || -z $CURRENT_DOMAIN ]]; then
+  if [[ "$CURRENT_DOMAIN" == "og.app.domain" || -z "$CURRENT_DOMAIN" ]]; then
     custom_host_name=false
-  elif [[ $CURRENT_DOMAIN =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
+  elif [[ "$CURRENT_DOMAIN" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
     custom_host_name=true
   fi
 
@@ -235,7 +235,7 @@ function check_opengovernance_config() {
   fi
 
   # Enhanced SSL configuration check
-  if [[ $custom_host_name == true ]] && \
+  if [[ "$custom_host_name" == true ]] && \
      echo "$redirect_uris" | grep -q "https://$CURRENT_DOMAIN"; then
 
     if kubectl get ingress opengovernance-ingress -n opengovernance &> /dev/null; then
@@ -887,8 +887,50 @@ function run_installation_logic() {
   if ! check_opengovernance_installation; then
     # App is not installed, proceed to install
     echo_info "OpenGovernance is not installed."
-    configure_email_and_domain
-    install_opengovernance
+    
+    # Check if domain and email are set
+    if [ -z "$DOMAIN" ] && [ -z "$EMAIL" ]; then
+      echo_info "Neither DOMAIN nor EMAIL is set. Please specify your installation preferences." "$INDENT"
+      echo "Select the type of installation you would like to perform:"
+      PS3="Enter the number corresponding to your choice: "
+      options=("Barebones Install" "Simple Install" "Standard Install with HTTPS" "Exit")
+      select opt in "${options[@]}"; do
+        case $REPLY in
+          1)
+            ENABLE_HTTPS=false
+            echo "You selected Barebones Install. Please provide your domain and email."
+            configure_email_and_domain
+            install_barebones_install
+            break
+            ;;
+          2)
+            ENABLE_HTTPS=false
+            echo "You selected Simple Install. Please provide your domain and email."
+            configure_email_and_domain
+            install_simple_install
+            break
+            ;;
+          3)
+            ENABLE_HTTPS=true
+            echo "You selected Standard Install with HTTPS. Please provide your domain and email."
+            configure_email_and_domain
+            install_standard_install
+            break
+            ;;
+          4)
+            echo_info "Exiting the script."
+            exit 0
+            ;;
+          *)
+            echo "Invalid option. Please enter 1, 2, 3, or 4."
+            ;;
+        esac
+      done
+    else
+      echo_info "Domain and/or email already provided. Proceeding with installation." "$INDENT"
+      install_opengovernance
+    fi
+
     check_pods_and_jobs
 
     # Attempt to set up Ingress Controller and related resources
@@ -914,8 +956,7 @@ function run_installation_logic() {
 
     if [ "$APP_HEALTHY" = false ]; then
       # App has health issues, proceed to upgrade if newer 'opengovernance' chart is available
-      configure_email_and_domain
-      check_and_perform_upgrade
+      install_opengovernance
       check_pods_and_jobs
       setup_ingress_controller
 
@@ -1015,9 +1056,6 @@ function run_installation_logic() {
     fi
   fi
 }
-
-# Function to deploy ingress resources
-# (Already defined above; ensure it's the updated version)
 
 # -----------------------------
 # Main Execution Flow
