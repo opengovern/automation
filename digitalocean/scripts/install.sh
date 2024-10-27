@@ -48,10 +48,10 @@ function usage() {
   echo "  -d, --domain        Specify the domain for OpenGovernance."
   echo "  -e, --email         Specify the email for Let's Encrypt certificate generation."
   echo "  -t, --type          Specify the installation type:"
-  echo "                       1) Install with HTTP(s)"
-  echo "                       2) Install without HTTP(s)"
-  echo "                       3) Minimal Install"
-  echo "                       4) Basic Install with no Network Ingress (barebones)"
+  echo "                       1) Install with HTTPS and Hostname (DNS records required after installation)"
+  echo "                       2) Install without HTTPS (DNS records required after installation)"
+  echo "                       3) Minimal Install (Access via public IP)"
+  echo "                       4) Basic Install (No Ingress, use port-forwarding)"
   echo "                       Default: 1"
   echo "  --debug             Enable debug mode for detailed output."
   echo "  -h, --help          Display this help message."
@@ -110,7 +110,7 @@ function parse_args() {
   # Validate DOMAIN and EMAIL based on INSTALL_TYPE and SILENT_INSTALL
   case $INSTALL_TYPE in
     1)
-      # Install with HTTP(s)
+      # Install with HTTPS and Hostname
       if [ -n "$DOMAIN" ]; then
         validate_domain
       else
@@ -131,7 +131,7 @@ function parse_args() {
       fi
       ;;
     2)
-      # Install without HTTP(s)
+      # Install without HTTPS
       if [ -n "$DOMAIN" ]; then
         validate_domain
       else
@@ -147,7 +147,7 @@ function parse_args() {
       ENABLE_HTTPS=false
       ;;
     4)
-      # Basic Install with no Network Ingress (barebones)
+      # Basic Install with no Ingress
       ENABLE_HTTPS=false
       ;;
     *)
@@ -161,10 +161,10 @@ function parse_args() {
 function choose_install_type() {
   echo ""
   echo "Select Installation Type:"
-  echo "1) Install with HTTP(s)"
-  echo "2) Install without HTTP(s)"
-  echo "3) Minimal Install"
-  echo "4) Basic Install with no Network Ingress (barebones)"
+  echo "1) Install with HTTPS and Hostname (DNS records required after installation)"
+  echo "2) Install without HTTPS (DNS records required after installation)"
+  echo "3) Minimal Install (Access via public IP)"
+  echo "4) Basic Install (No Ingress, use port-forwarding)"
   echo "5) Exit"
 
   # Prompt the user, with default 1 after timeout or pressing Enter
@@ -175,7 +175,7 @@ function choose_install_type() {
 
   # Ensure the choice is within 1-5
   if ! [[ "$choice" =~ ^[1-5]$ ]]; then
-    echo "Invalid option. Defaulting to 1) Install with HTTP(s)."
+    echo "Invalid option. Defaulting to 1) Install with HTTPS and Hostname."
     choice=1
   fi
 
@@ -414,7 +414,7 @@ function configure_email_and_domain() {
   # Depending on the installation type, prompt for DOMAIN and EMAIL as needed
   case $INSTALL_TYPE in
     1)
-      # Install with HTTP(s)
+      # Install with HTTPS and Hostname
       if [ "$SILENT_INSTALL" = false ]; then
         if [ -z "$DOMAIN" ]; then
           while true; do
@@ -442,7 +442,7 @@ function configure_email_and_domain() {
       fi
       ;;
     2)
-      # Install without HTTP(s)
+      # Install without HTTPS
       if [ "$SILENT_INSTALL" = false ] && [ -z "$DOMAIN" ]; then
         while true; do
           read -p "Enter your domain for OpenGovernance: " DOMAIN < /dev/tty
@@ -460,7 +460,7 @@ function configure_email_and_domain() {
       # No DOMAIN or EMAIL required
       ;;
     4)
-      # Basic Install with no Network Ingress (barebones)
+      # Basic Install with no Ingress
       # No DOMAIN or EMAIL required
       ;;
     *)
@@ -555,9 +555,9 @@ EOF
   echo_info "Minimal Install of OpenGovernance completed."
 }
 
-# Function to install OpenGovernance without Ingress (Barebones)
+# Function to install OpenGovernance without Ingress (Basic Install)
 function install_opengovernance_no_ingress() {
-  echo_info "Proceeding with Basic Install of OpenGovernance without Network Ingress (barebones)."
+  echo_info "Proceeding with Basic Install of OpenGovernance without Network Ingress."
 
   # Add Helm repository and update
   echo_info "Adding OpenGovernance Helm repository."
@@ -665,19 +665,19 @@ function wait_for_ingress_ip() {
 function deploy_ingress_resources() {
   case $INSTALL_TYPE in
     1)
-      # Install with HTTP(s)
-      echo_info "Deploying Ingress with SSL/TLS."
+      # Install with HTTPS and Hostname
+      echo_info "Deploying Ingress with HTTPS."
       ;;
     2)
-      # Install without HTTP(s)
-      echo_info "Deploying Ingress without SSL/TLS."
+      # Install without HTTPS
+      echo_info "Deploying Ingress without HTTPS."
       ;;
     3)
       # Minimal Install
       echo_info "Deploying Ingress without a custom hostname."
       ;;
     4)
-      # Basic Install with no Network Ingress (barebones)
+      # Basic Install with no Ingress
       echo_info "Basic Install selected. Skipping Ingress deployment."
       return
       ;;
@@ -690,7 +690,7 @@ function deploy_ingress_resources() {
   # Deploy Ingress based on installation type
   case $INSTALL_TYPE in
     1)
-      # Install with HTTP(s)
+      # Install with HTTPS and Hostname
       cat <<EOF | kubectl apply -n opengovernance -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -719,7 +719,7 @@ spec:
 EOF
       ;;
     2)
-      # Install without HTTP(s)
+      # Install without HTTPS
       cat <<EOF | kubectl apply -n opengovernance -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -890,7 +890,7 @@ function display_completion_message() {
   elif [ "$INSTALL_TYPE" -eq 4 ]; then
     echo "Access your OpenGovernance instance at: ${protocol}://${INGRESS_EXTERNAL_IP}"
   else
-    echo "Access your OpenGovernance instance using the external IP: ${INGRESS_EXTERNAL_IP}"
+    echo "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
   fi
   echo ""
   echo "To sign in, use the following default credentials:"
@@ -909,7 +909,7 @@ function display_completion_message() {
     echo "Note: It may take some time for DNS changes to propagate."
   fi
 
-  # If Ingress is not properly configured or it's a Barebones install, provide port-forward instructions
+  # If Ingress is not properly configured or it's a Basic Install, provide port-forward instructions
   if [ "$DEPLOY_SUCCESS" = false ] || [ "$INSTALL_TYPE" -eq 4 ]; then
     provide_port_forward_instructions
   fi
@@ -921,10 +921,10 @@ function display_completion_message() {
 function get_install_type_description() {
   local type="$1"
   case $type in
-    1) echo "Install with HTTP(s)" ;;
-    2) echo "Install without HTTP(s)" ;;
-    3) echo "Minimal Install" ;;
-    4) echo "Basic Install with no Network Ingress (barebones)" ;;
+    1) echo "Install with HTTPS and Hostname (DNS records required after installation)" ;;
+    2) echo "Install without HTTPS (DNS records required after installation)" ;;
+    3) echo "Minimal Install (Access via public IP)" ;;
+    4) echo "Basic Install (No Ingress, use port-forwarding)" ;;
     5) echo "Exit" ;;
     *) echo "Unknown" ;;
   esac
@@ -949,16 +949,16 @@ function run_installation_logic() {
     # Perform installation based on INSTALL_TYPE
     case $INSTALL_TYPE in
       1)
-        install_opengovernance_with_https  # Install with HTTP(s)
+        install_opengovernance_with_https  # Install with HTTPS and Hostname
         ;;
       2)
-        install_opengovernance_with_hostname_only  # Install without HTTP(s)
+        install_opengovernance_with_hostname_only  # Install without HTTPS
         ;;
       3)
         install_opengovernance_with_public_ip  # Minimal Install
         ;;
       4)
-        install_opengovernance_no_ingress  # Basic Install with no Network Ingress (barebones)
+        install_opengovernance_no_ingress  # Basic Install
         ;;
       *)
         echo_error "Unsupported installation type: $INSTALL_TYPE"
@@ -968,7 +968,7 @@ function run_installation_logic() {
 
     # Handle post-installation steps based on INSTALL_TYPE
     if [ "$INSTALL_TYPE" -eq 1 ] || [ "$INSTALL_TYPE" -eq 2 ]; then
-      # For Install with HTTP(s) and Install without HTTP(s)
+      # For Install with HTTPS and Install without HTTPS
       # a. Check pod readiness
       check_pods_and_jobs
 
@@ -987,7 +987,7 @@ function run_installation_logic() {
       # e. Restart Dex and NGINX services by restarting their deployments
       restart_pods || DEPLOY_SUCCESS=false
     elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
-      # For Minimal Install and Barebones Install
+      # For Minimal Install and Basic Install
       DEPLOY_SUCCESS=true  # These install functions handle their own setup
     else
       DEPLOY_SUCCESS=false
@@ -1011,16 +1011,16 @@ function run_installation_logic() {
       # Perform upgrade based on INSTALL_TYPE
       case $INSTALL_TYPE in
         1)
-          install_opengovernance_with_https  # Upgrade with HTTP(s)
+          install_opengovernance_with_https  # Upgrade with HTTPS and Hostname
           ;;
         2)
-          install_opengovernance_with_hostname_only  # Upgrade without HTTP(s)
+          install_opengovernance_with_hostname_only  # Upgrade without HTTPS
           ;;
         3)
           install_opengovernance_with_public_ip  # Minimal Install Upgrade
           ;;
         4)
-          install_opengovernance_no_ingress  # Barebones Install Upgrade
+          install_opengovernance_no_ingress  # Basic Install Upgrade
           ;;
         *)
           echo_error "Unsupported installation type: $INSTALL_TYPE"
@@ -1048,7 +1048,7 @@ function run_installation_logic() {
         # d. Restart Dex and NGINX services by restarting their deployments
         restart_pods || DEPLOY_SUCCESS=false
       elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
-        # Minimal Install and Barebones Install handle their own setup
+        # Minimal Install and Basic Install handle their own setup
         DEPLOY_SUCCESS=true
       else
         DEPLOY_SUCCESS=false
@@ -1066,13 +1066,13 @@ function run_installation_logic() {
       check_opengovernance_config
 
       if [ "$ENABLE_HTTPS" = true ] && [ "$ssl_configured" = true ]; then
-        echo_info "OpenGovernance is fully configured with HTTP(s)."
+        echo_info "OpenGovernance is fully configured with HTTPS."
       else
-        echo_info "OpenGovernance is installed but HTTP(s) is not fully configured."
+        echo_info "OpenGovernance is installed but HTTPS is not fully configured."
 
-        # Proceed with HTTP(s) configuration if applicable
+        # Proceed with HTTPS configuration if applicable
         if [ "$ENABLE_HTTPS" = true ]; then
-          echo_info "Proceeding with HTTP(s) configuration in 5 seconds..."
+          echo_info "Proceeding with HTTPS configuration in 5 seconds..."
           sleep 5
 
           # a. Set up Cert-Manager and Issuer
