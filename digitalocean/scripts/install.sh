@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # -----------------------------
 # Logging Configuration
 # -----------------------------
@@ -54,6 +56,11 @@ function usage() {
   echo "  --debug             Enable debug mode for detailed output."
   echo "  -h, --help          Display this help message."
   exit 1
+}
+
+# Function to append --debug to all Helm commands
+function helm_quiet() {
+  helm "$@" --debug
 }
 
 # Modify the parse_args function to include a --debug flag
@@ -180,22 +187,18 @@ function choose_install_type() {
     1)
       INSTALL_TYPE=1
       ENABLE_HTTPS=true
-      #echo "You selected Install with HTTP(s). Please provide your domain and email."
       ;;
     2)
       INSTALL_TYPE=2
       ENABLE_HTTPS=false
-      #echo "You selected Install without HTTP(s). Please provide your domain."
       ;;
     3)
       INSTALL_TYPE=3
       ENABLE_HTTPS=false
-      #echo "You selected Minimal Install. Using external IP as domain."
       ;;
     4)
       INSTALL_TYPE=4
       ENABLE_HTTPS=false
-      #echo "You selected Basic Install with no Network Ingress (barebones)."
       ;;
     5)
       echo_info "Exiting the script."
@@ -204,7 +207,6 @@ function choose_install_type() {
     *)
       INSTALL_TYPE=1
       ENABLE_HTTPS=true
-      #echo "Invalid option. Defaulting to 1) Install with HTTP(s)."
       ;;
   esac
 
@@ -265,7 +267,6 @@ function check_opengovernance_installation() {
   /status:/ { sub(/^status:[[:space:]]*/, "", $0); status=$0 }
   END { print status }
 ')
-
 
     if [ "$helm_release_status" == "deployed" ]; then
       echo_info "Checking for any existing OpenGovernance Installation...Existing installation found."
@@ -559,6 +560,7 @@ function install_opengovernance_no_ingress() {
   echo_info "Proceeding with Basic Install of OpenGovernance without Network Ingress (barebones)."
 
   # Add Helm repository and update
+  echo_info "Adding OpenGovernance Helm repository."
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
@@ -618,7 +620,7 @@ function setup_ingress_controller() {
   fi
 
   # Check if ingress-nginx is already installed in the ingress-nginx namespace
-  if helm ls -n "$INGRESS_NAMESPACE" | grep -qw ingress-nginx; then
+  if helm_quiet ls -n "$INGRESS_NAMESPACE" | grep -qw ingress-nginx; then
     echo_info "Ingress Controller already installed. Skipping installation."
   else
     echo_info "Installing ingress-nginx via Helm."
@@ -774,7 +776,7 @@ function setup_cert_manager_and_issuer() {
 
   # Function to check if Cert-Manager is installed
   function is_cert_manager_installed() {
-    if helm list -A | grep -qw "cert-manager"; then
+    if helm_quiet list -A | grep -qw "cert-manager"; then
       return 0
     fi
 
