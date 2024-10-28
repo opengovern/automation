@@ -99,8 +99,10 @@ function validate_email() {
 }
 
 # Function to parse command-line arguments
+# Example: Making DOMAIN and EMAIL local within parse_args function
+
 function parse_args() {
-  SILENT_INSTALL=false
+  local SILENT_INSTALL=false
   while [[ "$#" -gt 0 ]]; do
     case $1 in
       --silent-install)
@@ -197,6 +199,7 @@ function parse_args() {
       ;;
   esac
 }
+
 
 # Function to choose installation type in interactive mode
 function choose_install_type() {
@@ -322,8 +325,7 @@ function check_prerequisites() {
     done
   }
 
-  # Function to handle existing cluster scenarios
-  # Updated handle_existing_cluster() function to merge prompts into a single question
+  # Updated handle_existing_cluster() function to manage DOMAIN and EMAIL appropriately
 
   function handle_existing_cluster() {
     echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
@@ -342,16 +344,97 @@ function check_prerequisites() {
         echo_info "Deleting existing cluster '$KUBE_CLUSTER_NAME'..."
         doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --wait
         echo_info "Existing cluster deleted."
+
+        # Handle DOMAIN and EMAIL
+        if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
+          echo_info "Reusing existing DOMAIN and EMAIL."
+        else
+          echo ""
+          echo "Current DOMAIN: ${DOMAIN:-Not Set}"
+          echo "Current EMAIL: ${EMAIL:-Not Set}"
+          echo "Do you want to reuse the existing DOMAIN and EMAIL? [y/n]: "
+          read -p "" reuse_choice < /dev/tty
+
+          if [[ "$reuse_choice" =~ ^[Yy]$ ]]; then
+            echo_info "Reusing existing DOMAIN and EMAIL."
+          else
+            # Prompt for new DOMAIN and EMAIL
+            while true; do
+              read -p "Enter your new domain for OpenGovernance: " DOMAIN < /dev/tty
+              if [ -z "$DOMAIN" ]; then
+                echo_error "Domain cannot be empty."
+                continue
+              fi
+              validate_domain
+              break
+            done
+
+            while true; do
+              read -p "Enter your new email for Let's Encrypt: " EMAIL < /dev/tty
+              if [ -z "$EMAIL" ]; then
+                echo_error "Email cannot be empty."
+                continue
+              fi
+              validate_email
+              break
+            done
+          fi
+        fi
+
         create_cluster "$KUBE_CLUSTER_NAME"
         ;;
       2)
         echo_info "Configuring kubectl to connect to the existing '$KUBE_CLUSTER_NAME' cluster..."
+
+        # Handle DOMAIN and EMAIL
+        if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
+          echo_info "Reusing existing DOMAIN and EMAIL."
+        else
+          echo ""
+          echo "Current DOMAIN: ${DOMAIN:-Not Set}"
+          echo "Current EMAIL: ${EMAIL:-Not Set}"
+          echo "Do you want to reuse the existing DOMAIN and EMAIL? [y/n]: "
+          read -p "" reuse_choice < /dev/tty
+
+          if [[ "$reuse_choice" =~ ^[Yy]$ ]]; then
+            echo_info "Reusing existing DOMAIN and EMAIL."
+          else
+            # Prompt for new DOMAIN and EMAIL
+            while true; do
+              read -p "Enter your new domain for OpenGovernance: " DOMAIN < /dev/tty
+              if [ -z "$DOMAIN" ]; then
+                echo_error "Domain cannot be empty."
+                continue
+              fi
+              validate_domain
+              break
+            done
+
+            while true; do
+              read -p "Enter your new email for Let's Encrypt: " EMAIL < /dev/tty
+              if [ -z "$EMAIL" ]; then
+                echo_error "Email cannot be empty."
+                continue
+              fi
+              validate_email
+              break
+            done
+          fi
+        fi
+
         doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
         echo_info "'kubectl' is now configured to connect to '$KUBE_CLUSTER_NAME'."
         ;;
       3)
         local new_cluster_name
         new_cluster_name=$(prompt_new_cluster_name)
+
+        # Reset DOMAIN and EMAIL unless they were passed as arguments
+        if [ -z "$DOMAIN" ] && [ -z "$EMAIL" ]; then
+          DOMAIN=""
+          EMAIL=""
+        fi
+
         create_cluster "$new_cluster_name"
         ;;
       4)
@@ -364,6 +447,9 @@ function check_prerequisites() {
         ;;
     esac
   }
+
+
+
 
 
   # Function to create a Kubernetes cluster with a given name
