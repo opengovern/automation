@@ -208,9 +208,9 @@ check_pods_and_jobs() {
 prompt_user_options() {
     echo ""
     echo "========================================="
-    echo "OpenGovernance Setup Configuration Options"
+    echo "OpenGovernance Application Installed Successfully!"
     echo "========================================="
-    echo "Please choose the setup configuration:"
+    echo "Please choose how you would like to configure access to OpenGovernance:"
     echo "1. Configure with Domain and SSL"
     echo "2. Configure with Domain but Without SSL"
     echo "3. Connect to the app as is (Provide Port-Forwarding Instructions)"
@@ -232,6 +232,7 @@ prompt_user_options() {
             ;;
     esac
 }
+
 
 # Function to configure OpenGovernance based on user input
 configure_opengovernance() {
