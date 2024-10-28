@@ -342,7 +342,7 @@ function check_prerequisites() {
     case "$choice" in
       1)
         echo_info "Deleting existing cluster '$KUBE_CLUSTER_NAME'..."
-        doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --wait
+        doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --dangerous
         echo_info "Existing cluster deleted."
 
         # Handle DOMAIN and EMAIL
