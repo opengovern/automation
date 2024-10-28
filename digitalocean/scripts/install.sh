@@ -239,6 +239,85 @@ function check_prerequisites() {
     exit 1
   }
 
+  # Function to prompt the user with a yes/no question
+  function prompt_yes_no() {
+    local prompt_message="$1"
+    local user_input
+
+    while true; do
+      read -p "$prompt_message [y/n]: " user_input < /dev/tty
+      case "$user_input" in
+        [Yy]* ) return 0;;
+        [Nn]* ) return 1;;
+        * ) echo "Please answer yes (y) or no (n).";;
+      esac
+    done
+  }
+
+  # Function to prompt the user for a new cluster name
+  function prompt_new_cluster_name() {
+    local new_name
+    while true; do
+      read -p "Enter a new name for the Kubernetes cluster: " new_name < /dev/tty
+      if [[ -n "$new_name" ]]; then
+        echo "$new_name"
+        return 0
+      else
+        echo_error "Cluster name cannot be empty. Please enter a valid name."
+      fi
+    done
+  }
+
+  # Function to handle existing cluster scenarios
+  function handle_existing_cluster() {
+    echo_error "A Kubernetes cluster named 'opengovernance' already exists."
+
+    # Prompt 1: Do you want to delete the existing cluster and recreate it?
+    if prompt_yes_no "Do you want to delete the existing 'opengovernance' cluster and recreate it?"; then
+      echo_info "Deleting existing cluster 'opengovernance'..."
+      doctl kubernetes cluster delete opengovernance --force --wait
+      echo_info "Existing cluster deleted."
+
+      # Proceed with cluster creation
+      create_cluster "opengovernance"
+    else
+      # Prompt 2: Do you want to connect to the existing cluster?
+      if prompt_yes_no "Do you want to connect to the existing 'opengovernance' cluster?"; then
+        echo_info "Configuring kubectl to connect to the existing 'opengovernance' cluster..."
+        doctl kubernetes cluster kubeconfig save opengovernance
+        echo_info "'kubectl' is now configured to connect to 'opengovernance'."
+      else
+        # Prompt 3: Do you want to create a new cluster with a different name?
+        if prompt_yes_no "Do you want to create a new Kubernetes cluster with a different name?"; then
+          local new_cluster_name
+          new_cluster_name=$(prompt_new_cluster_name)
+          create_cluster "$new_cluster_name"
+        else
+          echo_error "Please configure kubectl to connect to an existing Kubernetes cluster and try again."
+          echo "Refer to the following documentation for assistance:"
+          echo "1. OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
+          echo "2. Connect to an existing cluster: https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+          exit 1
+        fi
+      fi
+    fi
+  }
+
+  # Function to create a Kubernetes cluster with a given name
+  function create_cluster() {
+    local cluster_name="$1"
+
+    echo_info "A DigitalOcean Kubernetes cluster named '$cluster_name' will be created in 10 seconds..."
+    sleep 10
+
+    echo_info "Creating DigitalOcean Kubernetes cluster '$cluster_name'..."
+    doctl kubernetes cluster create "$cluster_name" --region nyc3 \
+      --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
+
+    # Wait for nodes to become ready
+    check_ready_nodes
+  }
+
   # Check if kubectl is connected to a cluster
   if kubectl cluster-info > /dev/null 2>&1; then
     echo_info "kubectl is connected to a cluster."
@@ -253,17 +332,14 @@ function check_prerequisites() {
       if doctl account get > /dev/null 2>&1; then
         echo_info "doctl is configured."
 
-        # Inform the user about cluster creation with a 10-second timer
-        echo_info "A DigitalOcean Kubernetes cluster named 'opengovernance' will be created in 10 seconds..."
-        sleep 10
-
-        # Create the DigitalOcean Kubernetes cluster
-        echo_info "Creating DigitalOcean Kubernetes cluster 'opengovernance'..."
-        doctl kubernetes cluster create opengovernance --region nyc3 \
-          --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
-
-        # Wait for nodes to become ready
-        check_ready_nodes
+        # Check if a cluster named 'opengovernance' already exists
+        if doctl kubernetes cluster list --format Name --no-header | grep -qw "^opengovernance$"; then
+          # Handle existing cluster
+          handle_existing_cluster
+        else
+          # Create the cluster since it doesn't exist
+          create_cluster "opengovernance"
+        fi
       else
         echo_error "doctl is installed but not configured."
         echo ""
@@ -298,6 +374,7 @@ function check_prerequisites() {
 
   echo_info "Checking Prerequisites...Completed"
 }
+
 
 
 
