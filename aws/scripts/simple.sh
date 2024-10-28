@@ -3,33 +3,57 @@
 set -euo pipefail
 
 # -----------------------------
-# Configuration Variables
+# Logging Configuration
 # -----------------------------
+DEBUG_MODE=false  # Set to true to enable debug mode
+LOGFILE="$HOME/opengovernance_install.log"
 
-# Repository URL
-REPO_URL="https://github.com/opengovern/deploy-opengovernance.git"
+# Ensure the log directory exists
+mkdir -p "$(dirname "$LOGFILE")"
 
-# Directory where the repository will be cloned
-REPO_DIR="deploy-opengovernance"
+# Redirect all output to the log file and the console
+exec > >(tee -i "$LOGFILE") 2>&1
 
-# Path to Terraform/OpenTofu configuration
-INFRA_DIR="$REPO_DIR/aws/eks"
-
-# Helm release name and chart repository
-HELM_RELEASE="opengovernance"
-HELM_CHART="opengovernance/opengovernance"
-
-# Kubernetes namespace and Ingress name
-NAMESPACE="opengovernance"
-INGRESS_NAME="opengovernance-ingress"
+# Open file descriptor 3 for appending to the log file only
+exec 3>> "$LOGFILE"
 
 # -----------------------------
 # Function Definitions
 # -----------------------------
 
-# Function to print error messages
+# Function to display informational messages to console and log
+echo_info() {
+    local message="$1"
+    # Only display message if in debug mode
+    if [ "$DEBUG_MODE" = true ]; then
+        printf "%s\n" "$message"
+    fi
+    # Log detailed message
+    echo "$message" >&3
+}
+
+# Function to display error messages to console and log
 echo_error() {
-    echo -e "\e[31mERROR:\e[0m $1" >&2
+    local message="$1"
+    # Always print concise error message to console
+    printf "Error: %s\n" "$message"
+    # Log detailed error message
+    echo "Error: $message" >&3
+}
+
+# Function to display usage information
+usage() {
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Options:"
+    echo "  --debug             Enable debug mode for detailed output."
+    echo "  -h, --help          Display this help message."
+    exit 1
+}
+
+# Function to append --debug to all Helm commands
+helm_quiet() {
+    helm "$@" --debug
 }
 
 # Function to check if a command exists
@@ -45,10 +69,10 @@ check_command() {
 check_terraform_or_opentofu() {
     if command -v terraform &> /dev/null; then
         INFRA_TOOL="terraform"
-        echo "Terraform is installed."
+        echo_info "Terraform is installed."
     elif command -v tofu &> /dev/null; then
         INFRA_TOOL="tofu"
-        echo "OpenTofu is installed."
+        echo_info "OpenTofu is installed."
     else
         echo_error "Neither Terraform nor OpenTofu is installed. Please install one of them and retry."
         exit 1
@@ -61,46 +85,47 @@ check_aws_auth() {
         echo_error "AWS CLI is not configured or authenticated. Please run 'aws configure' and ensure you have the necessary permissions."
         exit 1
     fi
-    echo "AWS CLI is authenticated."
+    echo_info "AWS CLI is authenticated."
 }
 
 # Function to clone the repository
 clone_repository() {
     if [ -d "$REPO_DIR" ]; then
-        echo "Repository '$REPO_DIR' already exists. Pulling the latest changes..."
+        echo_info "Repository '$REPO_DIR' already exists. Pulling the latest changes..."
         git -C "$REPO_DIR" pull
     else
-        echo "Cloning repository from $REPO_URL..."
+        echo_info "Cloning repository from $REPO_URL..."
         git clone "$REPO_URL"
     fi
 }
 
 # Function to deploy infrastructure using Terraform or OpenTofu
 deploy_infrastructure() {
-    echo "Navigating to infrastructure directory: $INFRA_DIR"
+    echo_info "Deploying infrastructure. This step may take 10-15 minutes..."
+    echo_info "Navigating to infrastructure directory: $INFRA_DIR"
     cd "$INFRA_DIR"
 
     if [ "$INFRA_TOOL" == "terraform" ]; then
-        echo "Initializing Terraform..."
+        echo_info "Initializing Terraform..."
         terraform init
 
-        echo "Planning Terraform deployment..."
+        echo_info "Planning Terraform deployment..."
         terraform plan
 
-        echo "Applying Terraform deployment..."
+        echo_info "Applying Terraform deployment..."
         terraform apply --auto-approve
     elif [ "$INFRA_TOOL" == "tofu" ]; then
-        echo "Initializing OpenTofu..."
+        echo_info "Initializing OpenTofu..."
         tofu init
 
-        echo "Planning OpenTofu deployment..."
+        echo_info "Planning OpenTofu deployment..."
         tofu plan
 
-        echo "Applying OpenTofu deployment..."
+        echo_info "Applying OpenTofu deployment..."
         tofu apply -auto-approve
     fi
 
-    echo "Connecting to the Kubernetes cluster..."
+    echo_info "Connecting to the Kubernetes cluster..."
     eval "$("$INFRA_TOOL" output -raw configure_kubectl)"
 }
 
@@ -114,6 +139,69 @@ provide_port_forward_instructions() {
     echo "To sign in, use the following default credentials:"
     echo "  Username: admin@opengovernance.io"
     echo "  Password: password"
+}
+
+# Function to check if kubectl is connected to a cluster, Helm is installed, and at least three nodes are ready
+check_prerequisites() {
+    # Check if kubectl is connected to a cluster
+    if ! kubectl cluster-info > /dev/null 2>&1; then
+        echo_error "kubectl is not connected to a cluster."
+        echo "Please configure kubectl to connect to a Kubernetes cluster and try again."
+        exit 1
+    fi
+
+    # Check if Helm is installed
+    if ! command -v helm &> /dev/null; then
+        echo_error "Helm is not installed."
+        echo "Please install Helm and try again."
+        exit 1
+    fi
+
+    # Check if there are at least three ready nodes
+    READY_NODES=$(kubectl get nodes --no-headers | grep -c ' Ready ')
+    if [ "$READY_NODES" -lt 3 ]; then
+        echo_error "At least three Kubernetes nodes must be ready. Currently, $READY_NODES node(s) are ready."
+        exit 1
+    fi
+
+    # If all checks pass
+    echo_info "Checking Prerequisites...Completed"
+}
+
+# Function to check OpenGovernance readiness
+check_opengovernance_readiness() {
+    # Check the readiness of all pods in the 'opengovernance' namespace
+    local not_ready_pods
+    # Extract the STATUS column (3rd column) and exclude 'Running' and 'Completed'
+    not_ready_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+
+    if [ -z "$not_ready_pods" ]; then
+        APP_HEALTHY=true
+    else
+        echo_error "Some OpenGovernance pods are not healthy."
+        kubectl get pods -n "$NAMESPACE"
+        APP_HEALTHY=false
+    fi
+}
+
+# Function to check pods and migrator jobs
+check_pods_and_jobs() {
+    local attempts=0
+    local max_attempts=12  # 12 attempts * 30 seconds = 6 minutes
+    local sleep_time=30
+
+    while [ $attempts -lt $max_attempts ]; do
+        check_opengovernance_readiness
+        if [ "${APP_HEALTHY:-false}" = true ]; then
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        echo_info "Waiting for pods to become ready... ($attempts/$max_attempts)"
+        sleep "$sleep_time"
+    done
+
+    echo_error "OpenGovernance did not become ready within expected time."
+    exit 1
 }
 
 # Function to prompt the user for OpenGovernance setup options
@@ -148,23 +236,19 @@ prompt_user_options() {
 # Function to configure OpenGovernance based on user input
 configure_opengovernance() {
     if [ "${SETUP_DOMAIN_AND_SSL:-0}" -eq 1 ]; then
-        echo "Setting up OpenGovernance with Domain and SSL..."
+        echo_info "Setting up OpenGovernance with Domain and SSL..."
         setup_with_domain_and_ssl
     elif [ "${SETUP_DOMAIN_NO_SSL:-0}" -eq 1 ]; then
-        echo "Setting up OpenGovernance with Domain but Without SSL..."
+        echo_info "Setting up OpenGovernance with Domain but Without SSL..."
         setup_with_domain_no_ssl
     elif [ "${CONNECT_AS_IS:-0}" -eq 1 ]; then
-        echo "Providing port-forwarding instructions to access OpenGovernance..."
+        echo_info "Providing port-forwarding instructions to access OpenGovernance..."
         provide_port_forward_instructions
     else
         echo_error "No valid setup option selected. Exiting."
         exit 1
     fi
 }
-
-# -----------------------------
-# Setup Functions
-# -----------------------------
 
 # Function to set up OpenGovernance with Domain and SSL
 setup_with_domain_and_ssl() {
@@ -189,7 +273,7 @@ setup_with_domain_and_ssl() {
 
     # Function to request a new ACM certificate
     request_certificate() {
-        echo "Requesting a new ACM certificate for domain: $DOMAIN"
+        echo_info "Requesting a new ACM certificate for domain: $DOMAIN"
 
         REQUEST_OUTPUT=$(aws acm request-certificate \
             --domain-name "$DOMAIN" \
@@ -202,22 +286,22 @@ setup_with_domain_and_ssl() {
             echo_error "Failed to retrieve Certificate ARN after requesting."
             exit 1
         fi
-        echo "Certificate ARN: $CERTIFICATE_ARN"
+        echo_info "Certificate ARN: $CERTIFICATE_ARN"
     }
 
     # Function to retrieve existing ACM certificate ARN
     get_certificate_arn() {
-        echo "Searching for existing ACM certificates for domain: $DOMAIN"
+        echo_info "Searching for existing ACM certificates for domain: $DOMAIN"
         CERTIFICATE_ARN=$(aws acm list-certificates \
             --region "$REGION" \
             --query "CertificateSummaryList[?DomainName=='$DOMAIN'].CertificateArn" \
             --output text)
 
         if [[ -z "$CERTIFICATE_ARN" ]]; then
-            echo "No existing ACM certificate found for domain: $DOMAIN"
+            echo_info "No existing ACM certificate found for domain: $DOMAIN"
             CERTIFICATE_ARN=""
         else
-            echo "Found existing Certificate ARN: $CERTIFICATE_ARN"
+            echo_info "Found existing Certificate ARN: $CERTIFICATE_ARN"
         fi
     }
 
@@ -236,7 +320,7 @@ setup_with_domain_and_ssl() {
     # Function to get DNS validation records
     get_validation_records() {
         local arn=$1
-        echo "Retrieving DNS validation records..."
+        echo_info "Retrieving DNS validation records..."
         VALIDATION_RECORDS=$(aws acm describe-certificate \
             --certificate-arn "$arn" \
             --region "$REGION" \
@@ -246,51 +330,31 @@ setup_with_domain_and_ssl() {
 
     # Function to create Ingress with SSL
     create_ingress() {
-        echo "Creating or updating Kubernetes Ingress: $INGRESS_NAME in namespace: $NAMESPACE"
+        echo_info "Creating or updating Kubernetes Ingress: $INGRESS_NAME in namespace: $NAMESPACE"
 
-        kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
- namespace: $NAMESPACE
- name: $INGRESS_NAME
- annotations:
-   alb.ingress.kubernetes.io/scheme: internet-facing
-   alb.ingress.kubernetes.io/target-type: ip
-   alb.ingress.kubernetes.io/backend-protocol: HTTP
-   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]'
-   alb.ingress.kubernetes.io/certificate-arn: "$CERTIFICATE_ARN"
-   kubernetes.io/ingress.class: alb
-spec:
- ingressClassName: alb
- rules:
-   - host: "$DOMAIN"
-     http:
-       paths:
-         - path: /
-           pathType: Prefix
-           backend:
-             service:
-               name: nginx-proxy  # Replace with your actual service name if different
-               port:
-                 number: 80
+        helm_quiet upgrade --install "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" --create-namespace -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: https://${DOMAIN}/dex
 EOF
 
-        echo "Ingress $INGRESS_NAME has been created/updated."
+        echo_info "Ingress $INGRESS_NAME has been created/updated."
     }
 
     # Function to retrieve Load Balancer DNS Name with polling
     get_load_balancer_dns() {
-        echo "Retrieving Load Balancer DNS name..."
+        echo_info "Retrieving Load Balancer DNS name..."
         local attempt=1
         while [[ $attempt -le $CHECK_COUNT_LB ]]; do
             LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
             if [[ -n "$LB_DNS" ]]; then
-                echo "Load Balancer DNS: $LB_DNS"
+                echo_info "Load Balancer DNS: $LB_DNS"
                 return 0
             else
-                echo "Attempt $attempt/$CHECK_COUNT_LB: Load Balancer DNS not available yet. Waiting for $CHECK_INTERVAL_LB seconds..."
+                echo_info "Attempt $attempt/$CHECK_COUNT_LB: Load Balancer DNS not available yet. Waiting for $CHECK_INTERVAL_LB seconds..."
                 ((attempt++))
                 sleep "$CHECK_INTERVAL_LB"
             fi
@@ -354,17 +418,17 @@ EOF
         local arn=$1
         local attempts=0
 
-        echo "Starting to monitor the certificate status. This may take some time..."
+        echo_info "Starting to monitor the certificate status. This may take some time..."
 
         while [[ $attempts -lt $CHECK_COUNT_CERT ]]; do
             STATUS=$(check_certificate_status "$arn")
-            echo "Certificate Status: $STATUS"
+            echo_info "Certificate Status: $STATUS"
 
             if [[ "$STATUS" == "ISSUED" ]]; then
-                echo "Certificate is now ISSUED."
+                echo_info "Certificate is now ISSUED."
                 return 0
             elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
-                echo "Certificate is still PENDING_VALIDATION. Waiting for $CHECK_INTERVAL_CERT seconds before retrying..."
+                echo_info "Certificate is still PENDING_VALIDATION. Waiting for $CHECK_INTERVAL_CERT seconds before retrying..."
                 ((attempts++))
                 sleep "$CHECK_INTERVAL_CERT"
             else
@@ -380,16 +444,16 @@ EOF
     # Main Execution Flow within setup_with_domain_and_ssl
     # Check if terraform exists and retrieve the region, fallback to AWS CLI if terraform is not available
     if [ "$INFRA_TOOL" == "terraform" ]; then
-        echo "Retrieving AWS region from Terraform outputs..."
+        echo_info "Retrieving AWS region from Terraform outputs..."
         REGION=$("$INFRA_TOOL" output -raw aws_region)
     else
-        echo "Retrieving AWS region from OpenTofu outputs..."
+        echo_info "Retrieving AWS region from OpenTofu outputs..."
         REGION=$("$INFRA_TOOL" output -raw aws_region)
     fi
 
     # Fallback to AWS CLI configuration if REGION is empty
     if [[ -z "$REGION" ]]; then
-        echo "Retrieving AWS region from AWS CLI configuration..."
+        echo_info "Retrieving AWS region from AWS CLI configuration..."
         REGION=$(aws configure get region)
     fi
 
@@ -400,21 +464,21 @@ EOF
         exit 1
     fi
 
-    echo "Using AWS Region: $REGION"
+    echo_info "Using AWS Region: $REGION"
 
     # Check if ACM Certificate exists and its status
     get_certificate_arn
 
     if [[ -n "$CERTIFICATE_ARN" ]]; then
         STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
-        echo "Certificate Status: $STATUS"
+        echo_info "Certificate Status: $STATUS"
         if [[ "$STATUS" == "ISSUED" ]]; then
-            echo "Existing ACM certificate is ISSUED. Proceeding to create/update Ingress."
+            echo_info "Existing ACM certificate is ISSUED. Proceeding to create/update Ingress."
         elif [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
-            echo "Existing ACM certificate is PENDING_VALIDATION."
+            echo_info "Existing ACM certificate is PENDING_VALIDATION."
             get_validation_records "$CERTIFICATE_ARN"
             prompt_cname_validation_creation
-            echo "Waiting for ACM certificate to be issued..."
+            echo_info "Waiting for ACM certificate to be issued..."
             wait_for_certificate_issuance "$CERTIFICATE_ARN"
         else
             echo_error "Certificate status is '$STATUS'. Exiting."
@@ -431,15 +495,15 @@ EOF
         fi
 
         STATUS=$(check_certificate_status "$CERTIFICATE_ARN")
-        echo "Certificate Status: $STATUS"
+        echo_info "Certificate Status: $STATUS"
 
         if [[ "$STATUS" == "PENDING_VALIDATION" ]]; then
             get_validation_records "$CERTIFICATE_ARN"
             prompt_cname_validation_creation
-            echo "Waiting for ACM certificate to be issued..."
+            echo_info "Waiting for ACM certificate to be issued..."
             wait_for_certificate_issuance "$CERTIFICATE_ARN"
         elif [[ "$STATUS" == "ISSUED" ]]; then
-            echo "Certificate is already ISSUED."
+            echo_info "Certificate is already ISSUED."
         else
             echo_error "Certificate status is '$STATUS'. Exiting."
             exit 1
@@ -447,6 +511,7 @@ EOF
     fi
 
     # Create or Update Ingress with SSL
+    echo_info "Configuring Helm with hostname and SSL. This step may take 3-5 minutes..."
     create_ingress
 
     # Retrieve Load Balancer DNS with polling
@@ -489,50 +554,31 @@ setup_with_domain_no_ssl() {
 
     # Function to create Ingress without SSL
     create_ingress_no_ssl() {
-        echo "Creating or updating Kubernetes Ingress: $INGRESS_NAME in namespace: $NAMESPACE"
+        echo_info "Creating or updating Kubernetes Ingress: $INGRESS_NAME in namespace: $NAMESPACE"
 
-        kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
- namespace: $NAMESPACE
- name: $INGRESS_NAME
- annotations:
-   alb.ingress.kubernetes.io/scheme: internet-facing
-   alb.ingress.kubernetes.io/target-type: ip
-   alb.ingress.kubernetes.io/backend-protocol: HTTP
-   alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-   kubernetes.io/ingress.class: alb
-spec:
- ingressClassName: alb
- rules:
-   - host: "$DOMAIN"
-     http:
-       paths:
-         - path: /
-           pathType: Prefix
-           backend:
-             service:
-               name: nginx-proxy  # Replace with your actual service name if different
-               port:
-                 number: 80
+        helm_quiet upgrade --install "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" --create-namespace -f - <<EOF
+global:
+  domain: ${DOMAIN}
+dex:
+  config:
+    issuer: http://${DOMAIN}/dex
 EOF
 
-        echo "Ingress $INGRESS_NAME has been created/updated."
+        echo_info "Ingress $INGRESS_NAME has been created/updated."
     }
 
     # Function to retrieve Load Balancer DNS Name with polling
     get_load_balancer_dns_no_ssl() {
-        echo "Retrieving Load Balancer DNS name..."
+        echo_info "Retrieving Load Balancer DNS name..."
         local attempt=1
         while [[ $attempt -le $CHECK_COUNT_LB ]]; do
             LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
             if [[ -n "$LB_DNS" ]]; then
-                echo "Load Balancer DNS: $LB_DNS"
+                echo_info "Load Balancer DNS: $LB_DNS"
                 return 0
             else
-                echo "Attempt $attempt/$CHECK_COUNT_LB: Load Balancer DNS not available yet. Waiting for $CHECK_INTERVAL_LB seconds..."
+                echo_info "Attempt $attempt/$CHECK_COUNT_LB: Load Balancer DNS not available yet. Waiting for $CHECK_INTERVAL_LB seconds..."
                 ((attempt++))
                 sleep "$CHECK_INTERVAL_LB"
             fi
@@ -564,16 +610,16 @@ EOF
     # Main Execution Flow within setup_with_domain_no_ssl
     # Check if terraform exists and retrieve the region, fallback to AWS CLI if terraform is not available
     if [ "$INFRA_TOOL" == "terraform" ]; then
-        echo "Retrieving AWS region from Terraform outputs..."
+        echo_info "Retrieving AWS region from Terraform outputs..."
         REGION=$("$INFRA_TOOL" output -raw aws_region)
     else
-        echo "Retrieving AWS region from OpenTofu outputs..."
+        echo_info "Retrieving AWS region from OpenTofu outputs..."
         REGION=$("$INFRA_TOOL" output -raw aws_region)
     fi
 
     # Fallback to AWS CLI configuration if REGION is empty
     if [[ -z "$REGION" ]]; then
-        echo "Retrieving AWS region from AWS CLI configuration..."
+        echo_info "Retrieving AWS region from AWS CLI configuration..."
         REGION=$(aws configure get region)
     fi
 
@@ -584,9 +630,10 @@ EOF
         exit 1
     fi
 
-    echo "Using AWS Region: $REGION"
+    echo_info "Using AWS Region: $REGION"
 
     # Create or Update Ingress without SSL
+    echo_info "Configuring Helm with hostname without SSL. This step may take 3-5 minutes..."
     create_ingress_no_ssl
 
     # Retrieve Load Balancer DNS with polling
@@ -596,162 +643,30 @@ EOF
     prompt_cname_domain_creation_no_ssl
 }
 
-# -----------------------------
-# Update Application Functions
-# -----------------------------
-
-# Function to retrieve DOMAIN, CERTIFICATE_ARN, LB_DNS, and LISTEN_PORTS from Ingress
-get_ingress_details() {
-    echo "Retrieving Ingress details from Kubernetes..."
-
-    # Get DOMAIN from the Ingress rules
-    DOMAIN=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
-
-    if [[ -z "$DOMAIN" ]]; then
-        echo_error "Unable to retrieve DOMAIN from Ingress rules."
-        exit 1
-    fi
-    echo "DOMAIN: $DOMAIN"
-
-    # Get CERTIFICATE_ARN from Ingress annotations
-    CERTIFICATE_ARN=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.alb\.ingress\.kubernetes\.io/certificate-arn}')
-
-    if [[ -z "$CERTIFICATE_ARN" ]]; then
-        echo_error "Unable to retrieve CERTIFICATE_ARN from Ingress annotations."
-        exit 1
-    fi
-    echo "CERTIFICATE_ARN: $CERTIFICATE_ARN"
-
-    # Get Load Balancer DNS from Ingress status
-    LB_DNS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-
-    if [[ -z "$LB_DNS" ]]; then
-        echo_error "Load Balancer DNS not available yet. Ensure Ingress is properly deployed."
-        exit 1
-    fi
-    echo "Load Balancer DNS: $LB_DNS"
-
-    # Get Listen Ports from Ingress annotations
-    LISTEN_PORTS=$(kubectl get ingress "$INGRESS_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.annotations.alb\.ingress\.kubernetes\.io/listen-ports}')
-
-    if [[ -z "$LISTEN_PORTS" ]]; then
-        echo_error "Unable to retrieve LISTEN_PORTS from Ingress annotations."
-        exit 1
-    fi
-    echo "Listen Ports: $LISTEN_PORTS"
-}
-
-# Function to determine the protocol (http or https) based on listen-ports
-determine_protocol() {
-    echo "Determining protocol based on Ingress listen ports..."
-
-    # Check if HTTPS is present in the listen ports
-    if echo "$LISTEN_PORTS" | grep -q '"HTTPS"'; then
-        PROTOCOL="https"
-    else
-        PROTOCOL="http"
-    fi
-
-    echo "Determined Protocol: $PROTOCOL"
-}
-
-# Function to check DNS resolution without dig
-check_dns_resolution() {
-    echo "Checking if $DOMAIN is resolving correctly..."
-
-    # Use nslookup if available, otherwise use host, otherwise use getent
-    if command -v nslookup &> /dev/null; then
-        RESOLVED=$(nslookup "$DOMAIN" | awk '/name = / {print $NF}' | sed 's/\.$//')
-    elif command -v host &> /dev/null; then
-        RESOLVED=$(host "$DOMAIN" | awk '/alias for / {print $NF}' | sed 's/\.$//')
-    elif command -v getent &> /dev/null; then
-        RESOLVED=$(getent hosts "$DOMAIN" | awk '{print $1}')
-    else
-        echo_error "No suitable DNS resolution command found (nslookup, host, getent). Please install one."
-        return 1
-    fi
-
-    if [[ -z "$RESOLVED" ]]; then
-        echo_error "$DOMAIN is not resolving correctly."
-        return 1
-    fi
-
-    echo "$DOMAIN is resolving to: $RESOLVED"
-    echo "Ensure that $DOMAIN is correctly pointing to your Load Balancer or proxy service (e.g., Cloudflare)."
-
-    return 0
-}
-
-# Function to check DNS resolution with retries and option to skip
-check_dns_resolution_with_retries() {
-    local max_attempts=12
-    local interval=30
-    local attempt=1
-
-    while [[ $attempt -le $max_attempts ]]; do
-        echo "Attempt $attempt/$max_attempts: Checking DNS resolution for $DOMAIN..."
-        if check_dns_resolution; then
-            echo "DNS resolution successful."
-            return 0
-        else
-            echo "DNS resolution failed."
-        fi
-
-        if [[ $attempt -lt $max_attempts ]]; then
-            echo "Waiting for $interval seconds before retrying..."
-            sleep "$interval"
-        fi
-
-        ((attempt++))
-    done
-
-    echo_error "DNS resolution for $DOMAIN failed after $max_attempts attempts."
-
-    # Prompt user to skip or exit
-    while true; do
-        read -rp "Do you want to skip DNS resolution check and proceed? (y/N): " choice
-        case "$choice" in
-            y|Y )
-                echo "Skipping DNS resolution check."
-                return 0
-                ;;
-            n|N|"" )
-                echo "Exiting script due to DNS resolution failure."
-                exit 1
-                ;;
-            * )
-                echo "Invalid input. Please enter 'y' or 'n'."
-                ;;
-        esac
-    done
-}
-
 # Function to update Helm release
 update_helm_release() {
-    echo "Updating Helm release: $HELM_RELEASE with domain: $DOMAIN and protocol: $PROTOCOL"
+    echo_info "Updating Helm release: $HELM_RELEASE with domain: $DOMAIN and protocol: $PROTOCOL"
+    echo_info "This step may take 3-5 minutes..."
 
-    helm upgrade "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" -f <(cat <<EOF
+    helm_quiet upgrade "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" -f - <<EOF
 global:
- domain: ${DOMAIN}
+  domain: ${DOMAIN}
 dex:
- config:
-   issuer: ${PROTOCOL}://${DOMAIN}/dex
+  config:
+    issuer: ${PROTOCOL}://${DOMAIN}/dex
 EOF
-)
-    echo "Helm release $HELM_RELEASE has been updated."
+    echo_info "Helm release $HELM_RELEASE has been updated."
 }
 
 # Function to restart Kubernetes pods
 restart_pods() {
-    echo "Restarting relevant Kubernetes pods to apply changes..."
+    echo_info "Restarting OpenGovernance Pods to Apply Changes."
 
-    # Restart nginx-proxy pods
-    kubectl delete pods -l app=nginx-proxy -n "$NAMESPACE"
+    # Restart only the specified deployments
+    kubectl rollout restart deployment nginx-proxy -n "$NAMESPACE"
+    kubectl rollout restart deployment opengovernance-dex -n "$NAMESPACE"
 
-    # Restart dex pods
-    kubectl delete pods -l app.kubernetes.io/name=dex -n "$NAMESPACE"
-
-    echo "Pods are restarting..."
+    echo_info "Pods restarted successfully."
 }
 
 # -----------------------------
@@ -762,14 +677,32 @@ echo "======================================="
 echo "Starting OpenGovernance Deployment Script"
 echo "======================================="
 
-# Step 1: Check if required commands are installed
-echo "Checking for required tools..."
+# Parse command-line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --debug)
+            DEBUG_MODE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            echo_error "Unknown parameter passed: $1"
+            usage
+            ;;
+    esac
+done
+
+# Step 1: Check if required commands are installed and prerequisites are met
+echo_info "Checking for required tools and prerequisites..."
 check_command "git"
 check_terraform_or_opentofu
 check_command "kubectl"
 check_command "aws"
 check_command "jq"
 check_command "helm"
+check_prerequisites
 
 # Step 2: Check AWS CLI authentication
 check_aws_auth
@@ -779,43 +712,31 @@ clone_repository
 deploy_infrastructure
 
 # Step 4: Run Helm install without any configuration
-echo "Running Helm install without any configuration..."
-helm install "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" --create-namespace
+echo_info "Installing Helm chart. This step may take 5-7 minutes..."
+helm_quiet install "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" --create-namespace
 
-echo "Helm install completed."
+echo_info "Helm install completed."
 
-# Step 5: Prompt user for OpenGovernance setup options
+# Step 5: Check pods and migrator jobs
+echo_info "Checking OpenGovernance pod and migrator job readiness..."
+check_pods_and_jobs
+
+# Step 6: Prompt user for OpenGovernance setup options
 prompt_user_options
 configure_opengovernance
 
-# If the user chose to configure with hostname, proceed with application update
+# Step 7: Restart relevant Kubernetes pods to apply changes
 if [[ "${SETUP_DOMAIN_AND_SSL:-0}" -eq 1 || "${SETUP_DOMAIN_NO_SSL:-0}" -eq 1 ]]; then
-    echo "======================================="
-    echo "Starting Application Update Process"
-    echo "======================================="
-
-    # Retrieve Ingress details
-    get_ingress_details
-
-    # Determine protocol based on Ingress listen ports
-    determine_protocol
-
-    # Check DNS resolution if not skipped
-    check_dns_resolution_with_retries
-
-    # Update Helm release with new configurations
-    update_helm_release
-
-    # Restart relevant Kubernetes pods to apply changes
     restart_pods
-
-    echo ""
-    echo "======================================="
-    echo "Application Update Completed Successfully!"
-    echo "======================================="
-    echo "Your service should now be fully operational at ${PROTOCOL}://${DOMAIN}"
-    echo "======================================="
 fi
 
-# If the user chose to connect as is, instructions have already been provided
-echo "Deployment script completed."
+echo ""
+echo "======================================="
+echo "Deployment Script Completed Successfully!"
+echo "======================================="
+if [[ "${SETUP_DOMAIN_AND_SSL:-0}" -eq 1 || "${SETUP_DOMAIN_NO_SSL:-0}" -eq 1 ]]; then
+    echo "Your service should now be fully operational at ${PROTOCOL}://${DOMAIN}"
+fi
+echo "======================================="
+
+exit 0
