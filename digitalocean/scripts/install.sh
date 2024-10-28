@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # -----------------------------
@@ -322,39 +323,48 @@ function check_prerequisites() {
   }
 
   # Function to handle existing cluster scenarios
+  # Updated handle_existing_cluster() function to merge prompts into a single question
+
   function handle_existing_cluster() {
     echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
-    # Prompt 1: Do you want to delete the existing cluster and recreate it?
-    if prompt_yes_no "Do you want to delete the existing '$KUBE_CLUSTER_NAME' cluster and recreate it?"; then
-      echo_info "Deleting existing cluster '$KUBE_CLUSTER_NAME'..."
-      doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --wait
-      echo_info "Existing cluster deleted."
+    echo ""
+    echo "Please choose an option:"
+    echo "1) Delete the existing cluster and recreate it"
+    echo "2) Connect to the existing cluster"
+    echo "3) Create a new Kubernetes cluster with a different name"
+    echo "4) Exit"
 
-      # Proceed with cluster creation
-      create_cluster "$KUBE_CLUSTER_NAME"
-    else
-      # Prompt 2: Do you want to connect to the existing cluster?
-      if prompt_yes_no "Do you want to connect to the existing '$KUBE_CLUSTER_NAME' cluster?"; then
+    read -p "Enter the number corresponding to your choice: " choice < /dev/tty
+
+    case "$choice" in
+      1)
+        echo_info "Deleting existing cluster '$KUBE_CLUSTER_NAME'..."
+        doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --wait
+        echo_info "Existing cluster deleted."
+        create_cluster "$KUBE_CLUSTER_NAME"
+        ;;
+      2)
         echo_info "Configuring kubectl to connect to the existing '$KUBE_CLUSTER_NAME' cluster..."
         doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
         echo_info "'kubectl' is now configured to connect to '$KUBE_CLUSTER_NAME'."
-      else
-        # Prompt 3: Do you want to create a new cluster with a different name?
-        if prompt_yes_no "Do you want to create a new Kubernetes cluster with a different name?"; then
-          local new_cluster_name
-          new_cluster_name=$(prompt_new_cluster_name)
-          create_cluster "$new_cluster_name"
-        else
-          echo_error "Please configure kubectl to connect to an existing Kubernetes cluster and try again."
-          echo "Refer to the following documentation for assistance:"
-          echo "1. OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
-          echo "2. Connect to an existing cluster: https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
-          exit 1
-        fi
-      fi
-    fi
+        ;;
+      3)
+        local new_cluster_name
+        new_cluster_name=$(prompt_new_cluster_name)
+        create_cluster "$new_cluster_name"
+        ;;
+      4)
+        echo_info "Exiting the script."
+        exit 0
+        ;;
+      *)
+        echo_error "Invalid choice. Exiting."
+        exit 1
+        ;;
+    esac
   }
+
 
   # Function to create a Kubernetes cluster with a given name
   function create_cluster() {
@@ -435,10 +445,10 @@ function cleanup_failed_install() {
   
   # Uninstall the Helm release quietly
   helm_quiet uninstall opengovernance -n "$KUBE_NAMESPACE" || echo_error "Failed to uninstall Helm release."
-
+  
   # Delete the namespace
   kubectl delete namespace "$KUBE_NAMESPACE" || echo_error "Failed to delete namespace."
-
+  
   echo_info "Cleanup of failed OpenGovernance installation completed."
 }
 
@@ -446,13 +456,15 @@ function cleanup_failed_install() {
 function check_opengovernance_installation() {
   # Check if OpenGovernance Helm repo is added and OpenGovernance is installed
   if helm repo list | grep -qw "opengovernance" && helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
-    # Check Helm release status
+    # Ensure jq is installed
+    if ! command -v jq &> /dev/null; then
+      echo_error "jq is not installed. Please install jq to enable JSON parsing."
+      exit 1
+    fi
+
+    # Check Helm release status using jq
     local helm_release_status
-    helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o yaml | awk '
-  BEGIN { status="unknown" }
-  /status:/ { sub(/^status:[[:space:]]*/, "", $0); status=$0 }
-  END { print status }
-')
+    helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o json | jq -r '.[0].status // "unknown"')
 
     if [ "$helm_release_status" == "deployed" ]; then
       echo_info "Checking for any existing OpenGovernance Installation...Existing installation found."
@@ -499,11 +511,11 @@ function check_opengovernance_config() {
 
   # Extract HELM_VALUES_DEX_ISSUER using awk
   HELM_VALUES_DEX_ISSUER=$(echo "$CURRENT_HELM_VALUES" | awk '
-    /^dex:/ { in_dex=1; next }
-    /^global:/ { in_dex=0 }
-    in_dex && /^[[:space:]]+config:/ { in_config=1; next }
-    in_config && /^[[:space:]]+issuer:/ {
-      sub(/^[[:space:]]*issuer:[[:space:]]*/, "")
+    /^\s*dex:/ { in_dex=1; next }
+    /^\s*global:/ { in_dex=0 }
+    in_dex && /^\s*config:/ { in_config=1; next }
+    in_config && /^\s*issuer:/ {
+      sub(/^\s*issuer:[[:space:]]*/, "")
       print
       exit
     }
@@ -762,7 +774,7 @@ function install_opengovernance_no_ingress() {
   echo_info "Setting up port-forwarding to access OpenGovernance locally."
 
   # Start port-forwarding in the background
-  kubectl port-forward -n "$KUBE_NAMESPACE" svc/nginx-proxy 8080:80 &
+  kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 &
   PORT_FORWARD_PID=$!
 
   # Give port-forwarding some time to establish
