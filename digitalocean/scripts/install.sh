@@ -239,20 +239,7 @@ function parse_args() {
   fi
 }
 
-# Function to get installation type description
-function get_install_type_description() {
-  local type="$1"
-  case $type in
-    1) echo "Install with HTTPS and Hostname (DNS records required after installation)" ;;
-    2) echo "Install without HTTPS (DNS records required after installation)" ;;
-    3) echo "Minimal Install (Access via public IP)" ;;
-    4) echo "Basic Install (No Ingress, use port-forwarding)" ;;
-    5) echo "Exit" ;;
-    *) echo "Unknown" ;;
-  esac
-}
-
-# Function to choose installation type in interactive mode
+# Function to choose installation type in interactive mode with "?" capability
 function choose_install_type() {
   echo_prompt ""
   echo_prompt "Select Installation Type:"
@@ -262,53 +249,91 @@ function choose_install_type() {
   echo_prompt "4) Basic Install (No Ingress, use port-forwarding)"
   echo_prompt "5) Exit"
 
-  # Prompt the user without a timeout to ensure it waits for input
-  echo_prompt -n "Enter the number corresponding to your choice [Default: 1]: "
-  read choice < /dev/tty  # Removed the '-t 10' timeout
+  while true; do
+    echo_prompt -n "Enter the number corresponding to your choice [Default: 1] (Press '?' to view descriptions): "
+    read choice < /dev/tty
 
-  # If no choice is made, default to 1
-  choice=${choice:-3}
+    # Handle "?" input to show descriptions
+    if [[ "$choice" == "?" ]]; then
+      echo_prompt ""
+      echo_prompt "Installation Type Descriptions:"
+      echo_prompt "1) Install with HTTPS and Hostname: Sets up OpenGovernance with HTTPS enabled and associates it with a specified hostname. Requires DNS records to point to the cluster."
+      echo_prompt "2) Install without HTTPS: Deploys OpenGovernance without SSL/TLS encryption. DNS records are still required."
+      echo_prompt "3) Minimal Install: Provides access to OpenGovernance via the cluster's public IP without setting up a hostname or HTTPS."
+      echo_prompt "4) Basic Install: Installs OpenGovernance without configuring an Ingress Controller. Access is managed through port-forwarding."
+      echo_prompt "5) Exit: Terminates the installation script."
+      echo_prompt ""
+      continue  # Re-prompt after displaying descriptions
+    fi
 
-  # Ensure the choice is within 1-5
-  if ! [[ "$choice" =~ ^[1-5]$ ]]; then
-    echo_prompt "Invalid option. Defaulting to 1) Install with HTTPS and Hostname."
-    choice=1
-  fi
+    # If no choice is made, default to 1
+    choice=${choice:-1}
 
-  echo_prompt ""
-  echo_prompt "You selected: $choice) $(get_install_type_description $choice)"
+    # Ensure the choice is within 1-5
+    if ! [[ "$choice" =~ ^[1-5]$ ]]; then
+      echo_prompt "Invalid option. Please enter a number between 1 and 5, or press '?' for descriptions."
+      continue
+    fi
 
-  # Set INSTALL_TYPE and possibly set ENABLE_HTTPS based on choice
-  case $choice in
-    1)
-      INSTALL_TYPE=1
-      ENABLE_HTTPS=true
-      ;;
-    2)
-      INSTALL_TYPE=2
-      ENABLE_HTTPS=false
-      ;;
-    3)
-      INSTALL_TYPE=3
-      ENABLE_HTTPS=false
-      ;;
-    4)
-      INSTALL_TYPE=4
-      ENABLE_HTTPS=false
-      ;;
-    5)
+    # Handle exit option
+    if [ "$choice" -eq 5 ]; then
       echo_info "Exiting the script."
       exit 0
-      ;;
-    *)
-      INSTALL_TYPE=1
-      ENABLE_HTTPS=true
-      ;;
-  esac
+    fi
+
+    echo_prompt ""
+    case $choice in
+      1)
+        INSTALL_TYPE=1
+        ENABLE_HTTPS=true
+        ;;
+      2)
+        INSTALL_TYPE=2
+        ENABLE_HTTPS=false
+        ;;
+      3)
+        INSTALL_TYPE=3
+        ENABLE_HTTPS=false
+        ;;
+      4)
+        INSTALL_TYPE=4
+        ENABLE_HTTPS=false
+        ;;
+      *)
+        INSTALL_TYPE=1
+        ENABLE_HTTPS=true
+        ;;
+    esac
+
+    echo_prompt "You selected: $choice) $(get_inline_install_type_description $choice)"
+    break
+  done
 
   # Inform user that installation will start shortly
   echo_info "Installation will start in 5 seconds..."
   sleep 5
+}
+
+# Function to get inline installation type description (since get_install_type_description() is removed)
+function get_inline_install_type_description() {
+  local type="$1"
+  case $type in
+    1)
+      echo "Install with HTTPS and Hostname (DNS records required after installation)"
+      ;;
+    2)
+      echo "Install without HTTPS (DNS records required after installation)"
+      ;;
+    3)
+      echo "Minimal Install (Access via public IP)"
+      ;;
+    4)
+      echo "Basic Install (No Ingress, use port-forwarding)"
+      ;;
+    *)
+      echo "Unknown"
+      ;;
+  esac
 }
 
 # Function to prompt the user with a yes/no question
@@ -530,20 +555,6 @@ function configure_email_and_domain() {
       usage
       ;;
   esac
-}
-
-# Function to clean up failed OpenGovernance installation
-function cleanup_failed_install() {
-  echo_error "OpenGovernance installation failed. Initiating cleanup..."
-  echo_info "Cleaning up failed installation..."
-  
-  # Uninstall the Helm release quietly
-  helm_quiet uninstall opengovernance -n "$KUBE_NAMESPACE" || echo_error "Failed to uninstall Helm release."
-  
-  # Delete the namespace
-  kubectl delete namespace "$KUBE_NAMESPACE" || echo_error "Failed to delete namespace."
-  
-  echo_info "Cleanup of failed OpenGovernance installation completed."
 }
 
 # Function to check OpenGovernance health status
