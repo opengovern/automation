@@ -265,12 +265,23 @@ function check_prerequisites() {
         # Wait for nodes to become ready
         check_ready_nodes
       else
-        echo_error "doctl is installed but not configured. Please configure doctl or connect kubectl to your cluster."
+        echo_error "doctl is installed but not configured."
+        echo ""
+        echo "Please configure doctl or connect kubectl to your Kubernetes cluster by following these steps:"
+        echo "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
+        echo "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
+        echo "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+        echo ""
         exit 1
       fi
     else
       echo_error "doctl is not installed."
-      echo "Please install doctl or connect kubectl to an existing Kubernetes cluster and try again."
+      echo ""
+      echo "Please install doctl or connect kubectl to an existing Kubernetes cluster by following these steps:"
+      echo "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
+      echo "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
+      echo "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+      echo ""
       exit 1
     fi
   fi
@@ -287,6 +298,7 @@ function check_prerequisites() {
 
   echo_info "Checking Prerequisites...Completed"
 }
+
 
 
 
