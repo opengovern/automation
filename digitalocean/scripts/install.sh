@@ -215,32 +215,80 @@ function choose_install_type() {
   sleep 5
 }
 
-# Function to check prerequisites
+# Function to check prerequisites and handle cluster creation if necessary
 function check_prerequisites() {
-  # Check if kubectl is connected to a cluster
-  if ! kubectl cluster-info > /dev/null 2>&1; then
-    echo_error "kubectl is not connected to a cluster."
-    echo "Please configure kubectl to connect to a Kubernetes cluster and try again."
+  # Function to check if there are at least three ready nodes, retrying every 30 seconds for up to 5 minutes
+  function check_ready_nodes() {
+    local attempts=0
+    local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
+    local sleep_time=30
+
+    while [ $attempts -lt $max_attempts ]; do
+      READY_NODES=$(kubectl get nodes --no-headers | grep -c ' Ready ')
+      if [ "$READY_NODES" -ge 3 ]; then
+        echo_info "Required nodes are ready. ($READY_NODES nodes)"
+        return 0
+      fi
+
+      attempts=$((attempts + 1))
+      echo_info "Waiting for nodes to become ready... ($attempts/$max_attempts)"
+      sleep $sleep_time
+    done
+
+    echo_error "At least three Kubernetes nodes must be ready, but only $READY_NODES node(s) are ready after 5 minutes."
     exit 1
+  }
+
+  # Check if kubectl is connected to a cluster
+  if kubectl cluster-info > /dev/null 2>&1; then
+    echo_info "kubectl is connected to a cluster."
+  else
+    echo_error "kubectl is not connected to a cluster."
+
+    # Check if doctl is installed
+    if command -v doctl &> /dev/null; then
+      echo_info "doctl is installed."
+
+      # Check if doctl is configured
+      if doctl account get > /dev/null 2>&1; then
+        echo_info "doctl is configured."
+
+        # Inform the user about cluster creation with a 10-second timer
+        echo_info "A DigitalOcean Kubernetes cluster named 'opengovernance' will be created in 10 seconds..."
+        sleep 10
+
+        # Create the DigitalOcean Kubernetes cluster
+        echo_info "Creating DigitalOcean Kubernetes cluster 'opengovernance'..."
+        doctl kubernetes cluster create opengovernance --region nyc3 \
+          --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
+
+        # Wait for nodes to become ready
+        check_ready_nodes
+      else
+        echo_error "doctl is installed but not configured. Please configure doctl or connect kubectl to your cluster."
+        exit 1
+      fi
+    else
+      echo_error "doctl is not installed."
+      echo "Please install doctl or connect kubectl to an existing Kubernetes cluster and try again."
+      exit 1
+    fi
   fi
 
+  # At this point, kubectl is connected to a cluster
   # Check if Helm is installed
   if ! command -v helm &> /dev/null; then
-    echo_error "Helm is not installed."
-    echo "Please install Helm and try again."
+    echo_error "Helm is not installed. Please install Helm and try again."
     exit 1
   fi
 
   # Check if there are at least three ready nodes
-  READY_NODES=$(kubectl get nodes --no-headers | grep -c ' Ready ')
-  if [ "$READY_NODES" -lt 3 ]; then
-    echo_error "At least three Kubernetes nodes must be ready. Currently, $READY_NODES node(s) are ready."
-    exit 1
-  fi
+  check_ready_nodes
 
-  # If all checks pass
   echo_info "Checking Prerequisites...Completed"
 }
+
+
 
 # Function to clean up failed OpenGovernance installation
 function cleanup_failed_install() {
