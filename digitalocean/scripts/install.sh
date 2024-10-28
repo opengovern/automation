@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # -----------------------------
 # Configuration Variables
@@ -105,6 +105,7 @@ function validate_email() {
 # Function to parse command-line arguments
 function parse_args() {
   SILENT_INSTALL=false
+  INSTALL_TYPE_SPECIFIED=false  # Flag to check if install type was specified
   while [[ "$#" -gt 0 ]]; do
     case $1 in
       --silent-install)
@@ -121,6 +122,7 @@ function parse_args() {
         ;;
       -t|--type)
         INSTALL_TYPE="$2"
+        INSTALL_TYPE_SPECIFIED=true
         shift 2
         ;;
       --kube-namespace)
@@ -145,61 +147,96 @@ function parse_args() {
     esac
   done
 
-  # Set default installation type if not provided
-  INSTALL_TYPE=${INSTALL_TYPE:-1}
-
-  # Validate INSTALL_TYPE
-  if ! [[ "$INSTALL_TYPE" =~ ^[1-4]$ ]]; then
-    echo_error "Invalid installation type: $INSTALL_TYPE"
-    usage
-  fi
-
-  # Validate DOMAIN and EMAIL based on INSTALL_TYPE and SILENT_INSTALL
-  case $INSTALL_TYPE in
-    1)
-      # Install with HTTPS and Hostname
-      if [ "$SILENT_INSTALL" = true ]; then
-        if [ -z "$DOMAIN" ]; then
-          echo_error "Installation type 1 requires a DOMAIN in silent mode."
-          usage
-        else
-          validate_domain
-        fi
-
-        if [ -z "$EMAIL" ]; then
-          echo_error "Installation type 1 requires an EMAIL in silent mode."
-          usage
-        else
-          validate_email
-        fi
+  if [ "$SILENT_INSTALL" = true ]; then
+    if [ "$INSTALL_TYPE_SPECIFIED" = false ]; then
+      if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
+        INSTALL_TYPE=1
+        ENABLE_HTTPS=true
+        echo_info "Silent install: INSTALL_TYPE not specified. DOMAIN and EMAIL provided. Defaulting to Install with HTTPS and Hostname."
+      else
+        INSTALL_TYPE=3
+        ENABLE_HTTPS=false
+        echo_info "Silent install: INSTALL_TYPE not specified and DOMAIN/EMAIL not provided. Defaulting to Minimal Install (Access via public IP)."
       fi
-      ENABLE_HTTPS=true
-      ;;
-    2)
-      # Install without HTTPS
-      if [ "$SILENT_INSTALL" = true ]; then
-        if [ -z "$DOMAIN" ]; then
-          echo_error "Installation type 2 requires a DOMAIN in silent mode."
+    else
+      # INSTALL_TYPE was specified
+      # Set ENABLE_HTTPS based on INSTALL_TYPE
+      case $INSTALL_TYPE in
+        1)
+          ENABLE_HTTPS=true
+          ;;
+        2)
+          ENABLE_HTTPS=false
+          ;;
+        3)
+          ENABLE_HTTPS=false
+          ;;
+        4)
+          ENABLE_HTTPS=false
+          ;;
+        *)
+          echo_error "Invalid installation type: $INSTALL_TYPE"
           usage
-        else
-          validate_domain
-        fi
-      fi
-      ENABLE_HTTPS=false
-      ;;
-    3)
-      # Minimal Install
-      ENABLE_HTTPS=false
-      ;;
-    4)
-      # Basic Install with no Ingress
-      ENABLE_HTTPS=false
-      ;;
-    *)
-      echo_error "Unsupported installation type: $INSTALL_TYPE"
+          ;;
+      esac
+    fi
+  else
+    # Interactive mode
+    INSTALL_TYPE=${INSTALL_TYPE:-1}
+
+    # Validate INSTALL_TYPE
+    if ! [[ "$INSTALL_TYPE" =~ ^[1-4]$ ]]; then
+      echo_error "Invalid installation type: $INSTALL_TYPE"
       usage
-      ;;
-  esac
+    fi
+
+    # Validate DOMAIN and EMAIL based on INSTALL_TYPE
+    case $INSTALL_TYPE in
+      1)
+        # Install with HTTPS and Hostname
+        if [ "$SILENT_INSTALL" = true ]; then
+          if [ -z "$DOMAIN" ]; then
+            echo_error "Installation type 1 requires a DOMAIN in silent mode."
+            usage
+          else
+            validate_domain
+          fi
+
+          if [ -z "$EMAIL" ]; then
+            echo_error "Installation type 1 requires an EMAIL in silent mode."
+            usage
+          else
+            validate_email
+          fi
+        fi
+        ENABLE_HTTPS=true
+        ;;
+      2)
+        # Install without HTTPS
+        if [ "$SILENT_INSTALL" = true ]; then
+          if [ -z "$DOMAIN" ]; then
+            echo_error "Installation type 2 requires a DOMAIN in silent mode."
+            usage
+          else
+            validate_domain
+          fi
+        fi
+        ENABLE_HTTPS=false
+        ;;
+      3)
+        # Minimal Install
+        ENABLE_HTTPS=false
+        ;;
+      4)
+        # Basic Install with no Ingress
+        ENABLE_HTTPS=false
+        ;;
+      *)
+        echo_error "Unsupported installation type: $INSTALL_TYPE"
+        usage
+        ;;
+    esac
+  fi
 }
 
 # Function to get installation type description
@@ -225,12 +262,12 @@ function choose_install_type() {
   echo_prompt "4) Basic Install (No Ingress, use port-forwarding)"
   echo_prompt "5) Exit"
 
-  # Prompt the user, with default 1 after timeout or pressing Enter
+  # Prompt the user without a timeout to ensure it waits for input
   echo_prompt -n "Enter the number corresponding to your choice [Default: 1]: "
-  read -t 10 choice < /dev/tty || choice=1
+  read choice < /dev/tty  # Removed the '-t 10' timeout
 
   # If no choice is made, default to 1
-  choice=${choice:-1}
+  choice=${choice:-3}
 
   # Ensure the choice is within 1-5
   if ! [[ "$choice" =~ ^[1-5]$ ]]; then
@@ -344,125 +381,34 @@ function check_prerequisites() {
     check_ready_nodes
   }
 
-  # Function to handle existing cluster scenario
-  function handle_existing_cluster() {
-    echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
-
-    echo_prompt ""
-    echo_prompt "Please choose an option:"
-    echo_prompt "1) Delete the existing cluster and recreate it"
-    echo_prompt "2) Connect to the existing cluster"
-    echo_prompt "3) Create a new Kubernetes cluster with a different name"
-    echo_prompt "4) Exit"
-
-    echo_prompt -n "Enter the number corresponding to your choice: "
-    read choice < /dev/tty
-
-    case "$choice" in
-      1)
-        echo_info "Deleting existing cluster '$KUBE_CLUSTER_NAME'..."
-        doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --dangerous
-        echo_info "Existing cluster deleted."
-
-        # Handle DOMAIN and EMAIL
-        if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
-          echo_info "Reusing existing DOMAIN and EMAIL."
-        else
-          echo_prompt ""
-          echo_prompt "Current DOMAIN: ${DOMAIN:-Not Set}"
-          echo_prompt "Current EMAIL: ${EMAIL:-Not Set}"
-          if prompt_yes_no "Do you want to reuse the existing DOMAIN and EMAIL?"; then
-            echo_info "Reusing existing DOMAIN and EMAIL."
-          else
-            # Prompt for new DOMAIN and EMAIL
-            while true; do
-              echo_prompt -n "Enter your new domain for OpenGovernance: "
-              read DOMAIN < /dev/tty
-              if [ -z "$DOMAIN" ]; then
-                echo_error "Domain cannot be empty."
-                continue
-              fi
-              validate_domain
-              break
-            done
-
-            while true; do
-              echo_prompt -n "Enter your new email for Let's Encrypt: "
-              read EMAIL < /dev/tty
-              if [ -z "$EMAIL" ]; then
-                echo_error "Email cannot be empty."
-                continue
-              fi
-              validate_email
-              break
-            done
-          fi
-        fi
-
-        create_cluster "$KUBE_CLUSTER_NAME"
-        ;;
-      2)
-        echo_info "Configuring kubectl to connect to the existing '$KUBE_CLUSTER_NAME' cluster..."
-
-        # Handle DOMAIN and EMAIL
-        if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
-          echo_info "Reusing existing DOMAIN and EMAIL."
-        else
-          echo_prompt ""
-          echo_prompt "Current DOMAIN: ${DOMAIN:-Not Set}"
-          echo_prompt "Current EMAIL: ${EMAIL:-Not Set}"
-          if prompt_yes_no "Do you want to reuse the existing DOMAIN and EMAIL?"; then
-            echo_info "Reusing existing DOMAIN and EMAIL."
-          else
-            # Prompt for new DOMAIN and EMAIL
-            while true; do
-              echo_prompt -n "Enter your new domain for OpenGovernance: "
-              read DOMAIN < /dev/tty
-              if [ -z "$DOMAIN" ]; then
-                echo_error "Domain cannot be empty."
-                continue
-              fi
-              validate_domain
-              break
-            done
-
-            while true; do
-              echo_prompt -n "Enter your new email for Let's Encrypt: "
-              read EMAIL < /dev/tty
-              if [ -z "$EMAIL" ]; then
-                echo_error "Email cannot be empty."
-                continue
-              fi
-              validate_email
-              break
-            done
-          fi
-        fi
-
-        doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-        echo_info "'kubectl' is now configured to connect to '$KUBE_CLUSTER_NAME'."
-        ;;
-      3)
-        local new_cluster_name
-        new_cluster_name=$(prompt_new_cluster_name)
-
-        # Reset DOMAIN and EMAIL unless they were passed as arguments
-        if [ -z "$DOMAIN" ] && [ -z "$EMAIL" ]; then
-          DOMAIN=""
-          EMAIL=""
-        fi
-
-        create_cluster "$new_cluster_name"
-        ;;
-      4)
-        echo_info "Exiting the script."
-        exit 0
-        ;;
-      *)
-        echo_error "Invalid choice. Exiting."
+  # Function to check if OpenGovernance is installed
+  function check_opengovernance_installation() {
+    # Check if OpenGovernance Helm repo is added and OpenGovernance is installed
+    if helm repo list | grep -qw "opengovernance" && helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
+      # Ensure jq is installed
+      if ! command -v jq &> /dev/null; then
+        echo_error "jq is not installed. Please install jq to enable JSON parsing."
         exit 1
-        ;;
-    esac
+      fi
+
+      # Check Helm release status using jq
+      local helm_release_status
+      helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o json | jq -r '.[0].status // "unknown"')
+
+      if [ "$helm_release_status" == "deployed" ]; then
+        echo_error "An existing OpenGovernance installation was found. Unable to proceed."
+        exit 1  # Exit the script with an error
+      elif [ "$helm_release_status" == "failed" ]; then
+        echo_error "OpenGovernance is installed but not in 'deployed' state (current status: $helm_release_status)."
+        exit 1
+      else
+        echo_error "OpenGovernance is in an unexpected state ('$helm_release_status')."
+        exit 1
+      fi
+    else
+      echo_info "Checking for any existing OpenGovernance Installation...No existing Installations found."
+      return 1
+    fi
   }
 
   # Check if kubectl is connected to a cluster
@@ -481,8 +427,8 @@ function check_prerequisites() {
 
         # Check if a cluster with the specified name already exists
         if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$KUBE_CLUSTER_NAME$"; then
-          # Handle existing cluster
-          handle_existing_cluster
+          echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists. Unable to proceed."
+          exit 1
         else
           # Create the cluster since it doesn't exist
           create_cluster "$KUBE_CLUSTER_NAME"
@@ -598,42 +544,6 @@ function cleanup_failed_install() {
   kubectl delete namespace "$KUBE_NAMESPACE" || echo_error "Failed to delete namespace."
   
   echo_info "Cleanup of failed OpenGovernance installation completed."
-}
-
-# Function to check if OpenGovernance is installed
-function check_opengovernance_installation() {
-  # Check if OpenGovernance Helm repo is added and OpenGovernance is installed
-  if helm repo list | grep -qw "opengovernance" && helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
-    # Ensure jq is installed
-    if ! command -v jq &> /dev/null; then
-      echo_error "jq is not installed. Please install jq to enable JSON parsing."
-      exit 1
-    fi
-
-    # Check Helm release status using jq
-    local helm_release_status
-    helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o json | jq -r '.[0].status // "unknown"')
-
-    if [ "$helm_release_status" == "deployed" ]; then
-      echo_info "Checking for any existing OpenGovernance Installation...Existing installation found."
-      APP_INSTALLED=true
-      return 0
-    elif [ "$helm_release_status" == "failed" ]; then
-      echo_error "OpenGovernance is installed but not in 'deployed' state (current status: $helm_release_status)."
-      cleanup_failed_install
-      APP_INSTALLED=false
-      return 1
-    else
-      echo_error "OpenGovernance is in an unexpected state ('$helm_release_status'). Attempting cleanup..."
-      cleanup_failed_install
-      APP_INSTALLED=false
-      return 1
-    fi
-  else
-    echo_info "Checking for any existing OpenGovernance Installation...No existing Installations found."
-    APP_INSTALLED=false
-    return 1
-  fi
 }
 
 # Function to check OpenGovernance health status
@@ -1272,95 +1182,9 @@ function run_installation_logic() {
       provide_port_forward_instructions
     fi
   else
-    # OpenGovernance is already installed, check its health
-    echo_info "OpenGovernance is already installed. Checking health status..."
-    check_opengovernance_health
-
-    if [ "$APP_HEALTHY" = false ]; then
-      # OpenGovernance has health issues, attempt to upgrade
-      echo_info "OpenGovernance has health issues. Attempting to upgrade."
-
-      # Perform upgrade based on INSTALL_TYPE
-      case $INSTALL_TYPE in
-        1)
-          install_opengovernance_with_https  # Upgrade with HTTPS and Hostname
-          ;;
-        2)
-          install_opengovernance_with_hostname_only  # Upgrade without HTTPS
-          ;;
-        3)
-          install_opengovernance_with_public_ip  # Minimal Install Upgrade
-          ;;
-        4)
-          install_opengovernance_no_ingress  # Basic Install Upgrade
-          ;;
-        *)
-          echo_error "Unsupported installation type: $INSTALL_TYPE"
-          exit 1
-          ;;
-      esac
-
-      # Re-check pod readiness after upgrade
-      check_pods_and_jobs
-
-      # Handle post-upgrade steps based on INSTALL_TYPE
-      if [ "$INSTALL_TYPE" -eq 1 ] || [ "$INSTALL_TYPE" -eq 2 ]; then
-        # a. Set up Ingress Controller
-        setup_ingress_controller
-        DEPLOY_SUCCESS=true
-
-        # b. Deploy Ingress resources
-        deploy_ingress_resources || DEPLOY_SUCCESS=false
-
-        # c. If HTTPS is enabled, set up Cert-Manager and Issuer
-        if [ "$ENABLE_HTTPS" = true ]; then
-          setup_cert_manager_and_issuer || DEPLOY_SUCCESS=false
-        fi
-
-        # d. Restart Dex and NGINX services by restarting their deployments
-        restart_pods || DEPLOY_SUCCESS=false
-      elif [ "$INSTALL_TYPE" -eq 3 ] || [ "$INSTALL_TYPE" -eq 4 ]; then
-        # Minimal Install and Basic Install handle their own setup
-        DEPLOY_SUCCESS=true
-      else
-        DEPLOY_SUCCESS=false
-      fi
-
-      # Display completion message or provide port-forward instructions
-      if [ "$DEPLOY_SUCCESS" = true ]; then
-        display_completion_message
-      else
-        provide_port_forward_instructions
-      fi
-    else
-      # OpenGovernance is healthy, check configuration
-      echo_info "OpenGovernance is healthy. Verifying configuration..."
-      check_opengovernance_config
-
-      if [ "$ENABLE_HTTPS" = true ] && [ "$ssl_configured" = true ]; then
-        echo_info "OpenGovernance is fully configured with HTTPS."
-      else
-        echo_info "OpenGovernance is installed but HTTPS is not fully configured."
-
-        # Proceed with HTTPS configuration if applicable
-        if [ "$ENABLE_HTTPS" = true ]; then
-          echo_info "Proceeding with HTTPS configuration in 5 seconds..."
-          sleep 5
-
-          # a. Set up Cert-Manager and Issuer
-          setup_cert_manager_and_issuer
-
-          # b. Deploy Ingress resources
-          deploy_ingress_resources
-
-          # c. Restart Dex and NGINX services by restarting their deployments
-          restart_pods
-
-          # d. Display completion message
-          display_completion_message
-        fi
-      fi
-    fi
+    # OpenGovernance is already installed, script has already exited in check_opengovernance_installation
+    # No further action needed
+    :
   fi
 }
 
