@@ -63,6 +63,30 @@ function helm_quiet() {
   helm "$@" --debug
 }
 
+# Function to validate the domain
+function validate_domain() {
+  local domain="$DOMAIN"
+  # Simple regex for domain validation
+  if [[ "$domain" =~ ^(([a-zA-Z0-9](-*[a-zA-Z0-9])*)\.)+[a-zA-Z]{2,}$ ]]; then
+      echo_info "Domain '$domain' is valid."
+  else
+      echo_error "Invalid domain: '$domain'. Please enter a valid domain."
+      exit 1
+  fi
+}
+
+# Function to validate the email
+function validate_email() {
+  local email="$EMAIL"
+  # Simple regex for email validation
+  if [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+      echo_info "Email '$email' is valid."
+  else
+      echo_error "Invalid email: '$email'. Please enter a valid email address."
+      exit 1
+  fi
+}
+
 # Modify the parse_args function to include a --debug flag
 function parse_args() {
   SILENT_INSTALL=false
@@ -213,6 +237,19 @@ function choose_install_type() {
   # Inform user that installation will start shortly
   echo_info "Installation will start in 5 seconds..."
   sleep 5
+}
+
+# Function to get installation type description
+function get_install_type_description() {
+  local type="$1"
+  case $type in
+    1) echo "Install with HTTPS and Hostname (DNS records required after installation)" ;;
+    2) echo "Install without HTTPS (DNS records required after installation)" ;;
+    3) echo "Minimal Install (Access via public IP)" ;;
+    4) echo "Basic Install (No Ingress, use port-forwarding)" ;;
+    5) echo "Exit" ;;
+    *) echo "Unknown" ;;
+  esac
 }
 
 # Function to check prerequisites and handle cluster creation if necessary
@@ -374,10 +411,6 @@ function check_prerequisites() {
 
   echo_info "Checking Prerequisites...Completed"
 }
-
-
-
-
 
 # Function to clean up failed OpenGovernance installation
 function cleanup_failed_install() {
