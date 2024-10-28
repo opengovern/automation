@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # -----------------------------
@@ -32,6 +31,11 @@ exec 3>> "$LOGFILE"
 # Function Definitions
 # -----------------------------
 
+# Function to display messages directly to the user
+function echo_prompt() {
+  echo "$@" > /dev/tty
+}
+
 # Function to display informational messages to the log
 function echo_info() {
   local message="$1"
@@ -43,29 +47,29 @@ function echo_info() {
 function echo_error() {
   local message="$1"
   # Always print concise error message to console
-  printf "Error: %s\n" "$message"
+  echo_prompt "Error: $message"
   # Log detailed error message
   echo "Error: $message" >&3
 }
 
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--kube-namespace NAMESPACE] [--kube-cluster-name CLUSTER_NAME] [--kube-region REGION] [-h|--help]"
-  echo ""
-  echo "Options:"
-  echo "  --silent-install        Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
-  echo "  -d, --domain            Specify the domain for OpenGovernance."
-  echo "  -e, --email             Specify the email for Let's Encrypt certificate generation."
-  echo "  -t, --type              Specify the installation type:"
-  echo "                           1) Install with HTTPS and Hostname (DNS records required after installation)"
-  echo "                           2) Install without HTTPS (DNS records required after installation)"
-  echo "                           3) Minimal Install (Access via public IP)"
-  echo "                           4) Basic Install (No Ingress, use port-forwarding)"
-  echo "                           Default: 1"
-  echo "  --kube-namespace        Specify the Kubernetes namespace. Default: $KUBE_NAMESPACE"
-  echo "  --kube-cluster-name     Specify the Kubernetes cluster name. Default: $KUBE_CLUSTER_NAME"
-  echo "  --kube-region           Specify the Kubernetes cluster region. Default: $KUBE_REGION"
-  echo "  -h, --help              Display this help message."
+  echo_prompt "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--kube-namespace NAMESPACE] [--kube-cluster-name CLUSTER_NAME] [--kube-region REGION] [-h|--help]"
+  echo_prompt ""
+  echo_prompt "Options:"
+  echo_prompt "  --silent-install        Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
+  echo_prompt "  -d, --domain            Specify the domain for OpenGovernance."
+  echo_prompt "  -e, --email             Specify the email for Let's Encrypt certificate generation."
+  echo_prompt "  -t, --type              Specify the installation type:"
+  echo_prompt "                           1) Install with HTTPS and Hostname (DNS records required after installation)"
+  echo_prompt "                           2) Install without HTTPS (DNS records required after installation)"
+  echo_prompt "                           3) Minimal Install (Access via public IP)"
+  echo_prompt "                           4) Basic Install (No Ingress, use port-forwarding)"
+  echo_prompt "                           Default: 1"
+  echo_prompt "  --kube-namespace        Specify the Kubernetes namespace. Default: $KUBE_NAMESPACE"
+  echo_prompt "  --kube-cluster-name     Specify the Kubernetes cluster name. Default: $KUBE_CLUSTER_NAME"
+  echo_prompt "  --kube-region           Specify the Kubernetes cluster region. Default: $KUBE_REGION"
+  echo_prompt "  -h, --help              Display this help message."
   exit 1
 }
 
@@ -99,10 +103,8 @@ function validate_email() {
 }
 
 # Function to parse command-line arguments
-# Example: Making DOMAIN and EMAIL local within parse_args function
-
 function parse_args() {
-  local SILENT_INSTALL=false
+  SILENT_INSTALL=false
   while [[ "$#" -gt 0 ]]; do
     case $1 in
       --silent-install)
@@ -200,31 +202,44 @@ function parse_args() {
   esac
 }
 
+# Function to get installation type description
+function get_install_type_description() {
+  local type="$1"
+  case $type in
+    1) echo "Install with HTTPS and Hostname (DNS records required after installation)" ;;
+    2) echo "Install without HTTPS (DNS records required after installation)" ;;
+    3) echo "Minimal Install (Access via public IP)" ;;
+    4) echo "Basic Install (No Ingress, use port-forwarding)" ;;
+    5) echo "Exit" ;;
+    *) echo "Unknown" ;;
+  esac
+}
 
 # Function to choose installation type in interactive mode
 function choose_install_type() {
-  echo ""
-  echo "Select Installation Type:"
-  echo "1) Install with HTTPS and Hostname (DNS records required after installation)"
-  echo "2) Install without HTTPS (DNS records required after installation)"
-  echo "3) Minimal Install (Access via public IP)"
-  echo "4) Basic Install (No Ingress, use port-forwarding)"
-  echo "5) Exit"
+  echo_prompt ""
+  echo_prompt "Select Installation Type:"
+  echo_prompt "1) Install with HTTPS and Hostname (DNS records required after installation)"
+  echo_prompt "2) Install without HTTPS (DNS records required after installation)"
+  echo_prompt "3) Minimal Install (Access via public IP)"
+  echo_prompt "4) Basic Install (No Ingress, use port-forwarding)"
+  echo_prompt "5) Exit"
 
   # Prompt the user, with default 1 after timeout or pressing Enter
-  read -t 10 -p "Enter the number corresponding to your choice [Default: 1]: " choice < /dev/tty || choice=1
+  echo_prompt -n "Enter the number corresponding to your choice [Default: 1]: "
+  read -t 10 choice < /dev/tty || choice=1
 
   # If no choice is made, default to 1
   choice=${choice:-1}
 
   # Ensure the choice is within 1-5
   if ! [[ "$choice" =~ ^[1-5]$ ]]; then
-    echo "Invalid option. Defaulting to 1) Install with HTTPS and Hostname."
+    echo_prompt "Invalid option. Defaulting to 1) Install with HTTPS and Hostname."
     choice=1
   fi
 
-  echo ""
-  echo "You selected: $choice) $(get_install_type_description $choice)"
+  echo_prompt ""
+  echo_prompt "You selected: $choice) $(get_install_type_description $choice)"
 
   # Set INSTALL_TYPE and possibly set ENABLE_HTTPS based on choice
   case $choice in
@@ -259,17 +274,35 @@ function choose_install_type() {
   sleep 5
 }
 
-# Function to get installation type description
-function get_install_type_description() {
-  local type="$1"
-  case $type in
-    1) echo "Install with HTTPS and Hostname (DNS records required after installation)" ;;
-    2) echo "Install without HTTPS (DNS records required after installation)" ;;
-    3) echo "Minimal Install (Access via public IP)" ;;
-    4) echo "Basic Install (No Ingress, use port-forwarding)" ;;
-    5) echo "Exit" ;;
-    *) echo "Unknown" ;;
-  esac
+# Function to prompt the user with a yes/no question
+function prompt_yes_no() {
+  local prompt_message="$1"
+  local user_input
+
+  while true; do
+    echo_prompt -n "$prompt_message [y/n]: "
+    read user_input < /dev/tty
+    case "$user_input" in
+      [Yy]* ) return 0;;
+      [Nn]* ) return 1;;
+      * ) echo_prompt "Please answer yes (y) or no (n).";;
+    esac
+  done
+}
+
+# Function to prompt the user for a new cluster name
+function prompt_new_cluster_name() {
+  local new_name
+  while true; do
+    echo_prompt -n "Enter a new name for the Kubernetes cluster: "
+    read new_name < /dev/tty
+    if [[ -n "$new_name" ]]; then
+      echo "$new_name"
+      return 0
+    else
+      echo_error "Cluster name cannot be empty. Please enter a valid name."
+    fi
+  done
 }
 
 # Function to check prerequisites and handle cluster creation if necessary
@@ -296,48 +329,34 @@ function check_prerequisites() {
     exit 1
   }
 
-  # Function to prompt the user with a yes/no question
-  function prompt_yes_no() {
-    local prompt_message="$1"
-    local user_input
+  # Function to create a Kubernetes cluster with a given name
+  function create_cluster() {
+    local cluster_name="$1"
 
-    while true; do
-      read -p "$prompt_message [y/n]: " user_input < /dev/tty
-      case "$user_input" in
-        [Yy]* ) return 0;;
-        [Nn]* ) return 1;;
-        * ) echo "Please answer yes (y) or no (n).";;
-      esac
-    done
+    echo_info "A DigitalOcean Kubernetes cluster named '$cluster_name' will be created in 10 seconds..."
+    sleep 10
+
+    echo_info "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'..."
+    doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
+      --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
+
+    # Wait for nodes to become ready
+    check_ready_nodes
   }
 
-  # Function to prompt the user for a new cluster name
-  function prompt_new_cluster_name() {
-    local new_name
-    while true; do
-      read -p "Enter a new name for the Kubernetes cluster: " new_name < /dev/tty
-      if [[ -n "$new_name" ]]; then
-        echo "$new_name"
-        return 0
-      else
-        echo_error "Cluster name cannot be empty. Please enter a valid name."
-      fi
-    done
-  }
-
-  # Updated handle_existing_cluster() function to manage DOMAIN and EMAIL appropriately
-
+  # Function to handle existing cluster scenario
   function handle_existing_cluster() {
     echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
-    echo ""
-    echo "Please choose an option:"
-    echo "1) Delete the existing cluster and recreate it"
-    echo "2) Connect to the existing cluster"
-    echo "3) Create a new Kubernetes cluster with a different name"
-    echo "4) Exit"
+    echo_prompt ""
+    echo_prompt "Please choose an option:"
+    echo_prompt "1) Delete the existing cluster and recreate it"
+    echo_prompt "2) Connect to the existing cluster"
+    echo_prompt "3) Create a new Kubernetes cluster with a different name"
+    echo_prompt "4) Exit"
 
-    read -p "Enter the number corresponding to your choice: " choice < /dev/tty
+    echo_prompt -n "Enter the number corresponding to your choice: "
+    read choice < /dev/tty
 
     case "$choice" in
       1)
@@ -349,18 +368,16 @@ function check_prerequisites() {
         if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
           echo_info "Reusing existing DOMAIN and EMAIL."
         else
-          echo ""
-          echo "Current DOMAIN: ${DOMAIN:-Not Set}"
-          echo "Current EMAIL: ${EMAIL:-Not Set}"
-          echo "Do you want to reuse the existing DOMAIN and EMAIL? [y/n]: "
-          read -p "" reuse_choice < /dev/tty
-
-          if [[ "$reuse_choice" =~ ^[Yy]$ ]]; then
+          echo_prompt ""
+          echo_prompt "Current DOMAIN: ${DOMAIN:-Not Set}"
+          echo_prompt "Current EMAIL: ${EMAIL:-Not Set}"
+          if prompt_yes_no "Do you want to reuse the existing DOMAIN and EMAIL?"; then
             echo_info "Reusing existing DOMAIN and EMAIL."
           else
             # Prompt for new DOMAIN and EMAIL
             while true; do
-              read -p "Enter your new domain for OpenGovernance: " DOMAIN < /dev/tty
+              echo_prompt -n "Enter your new domain for OpenGovernance: "
+              read DOMAIN < /dev/tty
               if [ -z "$DOMAIN" ]; then
                 echo_error "Domain cannot be empty."
                 continue
@@ -370,7 +387,8 @@ function check_prerequisites() {
             done
 
             while true; do
-              read -p "Enter your new email for Let's Encrypt: " EMAIL < /dev/tty
+              echo_prompt -n "Enter your new email for Let's Encrypt: "
+              read EMAIL < /dev/tty
               if [ -z "$EMAIL" ]; then
                 echo_error "Email cannot be empty."
                 continue
@@ -390,18 +408,16 @@ function check_prerequisites() {
         if [ -n "$DOMAIN" ] && [ -n "$EMAIL" ]; then
           echo_info "Reusing existing DOMAIN and EMAIL."
         else
-          echo ""
-          echo "Current DOMAIN: ${DOMAIN:-Not Set}"
-          echo "Current EMAIL: ${EMAIL:-Not Set}"
-          echo "Do you want to reuse the existing DOMAIN and EMAIL? [y/n]: "
-          read -p "" reuse_choice < /dev/tty
-
-          if [[ "$reuse_choice" =~ ^[Yy]$ ]]; then
+          echo_prompt ""
+          echo_prompt "Current DOMAIN: ${DOMAIN:-Not Set}"
+          echo_prompt "Current EMAIL: ${EMAIL:-Not Set}"
+          if prompt_yes_no "Do you want to reuse the existing DOMAIN and EMAIL?"; then
             echo_info "Reusing existing DOMAIN and EMAIL."
           else
             # Prompt for new DOMAIN and EMAIL
             while true; do
-              read -p "Enter your new domain for OpenGovernance: " DOMAIN < /dev/tty
+              echo_prompt -n "Enter your new domain for OpenGovernance: "
+              read DOMAIN < /dev/tty
               if [ -z "$DOMAIN" ]; then
                 echo_error "Domain cannot be empty."
                 continue
@@ -411,7 +427,8 @@ function check_prerequisites() {
             done
 
             while true; do
-              read -p "Enter your new email for Let's Encrypt: " EMAIL < /dev/tty
+              echo_prompt -n "Enter your new email for Let's Encrypt: "
+              read EMAIL < /dev/tty
               if [ -z "$EMAIL" ]; then
                 echo_error "Email cannot be empty."
                 continue
@@ -448,25 +465,6 @@ function check_prerequisites() {
     esac
   }
 
-
-
-
-
-  # Function to create a Kubernetes cluster with a given name
-  function create_cluster() {
-    local cluster_name="$1"
-
-    echo_info "A DigitalOcean Kubernetes cluster named '$cluster_name' will be created in 10 seconds..."
-    sleep 10
-
-    echo_info "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'..."
-    doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
-      --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
-
-    # Wait for nodes to become ready
-    check_ready_nodes
-  }
-
   # Check if kubectl is connected to a cluster
   if kubectl cluster-info > /dev/null 2>&1; then
     echo_info "kubectl is connected to a cluster."
@@ -491,22 +489,22 @@ function check_prerequisites() {
         fi
       else
         echo_error "doctl is installed but not configured."
-        echo ""
-        echo "Please configure doctl or connect kubectl to your Kubernetes cluster by following these steps:"
-        echo "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
-        echo "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
-        echo "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
-        echo ""
+        echo_prompt ""
+        echo_prompt "Please configure doctl or connect kubectl to your Kubernetes cluster by following these steps:"
+        echo_prompt "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
+        echo_prompt "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
+        echo_prompt "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+        echo_prompt ""
         exit 1
       fi
     else
       echo_error "doctl is not installed."
-      echo ""
-      echo "Please install doctl or connect kubectl to an existing Kubernetes cluster by following these steps:"
-      echo "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
-      echo "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
-      echo "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
-      echo ""
+      echo_prompt ""
+      echo_prompt "Please install doctl or connect kubectl to an existing Kubernetes cluster by following these steps:"
+      echo_prompt "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
+      echo_prompt "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
+      echo_prompt "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+      echo_prompt ""
       exit 1
     fi
   fi
@@ -522,6 +520,70 @@ function check_prerequisites() {
   check_ready_nodes
 
   echo_info "Checking Prerequisites...Completed"
+}
+
+# Function to configure email and domain
+function configure_email_and_domain() {
+  # Depending on the installation type, prompt for DOMAIN and EMAIL as needed
+  case $INSTALL_TYPE in
+    1)
+      # Install with HTTPS and Hostname
+      if [ "$SILENT_INSTALL" = false ]; then
+        if [ -z "$DOMAIN" ]; then
+          while true; do
+            echo_prompt -n "Enter your domain for OpenGovernance: "
+            read DOMAIN < /dev/tty
+            if [ -z "$DOMAIN" ]; then
+              echo_error "Domain is required for installation type 1."
+              continue
+            fi
+            validate_domain
+            break
+          done
+        fi
+
+        if [ -z "$EMAIL" ]; then
+          while true; do
+            echo_prompt -n "Enter your email for Let's Encrypt: "
+            read EMAIL < /dev/tty
+            if [ -z "$EMAIL" ]; then
+              echo_error "Email is required for installation type 1."
+            else
+              validate_email
+              break
+            fi
+          done
+        fi
+      fi
+      ;;
+    2)
+      # Install without HTTPS
+      if [ "$SILENT_INSTALL" = false ] && [ -z "$DOMAIN" ]; then
+        while true; do
+          echo_prompt -n "Enter your domain for OpenGovernance: "
+          read DOMAIN < /dev/tty
+          if [ -z "$DOMAIN" ]; then
+            echo_error "Domain is required for installation type 2."
+            continue
+          fi
+          validate_domain
+          break
+        done
+      fi
+      ;;
+    3)
+      # Minimal Install
+      # No DOMAIN or EMAIL required
+      ;;
+    4)
+      # Basic Install with no Ingress
+      # No DOMAIN or EMAIL required
+      ;;
+    *)
+      echo_error "Unsupported installation type: $INSTALL_TYPE"
+      usage
+      ;;
+  esac
 }
 
 # Function to clean up failed OpenGovernance installation
@@ -693,67 +755,6 @@ function check_pods_and_jobs() {
   exit 1
 }
 
-# Function to configure email and domain
-function configure_email_and_domain() {
-  # Depending on the installation type, prompt for DOMAIN and EMAIL as needed
-  case $INSTALL_TYPE in
-    1)
-      # Install with HTTPS and Hostname
-      if [ "$SILENT_INSTALL" = false ]; then
-        if [ -z "$DOMAIN" ]; then
-          while true; do
-            read -p "Enter your domain for OpenGovernance: " DOMAIN < /dev/tty
-            if [ -z "$DOMAIN" ]; then
-              echo_error "Domain is required for installation type 1."
-              continue
-            fi
-            validate_domain
-            break
-          done
-        fi
-
-        if [ -z "$EMAIL" ]; then
-          while true; do
-            read -p "Enter your email for Let's Encrypt: " EMAIL < /dev/tty
-            if [ -z "$EMAIL" ]; then
-              echo_error "Email is required for installation type 1."
-            else
-              validate_email
-              break
-            fi
-          done
-        fi
-      fi
-      ;;
-    2)
-      # Install without HTTPS
-      if [ "$SILENT_INSTALL" = false ] && [ -z "$DOMAIN" ]; then
-        while true; do
-          read -p "Enter your domain for OpenGovernance: " DOMAIN < /dev/tty
-          if [ -z "$DOMAIN" ]; then
-            echo_error "Domain is required for installation type 2."
-            continue
-          fi
-          validate_domain
-          break
-        done
-      fi
-      ;;
-    3)
-      # Minimal Install
-      # No DOMAIN or EMAIL required
-      ;;
-    4)
-      # Basic Install with no Ingress
-      # No DOMAIN or EMAIL required
-      ;;
-    *)
-      echo_error "Unsupported installation type: $INSTALL_TYPE"
-      usage
-      ;;
-  esac
-}
-
 # Function to install or upgrade OpenGovernance with HTTPS
 function install_opengovernance_with_https() {
   echo_info "Proceeding with OpenGovernance installation with HTTPS."
@@ -860,7 +861,7 @@ function install_opengovernance_no_ingress() {
   echo_info "Setting up port-forwarding to access OpenGovernance locally."
 
   # Start port-forwarding in the background
-  kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 &
+  kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >&3 2>&3 &
   PORT_FORWARD_PID=$!
 
   # Give port-forwarding some time to establish
@@ -869,11 +870,11 @@ function install_opengovernance_no_ingress() {
   # Check if port-forwarding is still running
   if ps -p $PORT_FORWARD_PID > /dev/null 2>&1; then
     echo_info "Port-forwarding established successfully."
-    echo_info "OpenGovernance is accessible at http://localhost:8080"
-    echo "To sign in, use the following default credentials:"
-    echo "  Username: admin@opengovernance.io"
-    echo "  Password: password"
-    echo "You can terminate port-forwarding by killing the background process (PID: $PORT_FORWARD_PID)."
+    echo_prompt "OpenGovernance is accessible at http://localhost:8080"
+    echo_prompt "To sign in, use the following default credentials:"
+    echo_prompt "  Username: admin@opengovernance.io"
+    echo_prompt "  Password: password"
+    echo_prompt "You can terminate port-forwarding by killing the background process (PID: $PORT_FORWARD_PID)."
   else
     provide_port_forward_instructions
   fi
@@ -1146,13 +1147,13 @@ function restart_pods() {
 # Function to provide port-forward instructions
 function provide_port_forward_instructions() {
   echo_error "OpenGovernance is running but not accessible via Ingress."
-  echo "You can access it using port-forwarding as follows:"
-  echo "kubectl port-forward -n $KUBE_NAMESPACE service/nginx-proxy 8080:80"
-  echo "Then, access it at http://localhost:8080"
-  echo ""
-  echo "To sign in, use the following default credentials:"
-  echo "  Username: admin@opengovernance.io"
-  echo "  Password: password"
+  echo_prompt "You can access it using port-forwarding as follows:"
+  echo_prompt "kubectl port-forward -n $KUBE_NAMESPACE service/nginx-proxy 8080:80"
+  echo_prompt "Then, access it at http://localhost:8080"
+  echo_prompt ""
+  echo_prompt "To sign in, use the following default credentials:"
+  echo_prompt "  Username: admin@opengovernance.io"
+  echo_prompt "  Password: password"
 }
 
 # Function to display completion message with protocol, DNS instructions, and default login details
@@ -1165,32 +1166,32 @@ function display_completion_message() {
 
   echo_info "Installation Complete"
 
-  echo ""
-  echo "-----------------------------------------------------"
-  echo "OpenGovernance has been successfully installed and configured."
-  echo ""
+  echo_prompt ""
+  echo_prompt "-----------------------------------------------------"
+  echo_prompt "OpenGovernance has been successfully installed and configured."
+  echo_prompt ""
   if [ "$INSTALL_TYPE" -ne 3 ] && [ "$INSTALL_TYPE" -ne 4 ]; then
-    echo "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+    echo_prompt "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
   elif [ "$INSTALL_TYPE" -eq 4 ]; then
-    echo "Access your OpenGovernance instance at: ${protocol}://${INGRESS_EXTERNAL_IP}"
+    echo_prompt "Access your OpenGovernance instance at: ${protocol}://${INGRESS_EXTERNAL_IP}"
   else
-    echo "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
+    echo_prompt "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
   fi
-  echo ""
-  echo "To sign in, use the following default credentials:"
-  echo "  Username: admin@opengovernance.io"
-  echo "  Password: password"
-  echo ""
+  echo_prompt ""
+  echo_prompt "To sign in, use the following default credentials:"
+  echo_prompt "  Username: admin@opengovernance.io"
+  echo_prompt "  Password: password"
+  echo_prompt ""
 
   # DNS A record setup instructions if domain is configured and not minimal
   if [ -n "$DOMAIN" ] && [ "$INSTALL_TYPE" -ne 3 ]; then
-    echo "To ensure proper access to your instance, please verify or set up the following DNS A records:"
-    echo ""
-    echo "  Domain: ${DOMAIN}"
-    echo "  Record Type: A"
-    echo "  Value: ${INGRESS_EXTERNAL_IP}"
-    echo ""
-    echo "Note: It may take some time for DNS changes to propagate."
+    echo_prompt "To ensure proper access to your instance, please verify or set up the following DNS A records:"
+    echo_prompt ""
+    echo_prompt "  Domain: ${DOMAIN}"
+    echo_prompt "  Record Type: A"
+    echo_prompt "  Value: ${INGRESS_EXTERNAL_IP}"
+    echo_prompt ""
+    echo_prompt "Note: It may take some time for DNS changes to propagate."
   fi
 
   # If Ingress is not properly configured or it's a Basic Install, provide port-forward instructions
@@ -1198,7 +1199,7 @@ function display_completion_message() {
     provide_port_forward_instructions
   fi
 
-  echo "-----------------------------------------------------"
+  echo_prompt "-----------------------------------------------------"
 }
 
 # Function to run installation logic
