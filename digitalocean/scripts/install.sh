@@ -1,6 +1,19 @@
 #!/bin/bash
 
 # -----------------------------
+# Configuration Variables
+# -----------------------------
+
+# Kubernetes namespace for OpenGovernance
+KUBE_NAMESPACE="opengovernance"
+
+# Kubernetes cluster name for OpenGovernance
+KUBE_CLUSTER_NAME="opengovernance"
+
+# Kubernetes cluster region for OpenGovernance
+KUBE_REGION="nyc3"
+
+# -----------------------------
 # Logging Configuration
 # -----------------------------
 LOGFILE="$HOME/opengovernance_install.log"
@@ -36,19 +49,22 @@ function echo_error() {
 
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [-h|--help]"
+  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--kube-namespace NAMESPACE] [--kube-cluster-name CLUSTER_NAME] [--kube-region REGION] [-h|--help]"
   echo ""
   echo "Options:"
-  echo "  --silent-install    Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
-  echo "  -d, --domain        Specify the domain for OpenGovernance."
-  echo "  -e, --email         Specify the email for Let's Encrypt certificate generation."
-  echo "  -t, --type          Specify the installation type:"
-  echo "                       1) Install with HTTPS and Hostname (DNS records required after installation)"
-  echo "                       2) Install without HTTPS (DNS records required after installation)"
-  echo "                       3) Minimal Install (Access via public IP)"
-  echo "                       4) Basic Install (No Ingress, use port-forwarding)"
-  echo "                       Default: 1"
-  echo "  -h, --help          Display this help message."
+  echo "  --silent-install        Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
+  echo "  -d, --domain            Specify the domain for OpenGovernance."
+  echo "  -e, --email             Specify the email for Let's Encrypt certificate generation."
+  echo "  -t, --type              Specify the installation type:"
+  echo "                           1) Install with HTTPS and Hostname (DNS records required after installation)"
+  echo "                           2) Install without HTTPS (DNS records required after installation)"
+  echo "                           3) Minimal Install (Access via public IP)"
+  echo "                           4) Basic Install (No Ingress, use port-forwarding)"
+  echo "                           Default: 1"
+  echo "  --kube-namespace        Specify the Kubernetes namespace. Default: $KUBE_NAMESPACE"
+  echo "  --kube-cluster-name     Specify the Kubernetes cluster name. Default: $KUBE_CLUSTER_NAME"
+  echo "  --kube-region           Specify the Kubernetes cluster region. Default: $KUBE_REGION"
+  echo "  -h, --help              Display this help message."
   exit 1
 }
 
@@ -100,6 +116,18 @@ function parse_args() {
         ;;
       -t|--type)
         INSTALL_TYPE="$2"
+        shift 2
+        ;;
+      --kube-namespace)
+        KUBE_NAMESPACE="$2"
+        shift 2
+        ;;
+      --kube-cluster-name)
+        KUBE_CLUSTER_NAME="$2"
+        shift 2
+        ;;
+      --kube-region)
+        KUBE_REGION="$2"
         shift 2
         ;;
       -h|--help)
@@ -295,22 +323,22 @@ function check_prerequisites() {
 
   # Function to handle existing cluster scenarios
   function handle_existing_cluster() {
-    echo_error "A Kubernetes cluster named 'opengovernance' already exists."
+    echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
     # Prompt 1: Do you want to delete the existing cluster and recreate it?
-    if prompt_yes_no "Do you want to delete the existing 'opengovernance' cluster and recreate it?"; then
-      echo_info "Deleting existing cluster 'opengovernance'..."
-      doctl kubernetes cluster delete opengovernance --force --wait
+    if prompt_yes_no "Do you want to delete the existing '$KUBE_CLUSTER_NAME' cluster and recreate it?"; then
+      echo_info "Deleting existing cluster '$KUBE_CLUSTER_NAME'..."
+      doctl kubernetes cluster delete "$KUBE_CLUSTER_NAME" --force --wait
       echo_info "Existing cluster deleted."
 
       # Proceed with cluster creation
-      create_cluster "opengovernance"
+      create_cluster "$KUBE_CLUSTER_NAME"
     else
       # Prompt 2: Do you want to connect to the existing cluster?
-      if prompt_yes_no "Do you want to connect to the existing 'opengovernance' cluster?"; then
-        echo_info "Configuring kubectl to connect to the existing 'opengovernance' cluster..."
-        doctl kubernetes cluster kubeconfig save opengovernance
-        echo_info "'kubectl' is now configured to connect to 'opengovernance'."
+      if prompt_yes_no "Do you want to connect to the existing '$KUBE_CLUSTER_NAME' cluster?"; then
+        echo_info "Configuring kubectl to connect to the existing '$KUBE_CLUSTER_NAME' cluster..."
+        doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+        echo_info "'kubectl' is now configured to connect to '$KUBE_CLUSTER_NAME'."
       else
         # Prompt 3: Do you want to create a new cluster with a different name?
         if prompt_yes_no "Do you want to create a new Kubernetes cluster with a different name?"; then
@@ -335,8 +363,8 @@ function check_prerequisites() {
     echo_info "A DigitalOcean Kubernetes cluster named '$cluster_name' will be created in 10 seconds..."
     sleep 10
 
-    echo_info "Creating DigitalOcean Kubernetes cluster '$cluster_name'..."
-    doctl kubernetes cluster create "$cluster_name" --region nyc3 \
+    echo_info "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'..."
+    doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
       --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
 
     # Wait for nodes to become ready
@@ -357,13 +385,13 @@ function check_prerequisites() {
       if doctl account get > /dev/null 2>&1; then
         echo_info "doctl is configured."
 
-        # Check if a cluster named 'opengovernance' already exists
-        if doctl kubernetes cluster list --format Name --no-header | grep -qw "^opengovernance$"; then
+        # Check if a cluster with the specified name already exists
+        if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$KUBE_CLUSTER_NAME$"; then
           # Handle existing cluster
           handle_existing_cluster
         else
           # Create the cluster since it doesn't exist
-          create_cluster "opengovernance"
+          create_cluster "$KUBE_CLUSTER_NAME"
         fi
       else
         echo_error "doctl is installed but not configured."
@@ -406,10 +434,10 @@ function cleanup_failed_install() {
   echo_info "Cleaning up failed installation..."
   
   # Uninstall the Helm release quietly
-  helm_quiet uninstall opengovernance -n opengovernance || echo_error "Failed to uninstall Helm release."
+  helm_quiet uninstall opengovernance -n "$KUBE_NAMESPACE" || echo_error "Failed to uninstall Helm release."
 
   # Delete the namespace
-  kubectl delete namespace opengovernance || echo_error "Failed to delete namespace."
+  kubectl delete namespace "$KUBE_NAMESPACE" || echo_error "Failed to delete namespace."
 
   echo_info "Cleanup of failed OpenGovernance installation completed."
 }
@@ -417,10 +445,10 @@ function cleanup_failed_install() {
 # Function to check if OpenGovernance is installed
 function check_opengovernance_installation() {
   # Check if OpenGovernance Helm repo is added and OpenGovernance is installed
-  if helm repo list | grep -qw "opengovernance" && helm ls -n opengovernance | grep -qw opengovernance; then
+  if helm repo list | grep -qw "opengovernance" && helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
     # Check Helm release status
     local helm_release_status
-    helm_release_status=$(helm list -n opengovernance --filter '^opengovernance$' -o yaml | awk '
+    helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o yaml | awk '
   BEGIN { status="unknown" }
   /status:/ { sub(/^status:[[:space:]]*/, "", $0); status=$0 }
   END { print status }
@@ -453,13 +481,13 @@ function check_opengovernance_health() {
   # Check the health of the OpenGovernance deployment
   local unhealthy_pods
   # Extract the STATUS column (3rd column) and exclude 'Running' and 'Completed'
-  unhealthy_pods=$(kubectl get pods -n opengovernance --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+  unhealthy_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
   if [ -z "$unhealthy_pods" ]; then
     APP_HEALTHY=true
   else
     echo_error "Some OpenGovernance pods are not healthy."
-    kubectl get pods -n opengovernance
+    kubectl get pods -n "$KUBE_NAMESPACE"
     APP_HEALTHY=false
   fi
 }
@@ -467,7 +495,7 @@ function check_opengovernance_health() {
 # Function to check OpenGovernance configuration
 function check_opengovernance_config() {
   # Retrieve the current Helm values
-  CURRENT_HELM_VALUES=$(helm get values opengovernance -n opengovernance --output yaml 2>/dev/null || true)
+  CURRENT_HELM_VALUES=$(helm get values opengovernance -n "$KUBE_NAMESPACE" --output yaml 2>/dev/null || true)
 
   # Extract HELM_VALUES_DEX_ISSUER using awk
   HELM_VALUES_DEX_ISSUER=$(echo "$CURRENT_HELM_VALUES" | awk '
@@ -489,7 +517,7 @@ function check_opengovernance_config() {
   fi
 
   # Retrieve the app hostname by looking up the environment variables
-  ENV_VARS=$(kubectl get deployment metadata-service -n opengovernance \
+  ENV_VARS=$(kubectl get deployment metadata-service -n "$KUBE_NAMESPACE" \
     -o jsonpath='{.spec.template.spec.containers[0].env[*]}')
 
   # Extract the primary domain from the environment variables
@@ -511,7 +539,7 @@ function check_opengovernance_config() {
   fi
 
   # Retrieve Ingress external IP
-  INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n opengovernance -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+  INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n "$KUBE_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
 
   # Enhanced SSL configuration check based on the new criteria
   if [ "$APP_HEALTHY" = true ] && [ -n "$INGRESS_EXTERNAL_IP" ] && [[ "$HELM_VALUES_DEX_ISSUER" == https://* ]]; then
@@ -533,16 +561,16 @@ function check_opengovernance_config() {
 
 # Function to check OpenGovernance readiness
 function check_opengovernance_readiness() {
-  # Check the readiness of all pods in the 'opengovernance' namespace
+  # Check the readiness of all pods in the specified namespace
   local not_ready_pods
   # Extract the STATUS column (3rd column) and exclude 'Running' and 'Completed'
-  not_ready_pods=$(kubectl get pods -n opengovernance --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+  not_ready_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
   if [ -z "$not_ready_pods" ]; then
     APP_HEALTHY=true
   else
     echo_error "Some OpenGovernance pods are not healthy."
-    kubectl get pods -n opengovernance
+    kubectl get pods -n "$KUBE_NAMESPACE"
     APP_HEALTHY=false
   fi
 }
@@ -640,7 +668,7 @@ function install_opengovernance_with_https() {
   # Perform Helm installation with custom configuration
   echo_info "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -664,7 +692,7 @@ function install_opengovernance_with_hostname_only() {
   # Perform Helm installation with custom configuration
   echo_info "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -689,7 +717,7 @@ function install_opengovernance_with_public_ip() {
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -725,7 +753,7 @@ function install_opengovernance_no_ingress() {
   # Perform Helm installation
   echo_info "Installing OpenGovernance via Helm without Ingress."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n opengovernance --create-namespace --timeout=10m --wait
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait
 
   # Check if the application is up
   check_pods_and_jobs
@@ -734,7 +762,7 @@ function install_opengovernance_no_ingress() {
   echo_info "Setting up port-forwarding to access OpenGovernance locally."
 
   # Start port-forwarding in the background
-  kubectl port-forward -n opengovernance svc/nginx-proxy 8080:80 &
+  kubectl port-forward -n "$KUBE_NAMESPACE" svc/nginx-proxy 8080:80 &
   PORT_FORWARD_PID=$!
 
   # Give port-forwarding some time to establish
@@ -849,7 +877,7 @@ function deploy_ingress_resources() {
   case $INSTALL_TYPE in
     1)
       # Install with HTTPS and Hostname
-      cat <<EOF | kubectl apply -n opengovernance -f -
+      cat <<EOF | kubectl apply -n "$KUBE_NAMESPACE" -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -878,7 +906,7 @@ EOF
       ;;
     2)
       # Install without HTTPS
-      cat <<EOF | kubectl apply -n opengovernance -f -
+      cat <<EOF | kubectl apply -n "$KUBE_NAMESPACE" -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -902,7 +930,7 @@ EOF
       ;;
     3)
       # Minimal Install
-      cat <<EOF | kubectl apply -n opengovernance -f -
+      cat <<EOF | kubectl apply -n "$KUBE_NAMESPACE" -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -978,7 +1006,7 @@ function setup_cert_manager_and_issuer() {
     echo_info "Installing Cert-Manager via Helm."
     helm_quiet repo add jetstack https://charts.jetstack.io || true
     helm_quiet repo update
-    helm_quiet install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
+    helm_quiet install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
     echo_info "Cert-Manager installed."
   fi
 
@@ -1011,8 +1039,8 @@ function restart_pods() {
   echo_info "Restarting OpenGovernance Pods to Apply Changes."
 
   # Restart only the specified deployments
-  kubectl rollout restart deployment nginx-proxy -n opengovernance
-  kubectl rollout restart deployment opengovernance-dex -n opengovernance
+  kubectl rollout restart deployment nginx-proxy -n "$KUBE_NAMESPACE"
+  kubectl rollout restart deployment opengovernance-dex -n "$KUBE_NAMESPACE"
 
   echo_info "Pods restarted successfully."
 }
@@ -1021,7 +1049,7 @@ function restart_pods() {
 function provide_port_forward_instructions() {
   echo_error "OpenGovernance is running but not accessible via Ingress."
   echo "You can access it using port-forwarding as follows:"
-  echo "kubectl port-forward -n opengovernance service/nginx-proxy 8080:80"
+  echo "kubectl port-forward -n $KUBE_NAMESPACE service/nginx-proxy 8080:80"
   echo "Then, access it at http://localhost:8080"
   echo ""
   echo "To sign in, use the following default credentials:"
