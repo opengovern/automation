@@ -36,20 +36,20 @@ function echo_prompt() {
   echo "$@" > /dev/tty
 }
 
-# Function to display informational messages to the log
+# Function to display informational messages to the log with timestamp
 function echo_info() {
   local message="$1"
-  # Log detailed message
-  echo "$message" >&3
+  # Log detailed message with timestamp
+  echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $message" >&3
 }
 
-# Function to display error messages to console and log
+# Function to display error messages to console and log with timestamp
 function echo_error() {
   local message="$1"
   # Always print concise error message to console
   echo_prompt "Error: $message"
-  # Log detailed error message
-  echo "Error: $message" >&3
+  # Log detailed error message with timestamp
+  echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $message" >&3
 }
 
 # Function to display usage information
