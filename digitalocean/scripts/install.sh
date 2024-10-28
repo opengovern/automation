@@ -4,13 +4,13 @@
 # Configuration Variables
 # -----------------------------
 
-# Kubernetes namespace for OpenGovernance
+# Default Kubernetes namespace for OpenGovernance
 KUBE_NAMESPACE="opengovernance"
 
-# Kubernetes cluster name for OpenGovernance
+# Default Kubernetes cluster name for OpenGovernance
 KUBE_CLUSTER_NAME="opengovernance"
 
-# Kubernetes cluster region for OpenGovernance
+# Default Kubernetes cluster region for OpenGovernance
 KUBE_REGION="nyc3"
 
 # -----------------------------
@@ -153,6 +153,13 @@ function parse_args() {
         INSTALL_TYPE=1
         ENABLE_HTTPS=true
         echo_info "Silent install: INSTALL_TYPE not specified. DOMAIN and EMAIL provided. Defaulting to Install with HTTPS and Hostname."
+      elif [ -n "$KUBE_CLUSTER_NAME" ]; then
+        # If cluster name is specified but no DOMAIN/EMAIL, check if domain/email are provided
+        if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
+          INSTALL_TYPE=3
+          ENABLE_HTTPS=false
+          echo_info "Silent install: INSTALL_TYPE not specified and DOMAIN/EMAIL not fully provided. Defaulting to Minimal Install (Access via public IP)."
+        fi
       else
         INSTALL_TYPE=3
         ENABLE_HTTPS=false
@@ -1193,7 +1200,7 @@ function run_installation_logic() {
       provide_port_forward_instructions
     fi
   else
-    # OpenGovernance is already installed, script has already exited in check_opengovernance_installation
+    
     # No further action needed
     :
   fi
