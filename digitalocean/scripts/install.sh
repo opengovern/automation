@@ -3,14 +3,13 @@
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-DEBUG_MODE=false  # Set to true to enable debug mode
 LOGFILE="$HOME/opengovernance_install.log"
 
 # Ensure the log directory exists
 mkdir -p "$(dirname "$LOGFILE")"
 
-# Redirect all output to the log file and the console
-exec > >(tee -i "$LOGFILE") 2>&1
+# Redirect all output to the log file only
+exec > >(tee -a "$LOGFILE") 2>&1
 
 # Open file descriptor 3 for appending to the log file only
 exec 3>> "$LOGFILE"
@@ -19,13 +18,9 @@ exec 3>> "$LOGFILE"
 # Function Definitions
 # -----------------------------
 
-# Function to display informational messages to console and log
+# Function to display informational messages to the log
 function echo_info() {
   local message="$1"
-  # Only display message if in debug mode
-  if [ "$DEBUG_MODE" = true ]; then
-    printf "%s\n" "$message"
-  fi
   # Log detailed message
   echo "$message" >&3
 }
@@ -41,7 +36,7 @@ function echo_error() {
 
 # Function to display usage information
 function usage() {
-  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [--debug]"
+  echo "Usage: $0 [--silent-install] [-d DOMAIN] [-e EMAIL] [-t INSTALL_TYPE] [-h|--help]"
   echo ""
   echo "Options:"
   echo "  --silent-install    Run the script in non-interactive mode. DOMAIN and EMAIL must be provided as arguments."
@@ -53,14 +48,13 @@ function usage() {
   echo "                       3) Minimal Install (Access via public IP)"
   echo "                       4) Basic Install (No Ingress, use port-forwarding)"
   echo "                       Default: 1"
-  echo "  --debug             Enable debug mode for detailed output."
   echo "  -h, --help          Display this help message."
   exit 1
 }
 
-# Function to append --debug to all Helm commands
+# Function to redirect Helm commands to the log only
 function helm_quiet() {
-  helm "$@" --debug
+  helm "$@" >&3 2>&1
 }
 
 # Function to validate the domain
@@ -87,7 +81,7 @@ function validate_email() {
   fi
 }
 
-# Modify the parse_args function to include a --debug flag
+# Function to parse command-line arguments
 function parse_args() {
   SILENT_INSTALL=false
   while [[ "$#" -gt 0 ]]; do
@@ -107,10 +101,6 @@ function parse_args() {
       -t|--type)
         INSTALL_TYPE="$2"
         shift 2
-        ;;
-      --debug)
-        DEBUG_MODE=true
-        shift
         ;;
       -h|--help)
         usage
@@ -135,33 +125,31 @@ function parse_args() {
   case $INSTALL_TYPE in
     1)
       # Install with HTTPS and Hostname
-      if [ -n "$DOMAIN" ]; then
-        validate_domain
-      else
-        if [ "$SILENT_INSTALL" = true ]; then
+      if [ "$SILENT_INSTALL" = true ]; then
+        if [ -z "$DOMAIN" ]; then
           echo_error "Installation type 1 requires a DOMAIN in silent mode."
           usage
+        else
+          validate_domain
         fi
-      fi
 
-      if [ -n "$EMAIL" ]; then
-        validate_email
-        ENABLE_HTTPS=true
-      else
-        if [ "$SILENT_INSTALL" = true ]; then
+        if [ -z "$EMAIL" ]; then
           echo_error "Installation type 1 requires an EMAIL in silent mode."
           usage
+        else
+          validate_email
         fi
       fi
+      ENABLE_HTTPS=true
       ;;
     2)
       # Install without HTTPS
-      if [ -n "$DOMAIN" ]; then
-        validate_domain
-      else
-        if [ "$SILENT_INSTALL" = true ]; then
+      if [ "$SILENT_INSTALL" = true ]; then
+        if [ -z "$DOMAIN" ]; then
           echo_error "Installation type 2 requires a DOMAIN in silent mode."
           usage
+        else
+          validate_domain
         fi
       fi
       ENABLE_HTTPS=false
@@ -770,7 +758,7 @@ function setup_ingress_controller() {
   echo_info "Setting up Ingress Controller."
 
   # Define the namespace for ingress-nginx (Using a separate namespace)
-  local INGRESS_NAMESPACE="opengovernance"
+  local INGRESS_NAMESPACE="ingress-nginx"
 
   # Check if the namespace exists, if not, create it
   if ! kubectl get namespace "$INGRESS_NAMESPACE" > /dev/null 2>&1; then
@@ -1087,19 +1075,6 @@ function display_completion_message() {
   echo "-----------------------------------------------------"
 }
 
-# Function to display installation type description
-function get_install_type_description() {
-  local type="$1"
-  case $type in
-    1) echo "Install with HTTPS and Hostname (DNS records required after installation)" ;;
-    2) echo "Install without HTTPS (DNS records required after installation)" ;;
-    3) echo "Minimal Install (Access via public IP)" ;;
-    4) echo "Basic Install (No Ingress, use port-forwarding)" ;;
-    5) echo "Exit" ;;
-    *) echo "Unknown" ;;
-  esac
-}
-
 # Function to run installation logic
 function run_installation_logic() {
   # Check if OpenGovernance is installed
@@ -1265,13 +1240,6 @@ function run_installation_logic() {
 # -----------------------------
 # Main Execution Flow
 # -----------------------------
-
-# Detect if the script is running in an interactive terminal
-if [ -t 0 ]; then
-  INTERACTIVE=true
-else
-  INTERACTIVE=false
-fi
 
 parse_args "$@"
 check_prerequisites
