@@ -23,10 +23,12 @@ set -euo pipefail
 trap 'echo_error "Script terminated unexpectedly."; exit 1' INT TERM ERR
 
 # Logging Configuration
-LOGFILE="$HOME/opengovernance_install.log"
+DATA_DIR="$HOME/opengovernance_data"
+LOGFILE="$DATA_DIR/opengovernance_install.log"
+STATE_FILE="$DATA_DIR/opengovernance_install.state"
 
-# Ensure the log directory exists
-mkdir -p "$(dirname "$LOGFILE")" || { echo "Failed to create log directory."; exit 1; }
+# Ensure the data directory exists
+mkdir -p "$DATA_DIR" || { echo "Failed to create data directory."; exit 1; }
 
 # Redirect all output to the log file and console
 exec > >(tee -a "$LOGFILE") 2>&1
@@ -46,6 +48,7 @@ INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrast
 INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
 CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
 KUBECTL_CONFIGURED=false  # Variable to track if kubectl is configured
+USER_INPUTS=()  # Array to store user inputs and selections
 
 # Detect Operating System
 OS_TYPE="$(uname -s)"
@@ -64,9 +67,8 @@ fi
 # -----------------------------
 # State Management
 # -----------------------------
-STATE_FILE="$HOME/opengovernance_install.state"
 
-# Load state if state file exists
+# Generate or load install-run-id
 if [[ -f "$STATE_FILE" ]]; then
     echo "State file found. Resuming from last saved state."
     # shellcheck disable=SC1090
@@ -78,10 +80,18 @@ else
     DIGITALOCEAN_CLUSTER_CREATED="false"
     OPENGOVERNANCE_INSTALLED="false"
     DIGITALOCEAN_APP_CONFIGURED="false"
+    KUBECTL_CONFIGURED="false"
+    INSTALL_RUN_ID=$(date +%s%N | cut -b1-13)  # 13-digit nanosecond timestamp
+    START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+    # Save initial state
+    save_state
 fi
 
 save_state() {
     {
+        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
+        echo "START_TIME=\"$START_TIME\""
         echo "CURRENT_STEP=$CURRENT_STEP"
         echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
         echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
@@ -93,6 +103,10 @@ save_state() {
         echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
         echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
         echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+        # Include user inputs and selections
+        for key in "${!USER_INPUTS[@]}"; do
+            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
+        done
     } > "$STATE_FILE"
 }
 
@@ -240,6 +254,7 @@ check_opengovernance_installation() {
             echo_primary "An existing OpenGovernance installation was found and is healthy."
             echo_primary "Do you want to reconfigure it? (yes/no): "
             read -r reconfig_choice < /dev/tty
+            USER_INPUTS+=("Reconfigure existing OpenGovernance installation: $reconfig_choice")
 
             case "$reconfig_choice" in
                 yes|y|Y)
@@ -361,6 +376,8 @@ detect_kubernetes_provider_and_deploy() {
 
     echo_prompt -n "Select an option (1-3): "
     read -r deploy_choice < /dev/tty
+    USER_INPUTS+=("Deployment choice: $deploy_choice")
+    save_state  # Save state after user input
 
     case "$deploy_choice" in
         1)
@@ -495,6 +512,8 @@ choose_deployment() {
     while true; do
         echo_prompt -n "Select an option (1-$option): "
         read -r platform_choice < /dev/tty
+        USER_INPUTS+=("Platform choice: $platform_choice")
+        save_state  # Save state after user input
 
         # Validate input is a number
         if ! [[ "$platform_choice" =~ ^[0-9]+$ ]]; then
@@ -574,6 +593,8 @@ deploy_to_digitalocean() {
 
             echo_prompt -n "Select an option (1-3): "
             read -r do_option < /dev/tty
+            USER_INPUTS+=("DigitalOcean cluster option: $do_option")
+            save_state  # Save state after user input
 
             case "$do_option" in
                 1)
@@ -613,6 +634,8 @@ deploy_to_digitalocean() {
 
         echo_prompt -n "Select an option (1-2): "
         read -r do_option < /dev/tty
+        USER_INPUTS+=("DigitalOcean cluster creation option: $do_option")
+        save_state  # Save state after user input
 
         case "$do_option" in
             1)
@@ -648,6 +671,7 @@ create_unique_digitalocean_cluster() {
     while true; do
         echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
         read -r new_cluster_name < /dev/tty
+        USER_INPUTS+=("New DigitalOcean cluster name: $new_cluster_name")
 
         # Check if the cluster name is empty
         if [[ -z "$new_cluster_name" ]]; then
@@ -674,6 +698,7 @@ create_unique_digitalocean_cluster() {
         echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
         echo_prompt -n "Do you wish to change the region? (yes/no): "
         read -r change_region < /dev/tty
+        USER_INPUTS+=("Change region: $change_region")
 
         if [[ "$change_region" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             # Retrieve available regions
@@ -691,6 +716,7 @@ create_unique_digitalocean_cluster() {
             while true; do
                 echo_prompt -n "Enter the desired region from the above list [Default: $DIGITALOCEAN_REGION]: "
                 read -r input_region < /dev/tty
+                USER_INPUTS+=("Selected region: $input_region")
 
                 # Use default if input is empty
                 if [[ -z "$input_region" ]]; then
@@ -847,9 +873,11 @@ warn_minikube_kind() {
     echo_primary "Detected $provider cluster."
     echo_primary "OpenGovernance uses OpenSearch with 3 nodes, which can be resource-intensive on desktops/laptops."
     echo_primary "We strongly recommend at least 16GB of RAM for stability."
-    
+
     echo_prompt -n "Do you wish to proceed? (yes/no): "
     read -r proceed < /dev/tty
+    USER_INPUTS+=("$provider proceed: $proceed")
+
     if [[ "$proceed" == "yes" ]]; then
         return 0
     else
@@ -875,6 +903,8 @@ configure_digitalocean_app() {
     while true; do
         echo_prompt -n "Select an option (1-3): "
         read -r config_choice < /dev/tty
+        USER_INPUTS+=("DigitalOcean configuration choice: $config_choice")
+        save_state  # Save state after user input
 
         case "$config_choice" in
             1)
