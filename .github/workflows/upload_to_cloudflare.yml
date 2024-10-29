@@ -37,7 +37,6 @@ jobs:
         run: |
           aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://opengovernance/$TARGET_FILE"
 
-      # Conditional step: Create a new tag if upload to Cloudflare R2 is successful
       - name: Bump Version and Create Tag
         if: ${{ success() }}
         id: versioning
@@ -66,7 +65,21 @@ jobs:
           git tag "$new_tag"
           git push https://${{ secrets.OG_RELEASE_TAG_UPDATE }}@github.com/opengovern/platform-configuration "$new_tag"
 
-      # Output the new tag
+          # Set the new tag as an output
+          echo "::set-output name=new_tag::$new_tag"
+
+      - name: Create GitHub Release
+        if: ${{ success() && steps.versioning.outcome == 'success' }}
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.OG_RELEASE_TAG_UPDATE }}
+        with:
+          tag_name: ${{ steps.versioning.outputs.new_tag }}
+          release_name: "Release ${{ steps.versioning.outputs.new_tag }}"
+          body: "Automated release for ${{ steps.versioning.outputs.new_tag }}"
+          draft: false
+          prerelease: false
+
       - name: Display new tag
         if: ${{ success() && steps.versioning.outcome == 'success' }}
         run: echo "Created new tag: ${{ steps.versioning.outputs.new_tag }}"
