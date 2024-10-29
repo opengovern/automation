@@ -1,16 +1,16 @@
-name: Upload to Cloudflare R2
+name: Production Release Manager
 
 on:
   push:
     branches:
       - main
     paths:
-      - simple.sh  # Only trigger if simple.sh is updated
+      - simple.sh
 
 jobs:
   upload:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -34,3 +34,37 @@ jobs:
           BUCKET_NAME: "opengovernance"
         run: |
           aws --endpoint-url https://2d6651d596663cce624bd513238102e7.r2.cloudflarestorage.com s3 cp simple.sh s3://$BUCKET_NAME/simple.sh
+
+      # Conditional step: Create a new tag if upload to Cloudflare R2 is successful
+      - name: Bump Version and Create Tag
+        if: ${{ success() }}
+        id: versioning
+        env:
+          TAG_CREATION_TOKEN: ${{ secrets.OG_RELEASE_TAG_UPDATE }}
+        run: |
+          # Configure git with the token to allow tag creation
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags
+
+          # Get the latest tag and increment based on semantic versioning rules
+          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            # If no tags exist, start at v0.1.0
+            new_tag="v0.1.0"
+          else
+            # Split the latest tag into major, minor, and patch
+            IFS='.' read -r major minor patch <<< "${latest_tag//v/}"
+            # Increment the patch version
+            patch=$((patch + 1))
+            new_tag="v${major}.${minor}.${patch}"
+          fi
+
+          # Create and push the new tag
+          git tag "$new_tag"
+          git push https://${{ secrets.OG_RELEASE_TAG_UPDATE }}@github.com/opengovern/platform-configuration "$new_tag"
+
+      # Output the new tag
+      - name: Display new tag
+        if: ${{ success() && steps.versioning.outcome == 'success' }}
+        run: echo "Created new tag: ${{ steps.versioning.outputs.new_tag }}"
