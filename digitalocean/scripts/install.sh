@@ -683,7 +683,7 @@ function install_opengovernance_with_https() {
   # Perform Helm installation with custom configuration
   echo_detail "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -708,7 +708,7 @@ function install_opengovernance_with_hostname_only() {
   # Perform Helm installation with custom configuration
   echo_detail "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -734,7 +734,7 @@ function install_opengovernance_with_public_ip() {
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait \
     -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -773,7 +773,7 @@ function install_opengovernance_no_ingress() {
   # Perform Helm installation
   echo_detail "Installing OpenGovernance via Helm without Ingress."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait
 
   echo_detail "OpenGovernance installation without Ingress completed."
   echo_detail "Application Installed successfully."
