@@ -223,31 +223,6 @@ check_opengovernance_installation() {
     fi
 }
 
-get_cluster_info() {
-    # Check if a Kubernetes context is set and kubectl can connect to a cluster
-    if kubectl config current-context > /dev/null 2>&1; then
-        # Verify if kubectl can communicate with the cluster
-        if kubectl cluster-info > /dev/null 2>&1; then
-            # Extract and display the control plane URL for further analysis
-            local control_plane_url
-            control_plane_url=$(kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true)
-            
-            if [[ -n "$control_plane_url" ]]; then
-                echo "$control_plane_url"
-            else
-                echo_error "Unable to determine control plane URL."
-                return 1
-            fi
-        else
-            echo_error "Kubernetes cluster is unreachable. Please check your connection."
-            return 1
-        fi
-    else
-        echo_error "No Kubernetes context is currently set in kubectl."
-        return 1
-    fi
-}
-
 # Function to detect Kubernetes provider and deploy
 detect_kubernetes_provider_and_deploy() {
     local cluster_info
@@ -298,12 +273,14 @@ detect_kubernetes_provider_and_deploy() {
     esac
 
     # Ask user if they want to deploy to the existing cluster or create a new one
-    echo_prompt "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
-    echo_prompt "1. Deploy to existing cluster"
-    echo_prompt "2. Create a new cluster"
-    echo_prompt "3. Exit"
+    echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
+    echo_primary "1. Deploy to existing cluster"
+    echo_primary "2. Create a new cluster"
+    echo_primary "3. Exit"
 
-    read -p "Select an option (1-3): " deploy_choice
+    echo_prompt -n "Select an option (1-3): "
+    read -r deploy_choice < /dev/tty
+
     case "$deploy_choice" in
         1)
             # Check if OpenGovernance is already installed
@@ -664,7 +641,9 @@ deploy_to_digitalocean() {
         echo_primary "2. Create a new cluster"
         echo_primary "3. Exit"
 
-        read -p "Select an option (1-3): " do_option
+        echo_prompt -n "Select an option (1-3): "
+        read -r do_option < /dev/tty
+
         case "$do_option" in
             1)
                 echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
@@ -707,7 +686,9 @@ deploy_to_digitalocean() {
         echo_primary "1. Create a new cluster named '$KUBE_CLUSTER_NAME'"
         echo_primary "2. Exit"
 
-        read -p "Select an option (1-2): " do_option
+        echo_prompt -n "Select an option (1-2): "
+        read -r do_option < /dev/tty
+
         case "$do_option" in
             1)
                 create_cluster_digitalocean "$KUBE_CLUSTER_NAME"
@@ -740,33 +721,26 @@ create_cluster_digitalocean() {
 
     # Ask if they want to change the cluster name or region
     echo_prompt -n "Change cluster name or region? Press 'y' to change, or 'Enter' to proceed (auto-continue in 30s): "
-    read -t 30 response < /dev/tty
-    if [ $? -eq 0 ]; then
-        # User provided input
-        if [ -z "$response" ]; then
-            # User pressed Enter, proceed
-            :
-        elif [[ "$response" =~ ^[Yy]$ ]]; then
-            # User wants to change the cluster name and/or region
-            # Prompt for new cluster name
-            echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
-            read new_cluster_name < /dev/tty
-            if [ -n "$new_cluster_name" ]; then
-                cluster_name="$new_cluster_name"
-                KUBE_CLUSTER_NAME="$new_cluster_name"
-            fi
+    read -r response < /dev/tty
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        # User wants to change the cluster name and/or region
+        # Prompt for new cluster name
+        echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
+        read -r new_cluster_name < /dev/tty
+        if [[ -n "$new_cluster_name" ]]; then
+            cluster_name="$new_cluster_name"
+            KUBE_CLUSTER_NAME="$new_cluster_name"
+        fi
 
-            # Prompt for new region
-            echo_prompt -n "Enter new region [current: $DIGITALOCEAN_REGION]: "
-            read new_region < /dev/tty
-            if [ -n "$new_region" ]; then
-                DIGITALOCEAN_REGION="$new_region"
-            fi
+        # Prompt for new region
+        echo_prompt -n "Enter new region [current: $DIGITALOCEAN_REGION]: "
+        read -r new_region < /dev/tty
+        if [[ -n "$new_region" ]]; then
+            DIGITALOCEAN_REGION="$new_region"
         fi
     else
-        # Timeout, no response
-        echo_prompt ""
-        echo_detail "No response received in 30 seconds. Proceeding with current cluster name and region."
+        # Timeout or user pressed Enter, proceed
+        echo_detail "No response received or user chose not to change. Proceeding with current cluster name and region."
     fi
 
     # Proceed with creating the cluster
@@ -823,7 +797,8 @@ warn_minikube_kind() {
     echo_warning "OpenGovernance uses OpenSearch with 3 nodes, which can be resource-intensive on desktops/laptops."
     echo_warning "We strongly recommend at least 16GB of RAM for stability."
     
-    read -p "Do you wish to proceed? (yes/no): " proceed
+    echo_prompt -n "Do you wish to proceed? (yes/no): "
+    read -r proceed < /dev/tty
     if [[ "$proceed" == "yes" ]]; then
         return 0
     else
