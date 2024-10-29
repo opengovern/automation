@@ -221,6 +221,30 @@ get_cluster_info() {
     fi
 }
 
+# Function to save state
+save_state() {
+    {
+        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
+        echo "START_TIME=\"$START_TIME\""
+        echo "CURRENT_STEP=$CURRENT_STEP"
+        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
+        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
+        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
+        echo "INFRA_DIR=\"$INFRA_DIR\""
+        echo "INFRA_TOOL=\"$INFRA_TOOL\""
+        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
+        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
+        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
+        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
+        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+        # Include user inputs and selections
+        for key in "${!USER_INPUTS[@]}"; do
+            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
+        done
+    } > "$STATE_FILE"
+}
+
 # Function to detect Kubernetes provider and deploy
 detect_kubernetes_provider_and_deploy() {
     local cluster_info
@@ -893,6 +917,44 @@ setup_port_forwarding() {
     fi
 }
 
+# Function to provide port-forwarding instructions manually
+provide_port_forward_instructions() {
+    echo_primary "Please set up port-forwarding manually using the following command:"
+    echo_prompt "kubectl port-forward -n \"$KUBE_NAMESPACE\" service/nginx-proxy 8080:80"
+    echo_prompt "Then, access OpenGovernance at http://localhost:8080"
+    echo_prompt "Use the following default credentials to sign in:"
+    echo_prompt "  Username: admin@opengovernance.io"
+    echo_prompt "  Password: password"
+}
+
+# -----------------------------
+# State Management
+# -----------------------------
+
+# Function to save state
+save_state() {
+    {
+        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
+        echo "START_TIME=\"$START_TIME\""
+        echo "CURRENT_STEP=$CURRENT_STEP"
+        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
+        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
+        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
+        echo "INFRA_DIR=\"$INFRA_DIR\""
+        echo "INFRA_TOOL=\"$INFRA_TOOL\""
+        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
+        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
+        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
+        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
+        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+        # Include user inputs and selections
+        for key in "${!USER_INPUTS[@]}"; do
+            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
+        done
+    } > "$STATE_FILE"
+}
+
 # -----------------------------
 # Script Initialization
 # -----------------------------
@@ -961,29 +1023,6 @@ else
     # Save initial state
     save_state
 fi
-
-save_state() {
-    {
-        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
-        echo "START_TIME=\"$START_TIME\""
-        echo "CURRENT_STEP=$CURRENT_STEP"
-        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
-        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
-        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
-        echo "INFRA_DIR=\"$INFRA_DIR\""
-        echo "INFRA_TOOL=\"$INFRA_TOOL\""
-        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
-        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
-        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
-        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
-        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
-        # Include user inputs and selections
-        for key in "${!USER_INPUTS[@]}"; do
-            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
-        done
-    } > "$STATE_FILE"
-}
 
 # -----------------------------
 # Main Execution Flow
