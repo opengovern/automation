@@ -22,94 +22,6 @@ set -euo pipefail
 # Trap for unexpected exits
 trap 'echo_error "Script terminated unexpectedly."; exit 1' INT TERM ERR
 
-# Logging Configuration
-DATA_DIR="$HOME/opengovernance_data"
-LOGFILE="$DATA_DIR/opengovernance_install.log"
-STATE_FILE="$DATA_DIR/opengovernance_install.state"
-
-# Ensure the data directory exists
-mkdir -p "$DATA_DIR" || { echo "Failed to create data directory."; exit 1; }
-
-# Redirect all output to the log file and console
-exec > >(tee -a "$LOGFILE") 2>&1
-
-# Open file descriptor 3 for logging only
-exec 3>>"$LOGFILE"
-
-# Initialize arrays
-MISSING_TOOLS=()
-AVAILABLE_PLATFORMS=()
-UNAVAILABLE_PLATFORMS=()
-PROVIDER_CONFIGS=()
-PROVIDER_ERRORS=()
-
-# Initialize variables
-INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrastructure directory
-INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
-CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
-KUBECTL_CONFIGURED=false  # Variable to track if kubectl is configured
-USER_INPUTS=()  # Array to store user inputs and selections
-
-# Detect Operating System
-OS_TYPE="$(uname -s)"
-case "$OS_TYPE" in
-    Linux*)     OS=Linux;;
-    Darwin*)    OS=Darwin;;
-    FreeBSD*)   OS=FreeBSD;;
-    *)          OS="UNKNOWN"
-esac
-
-if [[ "$OS" == "UNKNOWN" ]]; then
-    echo_error "Unsupported Operating System: $OS_TYPE"
-    exit 1
-fi
-
-# -----------------------------
-# State Management
-# -----------------------------
-
-# Generate or load install-run-id
-if [[ -f "$STATE_FILE" ]]; then
-    echo "State file found. Resuming from last saved state."
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
-else
-    echo "No state file found. Starting fresh."
-    CURRENT_STEP=1
-    # Initialize state variables
-    DIGITALOCEAN_CLUSTER_CREATED="false"
-    OPENGOVERNANCE_INSTALLED="false"
-    DIGITALOCEAN_APP_CONFIGURED="false"
-    KUBECTL_CONFIGURED="false"
-    INSTALL_RUN_ID=$(date +%s%N | cut -b1-13)  # 13-digit nanosecond timestamp
-    START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-    # Save initial state
-    save_state
-fi
-
-save_state() {
-    {
-        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
-        echo "START_TIME=\"$START_TIME\""
-        echo "CURRENT_STEP=$CURRENT_STEP"
-        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
-        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
-        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
-        echo "INFRA_DIR=\"$INFRA_DIR\""
-        echo "INFRA_TOOL=\"$INFRA_TOOL\""
-        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
-        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
-        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
-        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
-        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
-        # Include user inputs and selections
-        for key in "${!USER_INPUTS[@]}"; do
-            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
-        done
-    } > "$STATE_FILE"
-}
-
 # -----------------------------
 # Function Definitions
 # -----------------------------
@@ -979,6 +891,98 @@ setup_port_forwarding() {
         echo_error "Port-forwarding failed to establish."
         provide_port_forward_instructions
     fi
+}
+
+# -----------------------------
+# Script Initialization
+# -----------------------------
+
+# Logging Configuration
+DATA_DIR="$HOME/opengovernance_data"
+LOGFILE="$DATA_DIR/opengovernance_install.log"
+STATE_FILE="$DATA_DIR/opengovernance_install.state"
+
+# Ensure the data directory exists
+mkdir -p "$DATA_DIR" || { echo "Failed to create data directory."; exit 1; }
+
+# Redirect all output to the log file and console
+exec > >(tee -a "$LOGFILE") 2>&1
+
+# Open file descriptor 3 for logging only
+exec 3>>"$LOGFILE"
+
+# Initialize arrays
+MISSING_TOOLS=()
+AVAILABLE_PLATFORMS=()
+UNAVAILABLE_PLATFORMS=()
+PROVIDER_CONFIGS=()
+PROVIDER_ERRORS=()
+USER_INPUTS=()  # Array to store user inputs and selections
+
+# Initialize variables
+INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrastructure directory
+INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
+CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
+KUBECTL_CONFIGURED=false  # Variable to track if kubectl is configured
+
+# Detect Operating System
+OS_TYPE="$(uname -s)"
+case "$OS_TYPE" in
+    Linux*)     OS=Linux;;
+    Darwin*)    OS=Darwin;;
+    FreeBSD*)   OS=FreeBSD;;
+    *)          OS="UNKNOWN"
+esac
+
+if [[ "$OS" == "UNKNOWN" ]]; then
+    echo_error "Unsupported Operating System: $OS_TYPE"
+    exit 1
+fi
+
+# -----------------------------
+# State Management
+# -----------------------------
+
+# Generate or load install-run-id
+if [[ -f "$STATE_FILE" ]]; then
+    echo "State file found. Resuming from last saved state."
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+else
+    echo "No state file found. Starting fresh."
+    CURRENT_STEP=1
+    # Initialize state variables
+    DIGITALOCEAN_CLUSTER_CREATED="false"
+    OPENGOVERNANCE_INSTALLED="false"
+    DIGITALOCEAN_APP_CONFIGURED="false"
+    KUBECTL_CONFIGURED="false"
+    INSTALL_RUN_ID=$(date +%s%N | cut -b1-13)  # 13-digit nanosecond timestamp
+    START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+    # Save initial state
+    save_state
+fi
+
+save_state() {
+    {
+        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
+        echo "START_TIME=\"$START_TIME\""
+        echo "CURRENT_STEP=$CURRENT_STEP"
+        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
+        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
+        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
+        echo "INFRA_DIR=\"$INFRA_DIR\""
+        echo "INFRA_TOOL=\"$INFRA_TOOL\""
+        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
+        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
+        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
+        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
+        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+        # Include user inputs and selections
+        for key in "${!USER_INPUTS[@]}"; do
+            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
+        done
+    } > "$STATE_FILE"
 }
 
 # -----------------------------
