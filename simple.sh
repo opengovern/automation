@@ -408,7 +408,7 @@ determine_and_deploy_provider() {
                 install_opengovernance_with_helm
             else
                 echo_primary "Deployment aborted by user."
-                exit 0
+                exit 1
             fi
             ;;
         *)
@@ -562,12 +562,12 @@ deploy_to_digitalocean() {
             # Proceed to install OpenGovernance with Helm
             install_opengovernance_with_helm
         else
-            echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
+            echo_primary "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
             # Prompt user for choice
             echo_primary "Choose an option for deploying to DigitalOcean Kubernetes cluster:"
             echo_primary "1. Use existing cluster '$KUBE_CLUSTER_NAME'"
-            echo_primary "2. Create a new cluster"
+            echo_primary "2. Create a new cluster with a different name"
             echo_primary "3. Exit"
 
             echo_prompt -n "Select an option (1-3): "
@@ -660,11 +660,40 @@ create_unique_digitalocean_cluster() {
 
         # Check if the cluster name already exists using 'doctl kubernetes cluster get'
         if doctl kubernetes cluster get "$new_cluster_name" >/dev/null 2>&1; then
-            echo_error "A Kubernetes cluster named '$new_cluster_name' already exists. Please choose a different name."
-            # Optionally, list existing clusters to help the user choose
-            echo_primary "Existing clusters:"
-            doctl kubernetes cluster list --format "Name,Region" --no-header
-            continue
+            echo_primary "A Kubernetes cluster named '$new_cluster_name' already exists."
+            echo_primary "Choose an option:"
+            echo_primary "1. Use existing cluster '$new_cluster_name'"
+            echo_primary "2. Enter a different cluster name"
+            echo_primary "3. Exit"
+
+            echo_prompt -n "Select an option (1-3): "
+            read -r existing_option < /dev/tty
+            USER_INPUTS+=("Existing cluster option: $existing_option")
+            save_state  # Save state after user input
+
+            case "$existing_option" in
+                1)
+                    echo_primary "Using existing cluster '$new_cluster_name'."
+                    # Retrieve kubeconfig for the cluster
+                    doctl kubernetes cluster kubeconfig save "$new_cluster_name"
+                    # Update the global cluster name variable
+                    KUBE_CLUSTER_NAME="$new_cluster_name"
+                    # Proceed to install OpenGovernance with Helm
+                    install_opengovernance_with_helm
+                    return
+                    ;;
+                2)
+                    echo_primary "Please enter a different cluster name."
+                    continue
+                    ;;
+                3)
+                    echo_primary "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid selection. Please choose between 1 and 3."
+                    ;;
+            esac
         fi
 
         # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
@@ -877,8 +906,7 @@ configure_digitalocean_app() {
     echo_primary "2) Configure without HTTPS (DNS records required after installation)"
     echo_primary "3) No further configuration required"
     echo_primary ""
-    echo_primary "You will need to create DNS records for "
-    # (You may want to specify what DNS records are needed here)
+    echo_primary "You will need to create DNS records for your hostname."
 
     while true; do
         echo_prompt -n "Select an option (1-3): "
@@ -937,26 +965,25 @@ configure_digitalocean_app() {
 # Function to set up port-forwarding
 setup_port_forwarding() {
     echo_primary "Setting up port-forwarding to access OpenGovernance locally."
-    if ! kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
-        echo_error "Failed to initiate port-forwarding."
-        provide_port_forward_instructions
-        return
-    fi
-
-    PORT_FORWARD_PID=$!
-
-    # Wait briefly to ensure port-forwarding is established
-    sleep 5
-
-    if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
-        echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
-        echo_prompt "OpenGovernance is accessible at http://localhost:8080"
-        echo_prompt "To sign in, use the following default credentials:"
-        echo_prompt "  Username: admin@opengovernance.io"
-        echo_prompt "  Password: password"
-        echo_prompt "You can terminate port-forwarding by running: kill $PORT_FORWARD_PID"
+    if kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
+        PORT_FORWARD_PID=$!
+    
+        # Wait briefly to ensure port-forwarding is established
+        sleep 5
+    
+        if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
+            echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
+            echo_prompt "OpenGovernance is accessible at http://localhost:8080"
+            echo_prompt "To sign in, use the following default credentials:"
+            echo_prompt "  Username: admin@opengovernance.io"
+            echo_prompt "  Password: password"
+            echo_prompt "You can terminate port-forwarding by running: kill $PORT_FORWARD_PID"
+        else
+            echo_error "Port-forwarding failed to establish."
+            provide_port_forward_instructions
+        fi
     else
-        echo_error "Port-forwarding failed to establish."
+        echo_error "Failed to initiate port-forwarding."
         provide_port_forward_instructions
     fi
 }
