@@ -221,6 +221,200 @@ get_cluster_info() {
     fi
 }
 
+# Function to install OpenGovernance with Helm
+install_opengovernance_with_helm() {
+    if [[ "$OPENGOVERNANCE_INSTALLED" == "true" ]]; then
+        echo_info "OpenGovernance is already installed."
+        return
+    fi
+
+    echo_detail "Adding OpenGovernance Helm repository."
+    if ! helm_quiet repo add opengovernance https://opengovern.github.io/charts; then
+        echo_error "Failed to add OpenGovernance Helm repository."
+        exit 1
+    fi
+
+    echo_detail "Updating Helm repositories."
+    if ! helm_quiet repo update; then
+        echo_error "Failed to update Helm repositories."
+        exit 1
+    fi
+
+    echo_detail "Installing OpenGovernance via Helm in namespace '$KUBE_NAMESPACE' (this may take a few minutes)."
+    save_state  # Save state before starting Helm installation
+    if ! helm_quiet install opengovernance opengovernance/opengovernance \
+        -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait; then
+        echo_error "Helm installation failed."
+        exit 1
+    fi
+
+    echo_detail "OpenGovernance installed successfully."
+    OPENGOVERNANCE_INSTALLED="true"
+    save_state  # Save state after Helm installation
+
+    check_pods_and_jobs
+
+    if [[ "$CURRENT_PROVIDER" == "DigitalOcean" ]]; then
+        echo_info "Configuring DigitalOcean setup."
+        configure_digitalocean_app
+    else
+        setup_port_forwarding
+    fi
+}
+
+# Function to check pods and jobs
+check_pods_and_jobs() {
+    echo_detail "Checking pod and job statuses in namespace '$KUBE_NAMESPACE'."
+    if ! kubectl get pods -n "$KUBE_NAMESPACE" >&3 2>&1; then
+        echo_error "Failed to get pod statuses."
+    fi
+
+    if ! kubectl get jobs -n "$KUBE_NAMESPACE" >&3 2>&1; then
+        echo_error "Failed to get job statuses."
+    fi
+}
+
+# Function to provide port-forwarding instructions
+provide_port_forward_instructions() {
+    echo_primary "To access OpenGovernance, set up port-forwarding using the following command:"
+    echo_prompt "kubectl port-forward -n \"$KUBE_NAMESPACE\" service/nginx-proxy 8080:80"
+    echo_prompt "Access OpenGovernance at http://localhost:8080"
+    echo_prompt "Use these credentials to sign in: Username: admin@opengovernance.io, Password: password"
+}
+
+# Function to check if Kubernetes nodes are ready
+check_ready_nodes() {
+    local provider="$1"
+    local required_nodes=3
+    local attempts=0
+    local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
+    local sleep_time=30
+
+    echo_info "Checking if at least $required_nodes Kubernetes nodes are ready for $provider..."
+
+    if [[ "$provider" == "Minikube" || "$provider" == "Kind" ]]; then
+        return 0
+    fi
+
+    while [ $attempts -lt $max_attempts ]; do
+        READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ')
+
+        if [ "$READY_NODES" -ge $required_nodes ]; then
+            echo_info "$provider cluster: Required nodes are ready. ($READY_NODES nodes)"
+            return 0
+        fi
+
+        attempts=$((attempts + 1))
+        echo_detail "Waiting for nodes to become ready on $provider... ($attempts/$max_attempts, currently $READY_NODES node(s) ready)"
+        sleep $sleep_time
+    done
+
+    echo_error "At least $required_nodes Kubernetes nodes must be ready for $provider, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
+    echo_primary "Please ensure 3 nodes are ready before proceeding."
+    exit 1
+}
+
+# Function to warn on Minikube or Kind deployment
+warn_minikube_kind() {
+    local provider="$1"
+    echo_primary "Detected $provider cluster."
+    echo_primary "OpenGovernance uses resources that may require at least 16GB of RAM for stability on desktops."
+
+    echo_prompt -n "Do you wish to proceed? (yes/no): "
+    read -r proceed < /dev/tty
+    USER_INPUTS+=("$provider proceed: $proceed")
+
+    if [[ "$proceed" == "yes" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to configure DigitalOcean app
+configure_digitalocean_app() {
+    if [[ "$DIGITALOCEAN_APP_CONFIGURED" == "true" ]]; then
+        echo_info "DigitalOcean application is already configured."
+        return
+    fi
+
+    echo_primary "How would you like to configure the OpenGovernance application?"
+    echo_primary "1) Configure with HTTPS and Hostname"
+    echo_primary "2) Configure without HTTPS"
+    echo_primary "3) No further configuration required"
+
+    while true; do
+        echo_prompt -n "Select an option (1-3): "
+        read -r config_choice < /dev/tty
+        USER_INPUTS+=("DigitalOcean configuration choice: $config_choice")
+        save_state  # Save state after user input
+
+        case "$config_choice" in
+            1)
+                INSTALL_TYPE=1
+                ;;
+            2)
+                INSTALL_TYPE=2
+                ;;
+            3)
+                INSTALL_TYPE=3
+                ;;
+            *)
+                echo_error "Invalid selection. Please choose between 1 and 3."
+                continue
+                ;;
+        esac
+
+        break
+    done
+
+    case "$INSTALL_TYPE" in
+        1|2)
+            local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/do-automation.sh"
+            echo_info "Running DigitalOcean automation script with installation type $INSTALL_TYPE."
+            save_state
+
+            if curl --head --silent --fail "$script_url" >/dev/null; then
+                echo_detail "Executing DigitalOcean automation script."
+                curl -sL "$script_url" | bash -s -- --type "$INSTALL_TYPE" --kube-namespace "$KUBE_NAMESPACE"
+                echo_info "DigitalOcean automation script executed successfully."
+                DIGITALOCEAN_APP_CONFIGURED="true"
+                save_state
+            else
+                echo_error "DigitalOcean automation script is not accessible at $script_url."
+                exit 1
+            fi
+            ;;
+        3)
+            setup_port_forwarding
+            ;;
+    esac
+}
+
+# Function to set up port-forwarding
+setup_port_forwarding() {
+    echo_primary "Setting up port-forwarding to access OpenGovernance locally."
+    if kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
+        PORT_FORWARD_PID=$!
+    
+        sleep 5  # Wait briefly to ensure port-forwarding is established
+    
+        if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
+            echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
+            echo_prompt "OpenGovernance is accessible at http://localhost:8080"
+            echo_prompt "To sign in, use: Username: admin@opengovernance.io, Password: password"
+            echo_prompt "To terminate port-forwarding: kill $PORT_FORWARD_PID"
+        else
+            echo_error "Port-forwarding failed to establish."
+            provide_port_forward_instructions
+        fi
+    else
+        echo_error "Failed to initiate port-forwarding."
+        provide_port_forward_instructions
+    fi
+}
+
+
 # Function to save state
 save_state() {
     {
@@ -680,11 +874,11 @@ create_unique_digitalocean_cluster() {
                     KUBE_CLUSTER_NAME="$new_cluster_name"
                     # Proceed to install OpenGovernance with Helm
                     install_opengovernance_with_helm
-                    return
+                    return  # Exit the function after installing
                     ;;
                 2)
                     echo_primary "Please enter a different cluster name."
-                    continue
+                    continue  # Go back to prompt for a new name
                     ;;
                 3)
                     echo_primary "Exiting."
@@ -694,6 +888,7 @@ create_unique_digitalocean_cluster() {
                     echo_error "Invalid selection. Please choose between 1 and 3."
                     ;;
             esac
+            continue  # Loop back to the start
         fi
 
         # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
@@ -773,230 +968,14 @@ create_unique_digitalocean_cluster() {
     done
 }
 
-# Function to install OpenGovernance with Helm
-install_opengovernance_with_helm() {
-    if [[ "$OPENGOVERNANCE_INSTALLED" == "true" ]]; then
-        echo_info "OpenGovernance is already installed."
-        return
-    fi
-
-    echo_detail "Adding OpenGovernance Helm repository."
-    if ! helm_quiet repo add opengovernance https://opengovern.github.io/charts; then
-        echo_error "Failed to add OpenGovernance Helm repository."
-        exit 1
-    fi
-
-    echo_detail "Updating Helm repositories."
-    if ! helm_quiet repo update; then
-        echo_error "Failed to update Helm repositories."
-        exit 1
-    fi
-
-    # Ensure KUBE_NAMESPACE is set
-    KUBE_NAMESPACE="${KUBE_NAMESPACE:-opengovernance}"
-    echo_detail "Installing OpenGovernance via Helm in namespace '$KUBE_NAMESPACE' (5-10 mins)."
-    save_state  # Save state before starting Helm installation
-    if ! helm_quiet install opengovernance opengovernance/opengovernance \
-        -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait; then  # Timeout increased to 15m
-        echo_error "Helm installation failed."
-        exit 1
-    fi
-
-    echo_detail "OpenGovernance installed successfully."
-    OPENGOVERNANCE_INSTALLED="true"
-    save_state  # Save state after Helm installation
-
-    check_pods_and_jobs
-
-    # Check if the current provider is DigitalOcean
-    if [[ "$CURRENT_PROVIDER" == "DigitalOcean" ]]; then
-        echo_info "Detected DigitalOcean as the current provider. Executing DigitalOcean automation script."
-
-        # Invoke the configuration prompt before running the automation script
-        configure_digitalocean_app
-    else
-        # For other providers, proceed to set up port-forwarding
-        setup_port_forwarding
-    fi
-}
-
-# Function to check pods and jobs
-check_pods_and_jobs() {
-    echo_detail "Checking pod and job statuses in namespace '$KUBE_NAMESPACE'."
-    if ! kubectl get pods -n "$KUBE_NAMESPACE" >&3 2>&1; then
-        echo_error "Failed to get pod statuses."
-    fi
-
-    if ! kubectl get jobs -n "$KUBE_NAMESPACE" >&3 2>&1; then
-        echo_error "Failed to get job statuses."
-    fi
-}
-
-# Function to provide port-forwarding instructions manually
-provide_port_forward_instructions() {
-    echo_primary "Please set up port-forwarding manually using the following command:"
-    echo_prompt "kubectl port-forward -n \"$KUBE_NAMESPACE\" service/nginx-proxy 8080:80"
-    echo_prompt "Then, access OpenGovernance at http://localhost:8080"
-    echo_prompt "Use the following default credentials to sign in:"
-    echo_prompt "  Username: admin@opengovernance.io"
-    echo_prompt "  Password: password"
-}
-
-# Function to check if Kubernetes nodes are ready, with specific checks for cloud providers, Minikube, and Kind
-check_ready_nodes() {
-    local provider="$1"
-    local required_nodes=3
-    local attempts=0
-    local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
-    local sleep_time=30
-
-    echo_info "Checking if at least $required_nodes Kubernetes nodes are ready for $provider..."
-
-    if [[ "$provider" == "Minikube" || "$provider" == "Kind" ]]; then
-        # For Minikube and Kind, no strict node requirement
-        return 0
-    fi
-
-    while [ $attempts -lt $max_attempts ]; do
-        READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ')
-
-        if [ "$READY_NODES" -ge $required_nodes ]; then
-            echo_info "$provider cluster: Required nodes are ready. ($READY_NODES nodes)"
-            return 0
-        fi
-
-        attempts=$((attempts + 1))
-        echo_detail "Waiting for nodes to become ready on $provider... ($attempts/$max_attempts, currently $READY_NODES node(s) ready)"
-        sleep $sleep_time
-    done
-
-    echo_error "At least $required_nodes Kubernetes nodes must be ready for $provider, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
-    echo_primary "Please ensure 3 nodes are ready before proceeding."
-    exit 1
-}
-
-# Function to warn user on Minikube or Kind deployment
-warn_minikube_kind() {
-    local provider="$1"
-    echo_primary "Detected $provider cluster."
-    echo_primary "OpenGovernance uses OpenSearch with 3 nodes, which can be resource-intensive on desktops/laptops."
-    echo_primary "We strongly recommend at least 16GB of RAM for stability."
-
-    echo_prompt -n "Do you wish to proceed? (yes/no): "
-    read -r proceed < /dev/tty
-    USER_INPUTS+=("$provider proceed: $proceed")
-
-    if [[ "$proceed" == "yes" ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Function to configure DigitalOcean app
-configure_digitalocean_app() {
-    if [[ "$DIGITALOCEAN_APP_CONFIGURED" == "true" ]]; then
-        echo_info "DigitalOcean application is already configured."
-        return
-    fi
-
-    echo_primary "How would you like to configure the OpenGovernance application?"
-    echo_primary "It takes 2-5 mins to complete."
-    echo_primary "1) Configure with HTTPS and Hostname (DNS records required after installation)"
-    echo_primary "2) Configure without HTTPS (DNS records required after installation)"
-    echo_primary "3) No further configuration required"
-    echo_primary ""
-    echo_primary "You will need to create DNS records for your hostname."
-
-    while true; do
-        echo_prompt -n "Select an option (1-3): "
-        read -r config_choice < /dev/tty
-        USER_INPUTS+=("DigitalOcean configuration choice: $config_choice")
-        save_state  # Save state after user input
-
-        case "$config_choice" in
-            1)
-                INSTALL_TYPE=1
-                ;;
-            2)
-                INSTALL_TYPE=2
-                ;;
-            3)
-                INSTALL_TYPE=3
-                ;;
-            *)
-                echo_error "Invalid selection. Please choose between 1 and 3."
-                continue
-                ;;
-        esac
-
-        break
-    done
-
-    case "$INSTALL_TYPE" in
-        1|2)
-            # Map user choice to script arguments
-            # 1 -> --type 1
-            # 2 -> --type 2
-            local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/do-automation.sh"
-            echo_info "Executing DigitalOcean automation script with installation type $INSTALL_TYPE."
-            save_state  # Save state before executing automation script
-
-            if curl --head --silent --fail "$script_url" >/dev/null; then
-                echo_detail "Fetching and executing DigitalOcean automation script."
-                # Download and execute the script, passing the installation type and Kubernetes namespace
-                curl -sL "$script_url" | bash -s -- --type "$INSTALL_TYPE" --kube-namespace "$KUBE_NAMESPACE"
-                echo_info "DigitalOcean automation script executed successfully."
-                DIGITALOCEAN_APP_CONFIGURED="true"
-                save_state  # Save state after executing automation script
-            else
-                echo_error "DigitalOcean automation script is not accessible at $script_url."
-                exit 1
-            fi
-            ;;
-        3)
-            # Skip automation script and proceed to port-forwarding
-            echo_primary "Skipping further configuration as per user selection."
-            setup_port_forwarding
-            ;;
-    esac
-}
-
-# Function to set up port-forwarding
-setup_port_forwarding() {
-    echo_primary "Setting up port-forwarding to access OpenGovernance locally."
-    if kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
-        PORT_FORWARD_PID=$!
-    
-        # Wait briefly to ensure port-forwarding is established
-        sleep 5
-    
-        if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
-            echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
-            echo_prompt "OpenGovernance is accessible at http://localhost:8080"
-            echo_prompt "To sign in, use the following default credentials:"
-            echo_prompt "  Username: admin@opengovernance.io"
-            echo_prompt "  Password: password"
-            echo_prompt "You can terminate port-forwarding by running: kill $PORT_FORWARD_PID"
-        else
-            echo_error "Port-forwarding failed to establish."
-            provide_port_forward_instructions
-        fi
-    else
-        echo_error "Failed to initiate port-forwarding."
-        provide_port_forward_instructions
-    fi
-}
-
-# Function to provide port-forwarding instructions manually
-provide_port_forward_instructions() {
-    echo_primary "Please set up port-forwarding manually using the following command:"
-    echo_prompt "kubectl port-forward -n \"$KUBE_NAMESPACE\" service/nginx-proxy 8080:80"
-    echo_prompt "Then, access OpenGovernance at http://localhost:8080"
-    echo_prompt "Use the following default credentials to sign in:"
-    echo_prompt "  Username: admin@opengovernance.io"
-    echo_prompt "  Password: password"
-}
+# The rest of the script remains unchanged, including functions:
+# - install_opengovernance_with_helm
+# - check_pods_and_jobs
+# - provide_port_forward_instructions
+# - check_ready_nodes
+# - warn_minikube_kind
+# - configure_digitalocean_app
+# - setup_port_forwarding
 
 # -----------------------------
 # State Management
