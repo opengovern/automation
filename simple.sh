@@ -26,6 +26,10 @@ exec 3>>"$LOGFILE"
 MISSING_TOOLS=()
 AVAILABLE_PLATFORMS=()
 
+# Initialize cluster-related variables
+KUBE_REGION="${KUBE_REGION:-nyc1}"            # Default region, can be overridden by environment variable
+KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-}"    # Initially empty, will be set based on detection or user input
+
 # Detect Operating System
 OS_TYPE="$(uname -s)"
 case "$OS_TYPE" in
@@ -91,11 +95,19 @@ command_exists() {
 # Function to check tool dependencies
 check_dependencies() {
     local required_tools=("helm" "kubectl" "jq" "curl")
+    local additional_tools=("doctl")  # Added 'doctl' for DigitalOcean
 
     for tool in "${required_tools[@]}"; do
         if ! command_exists "$tool"; then
             echo_error "$tool is required but not installed."
             MISSING_TOOLS+=("$tool")
+        fi
+    done
+
+    for tool in "${additional_tools[@]}"; do
+        if ! command_exists "$tool"; then
+            echo_error "$tool is recommended but not installed. If you plan to deploy to DigitalOcean, please install $tool."
+            # Not exiting immediately; 'doctl' is optional based on deployment needs
         fi
     done
 
@@ -350,6 +362,144 @@ provide_port_forward_instructions() {
 }
 
 # -----------------------------
+# New Function Definitions
+# -----------------------------
+
+# Function to create a Kubernetes cluster with a given name on DigitalOcean
+create_cluster_in_digital_ocean() {
+    local cluster_name="$1"
+
+    # Before creating the cluster, provide the region and cluster name
+    echo_primary "Cluster Name: '$cluster_name'"
+    echo_primary "Region: '$KUBE_REGION'"
+
+    # Ask if they want to change the cluster name or region
+    echo_prompt -n "Do you want to change the cluster name or region? Press 'y' to change, or press 'Enter' to proceed within 30 seconds: "
+    read -t 30 response < /dev/tty
+    if [ $? -eq 0 ]; then
+        # User provided input
+        if [ -z "$response" ]; then
+            # User pressed Enter, proceed
+            :
+        elif [[ "$response" =~ ^[Yy] ]]; then
+            # User wants to change the cluster name and/or region
+            # Prompt for new cluster name
+            echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
+            read new_cluster_name < /dev/tty
+            if [ -n "$new_cluster_name" ]; then
+                cluster_name="$new_cluster_name"
+                KUBE_CLUSTER_NAME="$new_cluster_name"
+            fi
+
+            # Prompt for new region
+            echo_prompt -n "Enter new region [current: $KUBE_REGION]: "
+            read new_region < /dev/tty
+            if [ -n "$new_region" ]; then
+                KUBE_REGION="$new_region"
+            fi
+        fi
+    else
+        # Timeout, no response
+        echo_prompt ""
+        echo_detail "No response received in 30 seconds. Proceeding with current cluster name and region."
+    fi
+
+    # Proceed with creating the cluster
+    echo_primary "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'... (Expected time: 3-5 minutes)"
+    doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
+        --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
+
+    # Wait for nodes to become ready
+    check_ready_nodes
+}
+
+# Function to prompt for a new cluster name ensuring it's not empty
+prompt_new_cluster_name() {
+    local new_name
+    while true; do
+        echo_prompt -n "Enter a new name for the Kubernetes cluster: "
+        read new_name < /dev/tty
+        if [[ -n "$new_name" ]]; then
+            echo "$new_name"
+            return 0
+        else
+            echo_error "Cluster name cannot be empty. Please enter a valid name."
+        fi
+    done
+}
+
+# Function to check if at least three Kubernetes nodes are ready
+check_ready_nodes() {
+    local attempts=0
+    local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
+    local sleep_time=30
+
+    while [ $attempts -lt $max_attempts ]; do
+        READY_NODES=$(kubectl get nodes --no-headers | grep -c ' Ready ')
+        if [ "$READY_NODES" -ge 3 ]; then
+            echo_info "Required nodes are ready. ($READY_NODES nodes)"
+            return 0
+        fi
+
+        attempts=$((attempts + 1))
+        echo_detail "Waiting for nodes to become ready... ($attempts/$max_attempts)"
+        sleep $sleep_time
+    done
+
+    echo_error "At least three Kubernetes nodes must be ready, but only $READY_NODES node(s) are ready after 5 minutes."
+    exit 1
+}
+
+# -----------------------------
+# New Integration Function
+# -----------------------------
+
+# Function to handle cluster creation on DigitalOcean if needed
+handle_digitalocean_cluster() {
+    echo_primary "Handling DigitalOcean Kubernetes cluster setup."
+
+    # Check if a DigitalOcean Kubernetes cluster is already connected
+    cluster_info=$(get_cluster_info) || true
+
+    if [[ "$cluster_info" == *".k8s.ondigitalocean.com"* ]]; then
+        echo_info "Existing DigitalOcean Kubernetes cluster detected."
+        # Optionally, you can prompt to use the existing cluster or create a new one
+        echo_prompt -n "Do you want to use the existing DigitalOcean Kubernetes cluster? Press 'y' to use, 'n' to create a new one: "
+        read -r use_existing < /dev/tty
+        if [[ "$use_existing" =~ ^[Yy]$ ]]; then
+            echo_primary "Using the existing DigitalOcean Kubernetes cluster."
+            return
+        else
+            # Prompt for new cluster name
+            new_cluster_name=$(prompt_new_cluster_name)
+            # Create a new cluster
+            create_cluster_in_digital_ocean "$new_cluster_name"
+        fi
+    else
+        echo_primary "No DigitalOcean Kubernetes cluster detected."
+
+        # Check if DigitalOcean CLI is configured
+        if command_exists "doctl"; then
+            echo_primary "DigitalOcean CLI (doctl) is installed and configured."
+            # Prompt to create a new cluster
+            echo_prompt -n "Do you want to create a new Kubernetes cluster on DigitalOcean? Press 'y' to create, or press 'n' to skip: "
+            read -r create_cluster < /dev/tty
+            if [[ "$create_cluster" =~ ^[Yy]$ ]]; then
+                # Prompt for cluster name
+                new_cluster_name=$(prompt_new_cluster_name)
+                # Create the cluster
+                create_cluster_in_digital_ocean "$new_cluster_name"
+            else
+                echo_primary "Skipping Kubernetes cluster creation on DigitalOcean."
+            fi
+        else
+            echo_error "DigitalOcean CLI (doctl) is not installed or not configured."
+            echo_primary "Please install and authenticate 'doctl' if you wish to deploy to DigitalOcean."
+        fi
+    fi
+}
+
+# -----------------------------
 # Main Execution Flow
 # -----------------------------
 
@@ -357,6 +507,12 @@ echo_info "OpenGovernance installation script started."
 
 check_dependencies
 check_provider_clis
+
+# Handle DigitalOcean cluster setup if DigitalOcean is among available platforms
+if [[ " ${AVAILABLE_PLATFORMS[*]} " == *"DigitalOcean"* ]]; then
+    handle_digitalocean_cluster
+fi
+
 detect_kubernetes_provider_and_deploy
 
 echo_primary "OpenGovernance installation script completed successfully."
