@@ -242,6 +242,7 @@ deploy_via_curl() {
 
 # Function to allow user to choose deployment based on available platforms
 choose_deployment() {
+    echo_primary "Multiple Cloud Platforms are available"
     echo_primary "Which platform would you like to deploy OpenGovernance to?"
 
     local option=1
@@ -358,22 +359,28 @@ check_terraform_or_opentofu() {
     fi
 }
 
-# Function to prepare the infrastructure directory
 prepare_infrastructure_directory() {
+    # Set the infrastructure directory
+    INFRA_DIR="${INFRA_DIR:-$HOME/deploy-opengovernance}"
+
     # Clone or update the infrastructure repository
     if [ -d "$INFRA_DIR" ]; then
-        echo_info "Infrastructure directory already exists at $INFRA_DIR. Updating repository..."
-        cd "$INFRA_DIR"
+        echo_info "Infrastructure directory exists at $INFRA_DIR. Updating repository..."
+        cd "$INFRA_DIR" || { echo_error "Failed to navigate to $INFRA_DIR"; return 1; }
         git pull
     else
         echo_info "Cloning infrastructure repository to $INFRA_DIR..."
         git clone https://github.com/opengovern/deploy-opengovernance.git "$INFRA_DIR"
-        cd "$INFRA_DIR/aws/infrastructure"
     fi
 
-    # Navigate to the AWS infrastructure directory
+    # Set and navigate to the AWS infrastructure directory
     INFRA_DIR="$INFRA_DIR/aws/infrastructure"
-    cd "$INFRA_DIR"
+    if [ -d "$INFRA_DIR" ]; then
+        cd "$INFRA_DIR" || { echo_error "Failed to navigate to $INFRA_DIR/aws/infrastructure"; return 1; }
+    else
+        echo_error "Expected directory $INFRA_DIR does not exist. Clone might have failed."
+        return 1
+    fi
 }
 
 # Function to deploy infrastructure to AWS
@@ -381,28 +388,29 @@ deploy_infrastructure_to_aws() {
     echo_info "Deploying infrastructure to AWS. This step may take 10-15 minutes..."
 
     if [ "$INFRA_TOOL" == "terraform" ]; then
-        echo_info "Initializing Terraform..."
-        terraform init
+        echo_info "Using Terraform for deployment."
 
-        echo_info "Planning Terraform deployment..."
-        terraform plan
+        terraform init && terraform plan && terraform apply --auto-approve || {
+            echo_error "Terraform deployment failed."
+            return 1
+        }
 
-        echo_info "Applying Terraform deployment..."
-        terraform apply --auto-approve
     elif [ "$INFRA_TOOL" == "tofu" ]; then
-        echo_info "Initializing OpenTofu..."
-        tofu init
+        echo_info "Using OpenTofu for deployment."
 
-        echo_info "Planning OpenTofu deployment..."
-        tofu plan
-
-        echo_info "Applying OpenTofu deployment..."
-        tofu apply -auto-approve
+        tofu init && tofu plan && tofu apply -auto-approve || {
+            echo_error "OpenTofu deployment failed."
+            return 1
+        }
+    else
+        echo_error "Unsupported infrastructure tool: $INFRA_TOOL"
+        return 1
     fi
 
     echo_info "Configuring kubectl to connect to the new EKS cluster..."
     eval "$("$INFRA_TOOL" output -raw configure_kubectl)"
 }
+
 
 # Function to install OpenGovernance with Helm
 install_opengovernance_with_helm() {
