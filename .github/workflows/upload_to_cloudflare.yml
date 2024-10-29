@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - main
-    paths:
-      - simple.sh  # Only trigger if simple.sh is updated
+#    paths:
+#      - simple.sh
 
 jobs:
   upload:
@@ -66,7 +66,7 @@ jobs:
           git push https://${{ secrets.OG_RELEASE_TAG_UPDATE }}@github.com/opengovern/platform-configuration "$new_tag"
 
           # Set the new tag as an output
-          echo "::set-output name=new_tag::$new_tag"
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         if: ${{ success() && steps.versioning.outcome == 'success' }}
@@ -82,4 +82,5 @@ jobs:
 
       - name: Display new tag
         if: ${{ success() && steps.versioning.outcome == 'success' }}
-        run: echo "Created new tag: ${{ steps.versioning.outputs.new_tag }}"
+        run: |
+          echo "Created new tag: ${{ steps.versioning.outputs.new_tag }}"
