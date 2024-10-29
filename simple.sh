@@ -617,7 +617,7 @@ check_opengovernance_installation
 if is_kubectl_configured; then
     detect_kubernetes_provider_and_deploy
 else
-    echo_primary "kubectl is not configured."
+    #echo_primary "kubectl is not configured."
     choose_deployment
 fi
 
