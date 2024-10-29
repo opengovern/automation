@@ -1,0 +1,36 @@
+name: Upload to Cloudflare R2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - simple.sh  # Only trigger if simple.sh is updated
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install AWS CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y awscli
+
+      - name: Configure AWS CLI for Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}
+        run: |
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set default.region us-east-1
+
+      - name: Upload simple.sh to Cloudflare R2
+        env:
+          BUCKET_NAME: "opengovernance"
+        run: |
+          aws --endpoint-url https://2d6651d596663cce624bd513238102e7.r2.cloudflarestorage.com s3 cp simple.sh s3://$BUCKET_NAME/simple.sh

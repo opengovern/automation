@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 
 # -----------------------------
+# Configuration Variables
+# -----------------------------
+# Default Kubernetes namespace for OpenGovernance
+KUBE_NAMESPACE="opengovernance"
+
+# Default Kubernetes cluster name for OpenGovernance
+KUBE_CLUSTER_NAME="opengovernance"
+
+# Default Kubernetes cluster region for OpenGovernance
+KUBE_REGION="nyc3"
+
+
+# -----------------------------
 # Script Configuration
 # -----------------------------
 
@@ -516,7 +529,7 @@ deploy_to_digitalocean() {
         fi
     else
         # Create the cluster since it doesn't exist
-        create_cluster "$KUBE_CLUSTER_NAME"
+        create_cluster_in_digitalocean "$KUBE_CLUSTER_NAME"
     fi
 
     # Wait for nodes to be ready
@@ -527,7 +540,7 @@ deploy_to_digitalocean() {
 }
 
 # Function to create a Kubernetes cluster on DigitalOcean
-create_cluster() {
+create_cluster_in_digitalocean() {
     local cluster_name="$1"
 
     # Before creating the cluster, provide the region and cluster name
