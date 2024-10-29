@@ -239,12 +239,21 @@ detect_kubernetes_provider_and_deploy() {
             echo_primary "Detected DigitalOcean Kubernetes cluster. Deploying OpenGovernance to DigitalOcean."
             deploy_to_digitalocean
             ;;
+        *"minikube"*)
+            echo_primary "Detected Minikube cluster. Deploying OpenGovernance to Minikube."
+            deploy_to_minikube
+            ;;
+        *"kind"*)
+            echo_primary "Detected Kind cluster. Deploying OpenGovernance to Kind."
+            deploy_to_kind
+            ;;
         *)
             echo_primary "Unable to identify Kubernetes provider."
             choose_deployment
             ;;
     esac
 }
+
 
 
 # Function to deploy via curl
@@ -590,27 +599,56 @@ create_cluster_in_digitalocean() {
     check_ready_nodes
 }
 
-# Function to check if Kubernetes nodes are ready
+# Function to check if Kubernetes nodes are ready, with specific checks for cloud providers, Minikube, and Kind
 check_ready_nodes() {
+    local provider="$1"
+    local required_nodes=3
     local attempts=0
     local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
     local sleep_time=30
 
+    echo_info "Checking if at least $required_nodes Kubernetes nodes are ready for $provider..."
+
+    if [[ "$provider" == "Minikube" || "$provider" == "Kind" ]]; then
+        warn_minikube_kind "$provider"
+        return 0
+    fi
+
     while [ $attempts -lt $max_attempts ]; do
         READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ')
-        if [ "$READY_NODES" -ge 3 ]; then
-            echo_info "Required nodes are ready. ($READY_NODES nodes)"
+        
+        if [ "$READY_NODES" -ge $required_nodes ]; then
+            echo_info "$provider cluster: Required nodes are ready. ($READY_NODES nodes)"
             return 0
         fi
 
         attempts=$((attempts + 1))
-        echo_detail "Waiting for nodes to become ready... ($attempts/$max_attempts)"
+        echo_detail "Waiting for nodes to become ready on $provider... ($attempts/$max_attempts, currently $READY_NODES node(s) ready)"
         sleep $sleep_time
     done
 
-    echo_error "At least three Kubernetes nodes must be ready, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
+    echo_error "At least $required_nodes Kubernetes nodes must be ready for $provider, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
+    echo_warning "$provider requires at least 3 nodes (4 vCPUs, 16GB RAM each) for optimal performance with OpenGovernance."
+    echo_primary "Please ensure 3 nodes are ready before proceeding."
     exit 1
 }
+
+# Function to warn user on Minikube or Kind deployment
+warn_minikube_kind() {
+    local provider="$1"
+    echo_warning "Detected $provider cluster."
+    echo_warning "No minimum node requirement for $provider, but note:"
+    echo_warning "OpenGovernance uses OpenSearch with 3 nodes, which can be resource-intensive on desktops/laptops."
+    echo_warning "We strongly recommend at least 16GB of RAM for stability."
+    
+    read -p "Do you wish to proceed? (yes/no): " proceed
+    if [[ "$proceed" != "yes" ]]; then
+        echo_primary "Deployment aborted by user."
+        exit 1
+    fi
+}
+
+
 
 # -----------------------------
 # Main Execution Flow
