@@ -471,109 +471,136 @@ choose_deployment() {
     done
 }
 
-# Function to check if OpenGovernance is already installed
-check_opengovernance_installation() {
-    # Check if OpenGovernance Helm repo is added and OpenGovernance is installed
-    if helm repo list | grep -qw "opengovernance" && helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
-        # Ensure jq is installed
-        if ! command -v jq &> /dev/null; then
-            echo_error "jq is not installed. Please install jq to enable JSON parsing."
-            exit 1
-        fi
+# Function to deploy to DigitalOcean (Corrected)
+deploy_to_digitalocean() {
+    # Ensure required variables are set
+    DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc1}"
+    KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
-        # Check Helm release status using jq
-        local helm_release_status
-        helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o json | jq -r '.[0].status // "unknown"')
+    # Check if the cluster exists using 'doctl kubernetes cluster get'
+    if doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" >/dev/null 2>&1; then
+        echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
-        if [ "$helm_release_status" == "deployed" ]; then
-            echo_error "An existing OpenGovernance installation was found. Unable to proceed."
-            exit 1  # Exit the script with an error
-        elif [ "$helm_release_status" == "failed" ]; then
-            echo_error "OpenGovernance is installed but not in 'deployed' state (current status: $helm_release_status)."
-            exit 1
-        else
-            echo_error "OpenGovernance is in an unexpected state ('$helm_release_status')."
-            exit 1
-        fi
+        # Prompt user for choice
+        echo_primary "Choose an option for deploying to DigitalOcean Kubernetes cluster:"
+        echo_primary "1. Use existing cluster '$KUBE_CLUSTER_NAME'"
+        echo_primary "2. Create a new cluster"
+        echo_primary "3. Exit"
+
+        echo_prompt -n "Select an option (1-3): "
+        read -r do_option < /dev/tty
+
+        case "$do_option" in
+            1)
+                echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+                # Retrieve kubeconfig for the cluster
+                doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+                # Proceed to install OpenGovernance with Helm
+                install_opengovernance_with_helm
+                ;;
+            2)
+                # Prompt user for new cluster name with validation
+                create_unique_digitalocean_cluster
+                ;;
+            3)
+                echo_primary "Exiting."
+                exit 0
+                ;;
+            *)
+                echo_error "Invalid selection. Exiting."
+                exit 1
+                ;;
+        esac
     else
-        echo_info "Checking for any existing OpenGovernance Installation...No existing Installations found."
-        return 1
-    fi
-}
+        # Cluster does not exist, prompt user to create or exit
+        echo_primary "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
 
-# Function to deploy to AWS
-deploy_to_aws() {
-    check_terraform_or_opentofu
-    prepare_infrastructure_directory "aws"
-    deploy_infrastructure_to_aws
+        echo_primary "Choose an option:"
+        echo_primary "1. Create a new cluster named '$KUBE_CLUSTER_NAME'"
+        echo_primary "2. Exit"
+
+        echo_prompt -n "Select an option (1-2): "
+        read -r do_option < /dev/tty
+
+        case "$do_option" in
+            1)
+                # Prompt user for new cluster name with validation
+                create_unique_digitalocean_cluster
+                ;;
+            2)
+                echo_primary "Exiting."
+                exit 0
+                ;;
+            *)
+                echo_error "Invalid selection. Exiting."
+                exit 1
+                ;;
+        esac
+    fi
+
+    # Wait for nodes to be ready
+    check_ready_nodes "DigitalOcean"
+
+    # Proceed to install OpenGovernance with Helm
     install_opengovernance_with_helm
 }
 
-# Function to check if Terraform or OpenTofu is installed
-check_terraform_or_opentofu() {
-    if command_exists "terraform"; then
-        INFRA_TOOL="terraform"
-        echo_info "Terraform is installed."
-    elif command_exists "tofu"; then
-        INFRA_TOOL="tofu"
-        echo_info "OpenTofu is installed."
-    else
-        echo_error "Neither Terraform nor OpenTofu is installed. Please install one of them and retry."
-        exit 1
-    fi
-}
+# Function to create a unique Kubernetes cluster on DigitalOcean (Corrected)
+create_unique_digitalocean_cluster() {
+    while true; do
+        echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
+        read -r new_cluster_name < /dev/tty
 
-prepare_infrastructure_directory() {
-    local provider="$1"
-    # Set the infrastructure directory
-    INFRA_DIR="${INFRA_DIR:-$HOME/deploy-opengovernance}"
+        # Check if the cluster name is empty
+        if [[ -z "$new_cluster_name" ]]; then
+            echo_error "Cluster name cannot be empty. Please enter a valid name."
+            continue
+        fi
 
-    # Clone or update the infrastructure repository
-    if [ -d "$INFRA_DIR" ]; then
-        echo_info "Infrastructure directory exists at $INFRA_DIR. Updating repository..."
-        cd "$INFRA_DIR" || { echo_error "Failed to navigate to $INFRA_DIR"; return 1; }
-        git pull
-    else
-        echo_info "Cloning infrastructure repository to $INFRA_DIR..."
-        git clone https://github.com/opengovern/deploy-opengovernance.git "$INFRA_DIR"
-    fi
+        # Check if the cluster name already exists using 'doctl kubernetes cluster get'
+        if doctl kubernetes cluster get "$new_cluster_name" >/dev/null 2>&1; then
+            echo_error "A Kubernetes cluster named '$new_cluster_name' already exists. Please choose a different name."
+            # Optionally, list existing clusters to help the user choose
+            echo_primary "Existing clusters:"
+            doctl kubernetes cluster list --format "Name,Region" --no-header
+            continue
+        fi
 
-    # Set and navigate to the provider-specific infrastructure directory
-    INFRA_DIR="$INFRA_DIR/$provider/infrastructure"
-    if [ -d "$INFRA_DIR" ]; then
-        cd "$INFRA_DIR" || { echo_error "Failed to navigate to $INFRA_DIR"; return 1; }
-    else
-        echo_error "Expected directory $INFRA_DIR does not exist. Clone might have failed."
-        return 1
-    fi
-}
+        # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
+        if [[ ! "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
+            echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
+            continue
+        fi
 
-# Function to deploy infrastructure to AWS
-deploy_infrastructure_to_aws() {
-    echo_info "Deploying infrastructure to AWS. This step may take 10-15 minutes..."
+        # Prompt to confirm region (optional)
+        echo_prompt -n "Enter region for the new cluster [Default: $DIGITALOCEAN_REGION]: "
+        read -r input_region < /dev/tty
+        if [[ -n "$input_region" ]]; then
+            DIGITALOCEAN_REGION="$input_region"
+        fi
 
-    if [ "$INFRA_TOOL" == "terraform" ]; then
-        echo_info "Using Terraform for deployment."
+        # Confirm the details
+        echo_primary "Creating DigitalOcean Kubernetes cluster '$new_cluster_name' in region '$DIGITALOCEAN_REGION'..."
+        echo_primary "This step may take 3-5 minutes."
 
-        terraform init && terraform plan && terraform apply --auto-approve || {
-            echo_error "Terraform deployment failed."
-            return 1
-        }
+        # Create the cluster
+        if doctl kubernetes cluster create "$new_cluster_name" --region "$DIGITALOCEAN_REGION" \
+            --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait; then
+            echo_info "Cluster '$new_cluster_name' created successfully."
+        else
+            echo_error "Failed to create cluster '$new_cluster_name'. Please try again."
+            continue
+        fi
 
-    elif [ "$INFRA_TOOL" == "tofu" ]; then
-        echo_info "Using OpenTofu for deployment."
+        # Save kubeconfig for the cluster
+        doctl kubernetes cluster kubeconfig save "$new_cluster_name"
 
-        tofu init && tofu plan && tofu apply -auto-approve || {
-            echo_error "OpenTofu deployment failed."
-            return 1
-        }
-    else
-        echo_error "Unsupported infrastructure tool: $INFRA_TOOL"
-        return 1
-    fi
+        # Update the global cluster name variable
+        KUBE_CLUSTER_NAME="$new_cluster_name"
 
-    echo_info "Configuring kubectl to connect to the new EKS cluster..."
-    eval "$("$INFRA_TOOL" output -raw configure_kubectl)"
+        # Exit the loop after successful creation
+        break
+    done
 }
 
 # Function to install OpenGovernance with Helm
@@ -649,145 +676,6 @@ provide_port_forward_instructions() {
     echo_prompt "Use the following default credentials to sign in:"
     echo_prompt "  Username: admin@opengovernance.io"
     echo_prompt "  Password: password"
-}
-
-# Function to deploy to DigitalOcean (Corrected)
-deploy_to_digitalocean() {
-    # Ensure required variables are set
-    DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc1}"
-    KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
-
-    # Check if the cluster exists using 'doctl kubernetes cluster get'
-    if doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" >/dev/null 2>&1; then
-        echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
-
-        # Prompt user for choice
-        echo_primary "Choose an option for deploying to DigitalOcean Kubernetes cluster:"
-        echo_primary "1. Use existing cluster '$KUBE_CLUSTER_NAME'"
-        echo_primary "2. Create a new cluster"
-        echo_primary "3. Exit"
-
-        echo_prompt -n "Select an option (1-3): "
-        read -r do_option < /dev/tty
-
-        case "$do_option" in
-            1)
-                echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
-                # Check if OpenGovernance is already installed
-                if check_opengovernance_installation; then
-                    # If installation exists, the function will exit
-                    :
-                else
-                    # If no installation exists, proceed to install OpenGovernance
-                    # Retrieve kubeconfig for the cluster
-                    doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-                    # Proceed to install OpenGovernance with Helm
-                    install_opengovernance_with_helm
-                fi
-                ;;
-            2)
-                # Prompt user for new cluster name with validation
-                create_unique_digitalocean_cluster
-                ;;
-            3)
-                echo_primary "Exiting."
-                exit 0
-                ;;
-            *)
-                echo_error "Invalid selection. Exiting."
-                exit 1
-                ;;
-        esac
-    else
-        # Cluster does not exist, prompt user to create or exit
-        echo_primary "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
-
-        echo_primary "Choose an option:"
-        echo_primary "1. Create a new cluster named '$KUBE_CLUSTER_NAME'"
-        echo_primary "2. Exit"
-
-        echo_prompt -n "Select an option (1-2): "
-        read -r do_option < /dev/tty
-
-        case "$do_option" in
-            1)
-                # Prompt user for new cluster name with validation
-                create_unique_digitalocean_cluster
-                ;;
-            2)
-                echo_primary "Exiting."
-                exit 0
-                ;;
-            *)
-                echo_error "Invalid selection. Exiting."
-                exit 1
-                ;;
-        esac
-    fi
-
-    # Wait for nodes to be ready
-    check_ready_nodes "DigitalOcean"
-
-    # Proceed to install OpenGovernance with Helm
-    install_opengovernance_with_helm
-}
-
-# Function to create a unique Kubernetes cluster on DigitalOcean (Corrected)
-create_unique_digitalocean_cluster() {
-    while true; do
-        echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
-        read -r new_cluster_name < /dev/tty
-
-        # Check if the cluster name is empty
-        if [[ -z "$new_cluster_name" ]]; then
-            echo_error "Cluster name cannot be empty. Please enter a valid name."
-            continue
-        fi
-
-        # Check if the cluster name already exists using 'doctl kubernetes cluster get'
-        if doctl kubernetes cluster get "$new_cluster_name" >/dev/null 2>&1; then
-            echo_error "A Kubernetes cluster named '$new_cluster_name' already exists. Please choose a different name."
-            # Optionally, list existing clusters to help the user choose
-            echo_primary "Existing clusters:"
-            doctl kubernetes cluster list --format Name,Region --no-header -o table
-            continue
-        fi
-
-        # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
-        if [[ ! "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
-            echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
-            continue
-        fi
-
-        # Prompt to confirm region (optional)
-        echo_prompt -n "Enter region for the new cluster [Default: $DIGITALOCEAN_REGION]: "
-        read -r input_region < /dev/tty
-        if [[ -n "$input_region" ]]; then
-            DIGITALOCEAN_REGION="$input_region"
-        fi
-
-        # Confirm the details
-        echo_primary "Creating DigitalOcean Kubernetes cluster '$new_cluster_name' in region '$DIGITALOCEAN_REGION'..."
-        echo_primary "This step may take 3-5 minutes."
-
-        # Create the cluster
-        if doctl kubernetes cluster create "$new_cluster_name" --region "$DIGITALOCEAN_REGION" \
-            --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait; then
-            echo_info "Cluster '$new_cluster_name' created successfully."
-        else
-            echo_error "Failed to create cluster '$new_cluster_name'. Please try again."
-            continue
-        fi
-
-        # Save kubeconfig for the cluster
-        doctl kubernetes cluster kubeconfig save "$new_cluster_name"
-
-        # Update the global cluster name variable
-        KUBE_CLUSTER_NAME="$new_cluster_name"
-
-        # Exit the loop after successful creation
-        break
-    done
 }
 
 # Function to check if Kubernetes nodes are ready, with specific checks for cloud providers, Minikube, and Kind
