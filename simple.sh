@@ -249,8 +249,7 @@ deploy_via_curl() {
 
 # Function to allow user to choose deployment based on available platforms
 choose_deployment() {
-    echo_primary "Multiple Cloud Platforms are available"
-    echo_primary "Which platform would you like to deploy OpenGovernance to?"
+    echo_primary "Where would you like to deploy OpenGovernance to?"
 
     local option=1
     local opts=()
