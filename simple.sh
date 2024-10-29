@@ -22,6 +22,10 @@ exec > >(tee -a "$LOGFILE") 2>&1
 # Open file descriptor 3 for logging only
 exec 3>>"$LOGFILE"
 
+# Initialize arrays
+MISSING_TOOLS=()
+AVAILABLE_PLATFORMS=()
+
 # Detect Operating System
 OS_TYPE="$(uname -s)"
 case "$OS_TYPE" in
@@ -65,7 +69,7 @@ echo_primary() {
     echo_info "$message"
 }
 
-# Function to display detail messages to both console and log with timestamp, indented with 4 tabs
+# Function to display detail messages to both console and log with timestamp, indented with 4 spaces
 echo_detail() {
     local message="$1"
     local indent="    "  # 4 spaces
