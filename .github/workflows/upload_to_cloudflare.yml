@@ -37,7 +37,7 @@ jobs:
           SOURCE_FILE: ${{ vars.OG_INSTALLER_MAIN_INSTALLER_FILE }}
           TARGET_FILE: ${{ vars.OG_INSTALLER_ON_CLOUDFLARE_MAIN_INSTALLER_FILE }}
         run: |
-          aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://opengovernance/$TARGET_FILE"
+          aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://scripts/$TARGET_FILE"
 
       - name: Bump Version and Create Tag
         if: ${{ success() }}
