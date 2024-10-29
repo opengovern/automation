@@ -149,7 +149,8 @@ check_provider_clis() {
 # Function to get cluster info
 get_cluster_info() {
     if kubectl cluster-info > /dev/null 2>&1; then
-        kubectl cluster-info | grep -i "Kubernetes master" || true
+        # Extract the URL of the Kubernetes control plane
+        kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true
     else
         echo_error "kubectl is not configured correctly."
         return 1
