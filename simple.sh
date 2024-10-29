@@ -110,7 +110,7 @@ command_exists() {
 
 # Function to check tool dependencies
 check_dependencies() {
-    local required_tools=("helm" "kubectl" "jq" "curl")
+    local required_tools=("helm" "kubectl" "jq" "curl" "doctl")
 
     for tool in "${required_tools[@]}"; do
         if ! command_exists "$tool"; then
@@ -586,7 +586,7 @@ deploy_to_digitalocean() {
     install_opengovernance_with_helm
 }
 
-# Function to create a unique Kubernetes cluster on DigitalOcean (Corrected)
+# Function to create a unique Kubernetes cluster on DigitalOcean (Enhanced with Region Selection)
 create_unique_digitalocean_cluster() {
     while true; do
         echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
@@ -613,11 +613,46 @@ create_unique_digitalocean_cluster() {
             continue
         fi
 
-        # Prompt to confirm region (optional)
-        echo_prompt -n "Enter region for the new cluster [Default: $DIGITALOCEAN_REGION]: "
-        read -r input_region < /dev/tty
-        if [[ -n "$input_region" ]]; then
-            DIGITALOCEAN_REGION="$input_region"
+        # Prompt to change the default region
+        echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
+        echo_prompt -n "Do you wish to change the region? (yes/no): "
+        read -r change_region < /dev/tty
+
+        if [[ "$change_region" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            # Retrieve available regions
+            echo_info "Fetching available DigitalOcean regions..."
+            AVAILABLE_REGIONS=$(doctl kubernetes options regions | awk 'NR>1 {print $1}')
+
+            if [[ -z "$AVAILABLE_REGIONS" ]]; then
+                echo_error "Failed to retrieve available regions. Please ensure 'doctl' is authenticated and has the necessary permissions."
+                exit 1
+            fi
+
+            echo_primary "Available Regions:"
+            echo "$AVAILABLE_REGIONS" | nl -w2 -s'. '
+
+            while true; do
+                echo_prompt -n "Enter the desired region from the above list [Default: $DIGITALOCEAN_REGION]: "
+                read -r input_region < /dev/tty
+
+                # Use default if input is empty
+                if [[ -z "$input_region" ]]; then
+                    selected_region="$DIGITALOCEAN_REGION"
+                else
+                    selected_region="$input_region"
+                fi
+
+                # Validate the selected region
+                if echo "$AVAILABLE_REGIONS" | grep -qw "$selected_region"; then
+                    DIGITALOCEAN_REGION="$selected_region"
+                    echo_info "Region set to '$DIGITALOCEAN_REGION'."
+                    break
+                else
+                    echo_error "Invalid region selection. Please choose a region from the available list."
+                fi
+            done
+        else
+            echo_info "Using default region '$DIGITALOCEAN_REGION'."
         fi
 
         # Confirm the details
