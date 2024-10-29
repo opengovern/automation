@@ -1,11 +1,11 @@
-name: Production Release Manager
+name: Upload to Cloudflare R2
 
 on:
   push:
     branches:
       - main
     paths:
-      - simple.sh
+      - simple.sh  # Only trigger if simple.sh is updated
 
 jobs:
   upload:
@@ -29,11 +29,13 @@ jobs:
           aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
           aws configure set default.region us-east-1
 
-      - name: Upload simple.sh to Cloudflare R2
+      - name: Upload installer file to Cloudflare R2
         env:
-          BUCKET_NAME: "opengovernance"
+          BUCKET_URL: ${{ secrets.PROD_CLOUDFLARE_INSTALLER_BUCKET }}
+          SOURCE_FILE: ${{ secrets.OG_INSTALLER_MAIN_INSTALLER_FILE }}
+          TARGET_FILE: ${{ secrets.OG_INSTALLER_ON_CLOUDFLARE_MAIN_INSTALLER_FILE }}
         run: |
-          aws --endpoint-url https://2d6651d596663cce624bd513238102e7.r2.cloudflarestorage.com s3 cp simple.sh s3://$BUCKET_NAME/simple.sh
+          aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://opengovernance/$TARGET_FILE"
 
       # Conditional step: Create a new tag if upload to Cloudflare R2 is successful
       - name: Bump Version and Create Tag
