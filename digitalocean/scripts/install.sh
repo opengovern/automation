@@ -427,7 +427,7 @@ function check_prerequisites() {
     echo_primary "Region: '$KUBE_REGION'"
 
     # Ask if they want to change the cluster name or region
-    echo_prompt -n "Do you want to change the cluster name or region? Press 'y' to change, or press 'Enter' to proceed within 30 seconds: "
+    echo_prompt -n "Change cluster name or region? Press 'y' to change, or 'Enter' to proceed (auto-proceed in 30 seconds):"
     read -t 30 response < /dev/tty
     if [ $? -eq 0 ]; then
       # User provided input
