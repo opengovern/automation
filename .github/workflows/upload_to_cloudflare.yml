@@ -33,9 +33,9 @@ jobs:
 
       - name: Upload installer file to Cloudflare R2
         env:
-          BUCKET_URL: ${{ secrets.PROD_CLOUDFLARE_INSTALLER_BUCKET }}
-          SOURCE_FILE: ${{ secrets.OG_INSTALLER_MAIN_INSTALLER_FILE }}
-          TARGET_FILE: ${{ secrets.OG_INSTALLER_ON_CLOUDFLARE_MAIN_INSTALLER_FILE }}
+          BUCKET_URL: ${{ vars.PROD_CLOUDFLARE_INSTALLER_BUCKET }}
+          SOURCE_FILE: ${{ vars.OG_INSTALLER_MAIN_INSTALLER_FILE }}
+          TARGET_FILE: ${{ vars.OG_INSTALLER_ON_CLOUDFLARE_MAIN_INSTALLER_FILE }}
         run: |
           aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://opengovernance/$TARGET_FILE"
 
