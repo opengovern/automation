@@ -97,9 +97,9 @@ echo_detail() {
     echo_info "${indent}${message}"
 }
 
-# Function to redirect Helm commands to the log only
+# Function to redirect Helm commands to the log only, always with --debug
 helm_quiet() {
-    helm "$@" >&3 2>&1
+    helm --debug "$@" >&3 2>&1
 }
 
 # Function to check if a command exists
@@ -722,11 +722,11 @@ install_opengovernance_with_helm() {
 # Function to check pods and jobs
 check_pods_and_jobs() {
     echo_detail "Checking pod and job statuses in namespace '$KUBE_NAMESPACE'."
-    if ! kubectl get pods -n "$KUBE_NAMESPACE"; then
+    if ! kubectl get pods -n "$KUBE_NAMESPACE" >&3 2>&1; then
         echo_error "Failed to get pod statuses."
     fi
 
-    if ! kubectl get jobs -n "$KUBE_NAMESPACE"; then
+    if ! kubectl get jobs -n "$KUBE_NAMESPACE" >&3 2>&1; then
         echo_error "Failed to get job statuses."
     fi
 }
