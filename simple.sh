@@ -420,7 +420,6 @@ deploy_infrastructure_to_aws() {
 
 # Function to install OpenGovernance with Helm
 install_opengovernance_with_helm() {
-    echo_primary "Proceeding with Basic Install of OpenGovernance without Network Ingress. (Expected time: 7-10 minutes)"
 
     echo_detail "Adding OpenGovernance Helm repository."
     if ! helm_quiet repo add opengovernance https://opengovern.github.io/charts; then
@@ -443,8 +442,7 @@ install_opengovernance_with_helm() {
         exit 1
     fi
 
-    echo_detail "OpenGovernance installation without Ingress completed."
-    echo_detail "Application Installed successfully."
+    echo_detail "OpenGovernance installed successfully."
 
     check_pods_and_jobs
 
@@ -499,7 +497,7 @@ provide_port_forward_instructions() {
 deploy_to_digitalocean() {
     # Ensure required variables are set
     KUBE_REGION="${KUBE_REGION:-nyc1}"
-    KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance-cluster}"
+    KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
     # Check if the cluster exists
     if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$KUBE_CLUSTER_NAME$"; then
