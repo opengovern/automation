@@ -658,7 +658,7 @@ deploy_to_digitalocean() {
     KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
     # Check if the cluster exists
-    if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$KUBE_CLUSTER_NAME$"; then
+    if doctl kubernetes cluster list --format Name --no-header -o value | grep -qw "^$KUBE_CLUSTER_NAME$"; then
         echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
         # Prompt user for choice
@@ -678,12 +678,12 @@ deploy_to_digitalocean() {
                     # If installation exists, the function will exit
                     :
                 else
-                    # If no installation exists, determine the provider and execute provider-specific scripts
-                    local cluster_info="digitalocean"
-                    determine_and_deploy_provider "$cluster_info"
+                    # If no installation exists, proceed to install OpenGovernance
+                    # Retrieve kubeconfig for the cluster
+                    doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+                    # Proceed to install OpenGovernance with Helm
+                    install_opengovernance_with_helm
                 fi
-                # Retrieve kubeconfig for the cluster
-                doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
                 ;;
             2)
                 # Prompt user for new cluster name with validation
@@ -744,9 +744,12 @@ create_unique_digitalocean_cluster() {
             continue
         fi
 
-        # Check if the cluster name already exists
-        if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$new_cluster_name$"; then
+        # Check if the cluster name already exists using 'doctl kubernetes cluster get'
+        if doctl kubernetes cluster get "$new_cluster_name" >/dev/null 2>&1; then
             echo_error "A Kubernetes cluster named '$new_cluster_name' already exists. Please choose a different name."
+            # Optionally, list existing clusters to help the user choose
+            echo_primary "Existing clusters:"
+            doctl kubernetes cluster list --format Name,Region --no-header -o table
             continue
         fi
 
@@ -779,6 +782,9 @@ create_unique_digitalocean_cluster() {
         # Save kubeconfig for the cluster
         doctl kubernetes cluster kubeconfig save "$new_cluster_name"
 
+        # Update the global cluster name variable
+        KUBE_CLUSTER_NAME="$new_cluster_name"
+
         # Exit the loop after successful creation
         break
     done
@@ -801,7 +807,7 @@ check_ready_nodes() {
 
     while [ $attempts -lt $max_attempts ]; do
         READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ')
-        
+
         if [ "$READY_NODES" -ge $required_nodes ]; then
             echo_info "$provider cluster: Required nodes are ready. ($READY_NODES nodes)"
             return 0
