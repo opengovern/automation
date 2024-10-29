@@ -44,15 +44,6 @@ function echo_info() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $message" >&3
 }
 
-# Function to display informational messages to both console and log with timestamp
-function echo_info_console() {
-  local message="$1"
-  # Print to console
-  echo_prompt "$message"
-  # Log detailed message with timestamp
-  echo_info "$message"
-}
-
 # Function to display error messages to console and log with timestamp
 function echo_error() {
   local message="$1"
@@ -60,6 +51,25 @@ function echo_error() {
   echo_prompt "Error: $message"
   # Log detailed error message with timestamp
   echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $message" >&3
+}
+
+# Function to display primary messages to both console and log with timestamp
+function echo_primary() {
+  local message="$1"
+  # Print to console
+  echo_prompt "$message"
+  # Log detailed message with timestamp
+  echo_info "$message"
+}
+
+# Function to display detail messages to both console and log with timestamp, indented with 4 tabs
+function echo_detail() {
+  local message="$1"
+  local indent="                                "  # 32 spaces (4 tabs)
+  # Print to console with indentation
+  echo_prompt "${indent}${message}"
+  # Log detailed message with timestamp
+  echo_info "${indent}${message}"
 }
 
 # Function to display usage information
@@ -327,7 +337,7 @@ function choose_install_type() {
   done
 
   # Inform user that installation will start shortly
-  echo_info "Installation will start in 5 seconds..."
+  echo_primary "Installation will start in 5 seconds..."
   sleep 5
 }
 
@@ -400,7 +410,7 @@ function check_prerequisites() {
       fi
 
       attempts=$((attempts + 1))
-      echo_info "Waiting for nodes to become ready... ($attempts/$max_attempts)"
+      echo_detail "Waiting for nodes to become ready... ($attempts/$max_attempts)"
       sleep $sleep_time
     done
 
@@ -412,7 +422,43 @@ function check_prerequisites() {
   function create_cluster() {
     local cluster_name="$1"
 
-    echo_info_console "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'... (Expected time: 3-5 minutes)"
+    # Before creating the cluster, provide the region and cluster name
+    echo_primary "Cluster Name: '$cluster_name'"
+    echo_primary "Region: '$KUBE_REGION'"
+
+    # Ask if they want to change the cluster name or region
+    echo_prompt -n "Do you want to change the cluster name or region? Press 'y' to change, or press 'Enter' to proceed within 30 seconds: "
+    read -t 30 response < /dev/tty
+    if [ $? -eq 0 ]; then
+      # User provided input
+      if [ -z "$response" ]; then
+        # User pressed Enter, proceed
+        :
+      elif [[ "$response" =~ ^[Yy] ]]; then
+        # User wants to change the cluster name and/or region
+        # Prompt for new cluster name
+        echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
+        read new_cluster_name < /dev/tty
+        if [ -n "$new_cluster_name" ]; then
+          cluster_name="$new_cluster_name"
+          KUBE_CLUSTER_NAME="$new_cluster_name"
+        fi
+
+        # Prompt for new region
+        echo_prompt -n "Enter new region [current: $KUBE_REGION]: "
+        read new_region < /dev/tty
+        if [ -n "$new_region" ]; then
+          KUBE_REGION="$new_region"
+        fi
+      fi
+    else
+      # Timeout, no response
+      echo_prompt ""
+      echo_detail "No response received in 30 seconds. Proceeding with current cluster name and region."
+    fi
+
+    # Proceed with creating the cluster
+    echo_primary "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'... (Expected time: 3-5 minutes)"
     doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
       --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
 
@@ -587,73 +633,6 @@ function check_opengovernance_health() {
   fi
 }
 
-# Function to check OpenGovernance configuration
-function check_opengovernance_config() {
-  # Retrieve the current Helm values
-  CURRENT_HELM_VALUES=$(helm get values opengovernance -n "$KUBE_NAMESPACE" --output yaml 2>/dev/null || true)
-
-  # Extract HELM_VALUES_DEX_ISSUER using awk
-  HELM_VALUES_DEX_ISSUER=$(echo "$CURRENT_HELM_VALUES" | awk '
-    /^\s*dex:/ { in_dex=1; next }
-    /^\s*global:/ { in_dex=0 }
-    in_dex && /^\s*config:/ { in_config=1; next }
-    in_config && /^\s*issuer:/ {
-      sub(/^\s*issuer:[[:space:]]*/, "")
-      print
-      exit
-    }
-  ')
-
-  # Check if HELM_VALUES_DEX_ISSUER is not null and starts with "https://"
-  if [[ -n "$HELM_VALUES_DEX_ISSUER" && "$HELM_VALUES_DEX_ISSUER" == https://* ]]; then
-    dex_configuration_ok=true
-  else
-    dex_configuration_ok=false
-  fi
-
-  # Retrieve the app hostname by looking up the environment variables
-  ENV_VARS=$(kubectl get deployment metadata-service -n "$KUBE_NAMESPACE" \
-    -o jsonpath='{.spec.template.spec.containers[0].env[*]}')
-
-  # Extract the primary domain from the environment variables
-  CURRENT_DOMAIN=$(echo "$ENV_VARS" | grep -o '"name":"METADATA_PRIMARY_DOMAIN_URL","value":"[^"]*"' | awk -F'"' '{print $8}')
-
-  # Determine if it's a custom hostname or not
-  if [[ "$CURRENT_DOMAIN" == "og.app.domain" || -z "$CURRENT_DOMAIN" ]]; then
-    custom_host_name=false
-  elif [[ "$CURRENT_DOMAIN" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
-    custom_host_name=true
-  fi
-
-  # Retrieve redirect Uris
-  redirect_uris=$(echo "$ENV_VARS" | grep -o '"name":"METADATA_DEX_PUBLIC_CLIENT_REDIRECT_URIS","value":"[^"]*"' | awk -F'"' '{print $8}')
-
-  # Check if the primary domain is present in the redirect Uris
-  if echo "$redirect_uris" | grep -q "$CURRENT_DOMAIN"; then
-    dex_configuration_ok=true
-  fi
-
-  # Retrieve Ingress external IP
-  INGRESS_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n "$KUBE_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-
-  # Enhanced SSL configuration check based on the new criteria
-  if [ "$APP_HEALTHY" = true ] && [ -n "$INGRESS_EXTERNAL_IP" ] && [[ "$HELM_VALUES_DEX_ISSUER" == https://* ]]; then
-    ssl_configured=true
-  else
-    ssl_configured=false
-  fi
-
-  # Output concise results
-  echo_info "Checking SSL/TLS Configuration...${ssl_configured:+Configured}${!ssl_configured:+Not Configured}"
-
-  # Export variables for use in other functions
-  export custom_host_name
-  export ssl_configured
-  export CURRENT_DOMAIN
-  export HELM_VALUES_DEX_ISSUER
-  export INGRESS_EXTERNAL_IP
-}
-
 # Function to check OpenGovernance readiness
 function check_opengovernance_readiness() {
   # Check the readiness of all pods in the specified namespace
@@ -672,7 +651,7 @@ function check_opengovernance_readiness() {
 
 # Function to check pods and migrator jobs
 function check_pods_and_jobs() {
-  echo_info_console "Waiting for application to be ready..."
+  echo_detail "Waiting for application to be ready..."
 
   local attempts=0
   local max_attempts=12  # 12 attempts * 30 seconds = 6 minutes
@@ -684,7 +663,7 @@ function check_pods_and_jobs() {
       return 0
     fi
     attempts=$((attempts + 1))
-    echo_info "Waiting for pods to become ready... ($attempts/$max_attempts)"
+    echo_detail "Waiting for pods to become ready... ($attempts/$max_attempts)"
     sleep $sleep_time
   done
 
@@ -694,15 +673,15 @@ function check_pods_and_jobs() {
 
 # Function to install or upgrade OpenGovernance with HTTPS
 function install_opengovernance_with_https() {
-  echo_info_console "Proceeding with OpenGovernance installation with HTTPS. (Expected time: 7-10 minutes)"
+  echo_primary "Proceeding with OpenGovernance installation with HTTPS. (Expected time: 7-10 minutes)"
 
   # Add Helm repository and update
-  echo_info "Adding OpenGovernance Helm repository."
+  echo_detail "Adding OpenGovernance Helm repository."
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
   # Perform Helm installation with custom configuration
-  echo_info_console "Performing installation with custom configuration."
+  echo_detail "Performing installation with custom configuration."
 
   helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
@@ -713,21 +692,21 @@ dex:
     issuer: https://${DOMAIN}/dex
 EOF
 
-  echo_info_console "OpenGovernance installation with HTTPS completed."
-  echo_info_console "Application Installed successfully."
+  echo_detail "OpenGovernance installation with HTTPS completed."
+  echo_detail "Application Installed successfully."
 }
 
 # Function to install or upgrade OpenGovernance with hostname only
 function install_opengovernance_with_hostname_only() {
-  echo_info_console "Proceeding with OpenGovernance installation without HTTPS. (Expected time: 7-10 minutes)"
+  echo_primary "Proceeding with OpenGovernance installation without HTTPS. (Expected time: 7-10 minutes)"
 
   # Add Helm repository and update
-  echo_info "Adding OpenGovernance Helm repository."
+  echo_detail "Adding OpenGovernance Helm repository."
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
   # Perform Helm installation with custom configuration
-  echo_info_console "Performing installation with custom configuration."
+  echo_detail "Performing installation with custom configuration."
 
   helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
@@ -738,19 +717,19 @@ dex:
     issuer: http://${DOMAIN}/dex
 EOF
 
-  echo_info_console "OpenGovernance installation without HTTPS completed."
-  echo_info_console "Application Installed successfully."
+  echo_detail "OpenGovernance installation without HTTPS completed."
+  echo_detail "Application Installed successfully."
 }
 
 # Function to install OpenGovernance with public IP (Minimal Install)
 function install_opengovernance_with_public_ip() {
-  echo_info_console "Proceeding with Minimal Install of OpenGovernance. (Expected time: 7-10 minutes)"
+  echo_primary "Proceeding with Minimal Install of OpenGovernance. (Expected time: 7-10 minutes)"
 
   # a. Install Ingress Controller and wait for external IP
   setup_ingress_controller
 
   # b. Perform Helm installation with external IP as domain and issuer
-  echo_info_console "Performing installation with external IP as domain and issuer."
+  echo_detail "Performing installation with external IP as domain and issuer."
 
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
@@ -764,8 +743,8 @@ dex:
     issuer: http://${INGRESS_EXTERNAL_IP}/dex
 EOF
 
-  echo_info_console "OpenGovernance installation with public IP completed."
-  echo_info_console "Application Installed successfully."
+  echo_detail "OpenGovernance installation with public IP completed."
+  echo_detail "Application Installed successfully."
 
   # c. Check if the application is running
   check_pods_and_jobs
@@ -779,31 +758,31 @@ EOF
   # f. Restart Dex and NGINX services by restarting their pods
   restart_pods
 
-  echo_info_console "Minimal Install of OpenGovernance completed."
+  echo_detail "Minimal Install of OpenGovernance completed."
 }
 
 # Function to install OpenGovernance without Ingress (Basic Install)
 function install_opengovernance_no_ingress() {
-  echo_info_console "Proceeding with Basic Install of OpenGovernance without Network Ingress. (Expected time: 7-10 minutes)"
+  echo_primary "Proceeding with Basic Install of OpenGovernance without Network Ingress. (Expected time: 7-10 minutes)"
 
   # Add Helm repository and update
-  echo_info "Adding OpenGovernance Helm repository."
+  echo_detail "Adding OpenGovernance Helm repository."
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
   # Perform Helm installation
-  echo_info_console "Installing OpenGovernance via Helm without Ingress."
+  echo_detail "Installing OpenGovernance via Helm without Ingress."
 
   helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait
 
-  echo_info_console "OpenGovernance installation without Ingress completed."
-  echo_info_console "Application Installed successfully."
+  echo_detail "OpenGovernance installation without Ingress completed."
+  echo_detail "Application Installed successfully."
 
   # Check if the application is up
   check_pods_and_jobs
 
   # Set up port-forwarding
-  echo_info_console "Setting up port-forwarding to access OpenGovernance locally."
+  echo_primary "Setting up port-forwarding to access OpenGovernance locally."
 
   # Start port-forwarding in the background
   kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >&3 2>&3 &
@@ -814,7 +793,7 @@ function install_opengovernance_no_ingress() {
 
   # Check if port-forwarding is still running
   if ps -p $PORT_FORWARD_PID > /dev/null 2>&1; then
-    echo_info_console "Port-forwarding established successfully."
+    echo_detail "Port-forwarding established successfully."
     echo_prompt "OpenGovernance is accessible at http://localhost:8080"
     echo_prompt "To sign in, use the following default credentials:"
     echo_prompt "  Username: admin@opengovernance.io"
@@ -827,15 +806,12 @@ function install_opengovernance_no_ingress() {
 
 # Function to set up Ingress Controller
 function setup_ingress_controller() {
-  echo_info_console "Setting up Ingress Controller. (Expected time: 2-5 minutes)"
-
-  # Define the namespace for ingress-nginx (Using a separate namespace)
-  local INGRESS_NAMESPACE="ingress-nginx"
+  echo_primary "Setting up Ingress Controller. (Expected time: 2-5 minutes)"
 
   # Check if the namespace exists, if not, create it
-  if ! kubectl get namespace "$INGRESS_NAMESPACE" > /dev/null 2>&1; then
-    kubectl create namespace "$INGRESS_NAMESPACE"
-    echo_info "Created namespace $INGRESS_NAMESPACE."
+  if ! kubectl get namespace "$KUBE_NAMESPACE" > /dev/null 2>&1; then
+    kubectl create namespace "$KUBE_NAMESPACE"
+    echo_detail "Created namespace $KUBE_NAMESPACE."
   fi
 
   # Handle existing ClusterRole ingress-nginx
@@ -843,24 +819,24 @@ function setup_ingress_controller() {
     # Check the current release namespace annotation
     CURRENT_RELEASE_NAMESPACE=$(kubectl get clusterrole ingress-nginx -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' 2>/dev/null || true)
     if [ "$CURRENT_RELEASE_NAMESPACE" != "$KUBE_NAMESPACE" ]; then
-      echo_info "Deleting conflicting ClusterRole 'ingress-nginx'."
+      echo_detail "Deleting conflicting ClusterRole 'ingress-nginx'."
       kubectl delete clusterrole ingress-nginx
       kubectl delete clusterrolebinding ingress-nginx
     fi
   fi
 
-  # Check if ingress-nginx is already installed in the ingress-nginx namespace
-  if helm_quiet ls -n "$INGRESS_NAMESPACE" | grep -qw ingress-nginx; then
-    echo_info_console "Ingress Controller already installed. Skipping installation."
+  # Check if ingress-nginx is already installed in the specified namespace
+  if helm_quiet ls -n "$KUBE_NAMESPACE" | grep -qw ingress-nginx; then
+    echo_detail "Ingress Controller already installed. Skipping installation."
   else
-    echo_info_console "Installing ingress-nginx via Helm."
+    echo_detail "Installing ingress-nginx via Helm."
     helm_quiet repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
     helm_quiet repo update
-    helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$INGRESS_NAMESPACE" --create-namespace --wait
-    echo_info_console "Ingress Controller installed."
+    helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$KUBE_NAMESPACE" --create-namespace --wait
+    echo_detail "Ingress Controller installed."
 
     # Wait for ingress-nginx controller to obtain an external IP (up to 6 minutes)
-    wait_for_ingress_ip "$INGRESS_NAMESPACE"
+    wait_for_ingress_ip "$KUBE_NAMESPACE"
   fi
 }
 
@@ -871,18 +847,18 @@ function wait_for_ingress_ip() {
   local interval=30
   local elapsed=0
 
-  echo_info_console "Waiting for Ingress Controller to obtain an external IP... (Expected time: 2-5 minutes)"
+  echo_primary "Waiting for Ingress Controller to obtain an external IP... (Expected time: 2-5 minutes)"
 
   while [ $elapsed -lt $timeout ]; do
     EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n "$namespace" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
 
     if [ -n "$EXTERNAL_IP" ]; then
-      echo_info_console "Ingress Controller external IP obtained: $EXTERNAL_IP"
+      echo_detail "Ingress Controller external IP obtained: $EXTERNAL_IP"
       export INGRESS_EXTERNAL_IP="$EXTERNAL_IP"
       return 0
     fi
 
-    echo_info "Ingress Controller not ready yet. Retrying in $interval seconds..."
+    echo_detail "Ingress Controller not ready yet. Retrying in $interval seconds..."
     sleep $interval
     elapsed=$((elapsed + interval))
   done
@@ -896,19 +872,19 @@ function deploy_ingress_resources() {
   case $INSTALL_TYPE in
     1)
       # Install with HTTPS and Hostname
-      echo_info_console "Deploying Ingress with HTTPS."
+      echo_primary "Deploying Ingress with HTTPS. (Expected time: 1-3 minutes)"
       ;;
     2)
       # Install without HTTPS
-      echo_info_console "Deploying Ingress without HTTPS."
+      echo_primary "Deploying Ingress without HTTPS."
       ;;
     3)
       # Minimal Install
-      echo_info_console "Deploying Ingress without a custom hostname."
+      echo_primary "Deploying Ingress without a custom hostname."
       ;;
     4)
       # Basic Install with no Ingress
-      echo_info_console "Basic Install selected. Skipping Ingress deployment."
+      echo_detail "Basic Install selected. Skipping Ingress deployment."
       return
       ;;
     *)
@@ -997,12 +973,12 @@ EOF
       ;;
   esac
 
-  echo_info_console "Ingress resources deployed."
+  echo_detail "Ingress resources deployed."
 }
 
 # Function to set up Cert-Manager and Issuer for Let's Encrypt
 function setup_cert_manager_and_issuer() {
-  echo_info_console "Setting up Cert-Manager and Let's Encrypt Issuer."
+  echo_primary "Setting up Cert-Manager and Let's Encrypt Issuer. (Expected time: 1-2 minutes)"
 
   # Function to check if Cert-Manager is installed
   function is_cert_manager_installed() {
@@ -1023,19 +999,19 @@ function setup_cert_manager_and_issuer() {
     local sleep_time=30
     local attempts=0
 
-    echo_info "Waiting for ClusterIssuer 'letsencrypt' to become ready..."
+    echo_detail "Waiting for ClusterIssuer 'letsencrypt' to become ready..."
 
     while [ $attempts -lt $max_attempts ]; do
       local ready_status
       ready_status=$(kubectl get clusterissuer letsencrypt -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
 
       if [ "$ready_status" == "True" ]; then
-        echo_info "ClusterIssuer 'letsencrypt' is ready."
+        echo_detail "ClusterIssuer 'letsencrypt' is ready."
         return 0
       fi
 
       attempts=$((attempts + 1))
-      echo_info "ClusterIssuer not ready yet. Retrying in $sleep_time seconds... ($attempts/$max_attempts)"
+      echo_detail "ClusterIssuer not ready yet. Retrying in $sleep_time seconds... ($attempts/$max_attempts)"
       sleep $sleep_time
     done
 
@@ -1045,13 +1021,13 @@ function setup_cert_manager_and_issuer() {
 
   # Check if Cert-Manager is already installed
   if is_cert_manager_installed; then
-    echo_info "Cert-Manager is already installed. Skipping installation."
+    echo_detail "Cert-Manager is already installed. Skipping installation."
   else
-    echo_info "Installing Cert-Manager via Helm."
+    echo_detail "Installing Cert-Manager via Helm."
     helm_quiet repo add jetstack https://charts.jetstack.io || true
     helm_quiet repo update
     helm_quiet install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
-    echo_info "Cert-Manager installed."
+    echo_detail "Cert-Manager installed."
   fi
 
   # Apply ClusterIssuer for Let's Encrypt
@@ -1072,7 +1048,7 @@ spec:
           class: nginx
 EOF
 
-  echo_info "ClusterIssuer for Let's Encrypt created."
+  echo_detail "ClusterIssuer for Let's Encrypt created."
 
   # Wait for ClusterIssuer to be ready
   wait_for_clusterissuer_ready
@@ -1080,28 +1056,16 @@ EOF
 
 # Function to restart pods
 function restart_pods() {
-  echo_info_console "Restarting OpenGovernance Pods to Apply Changes."
+  echo_primary "Restarting OpenGovernance Pods to Apply Changes."
 
   # Restart only the specified deployments
   kubectl rollout restart deployment nginx-proxy -n "$KUBE_NAMESPACE"
   kubectl rollout restart deployment opengovernance-dex -n "$KUBE_NAMESPACE"
 
-  echo_info "Pods restarted successfully."
+  echo_detail "Pods restarted successfully."
 }
 
-# Function to provide port-forward instructions
-function provide_port_forward_instructions() {
-  echo_error "OpenGovernance is running but not accessible via Ingress."
-  echo_prompt "You can access it using port-forwarding as follows:"
-  echo_prompt "kubectl port-forward -n $KUBE_NAMESPACE service/nginx-proxy 8080:80"
-  echo_prompt "Then, access it at http://localhost:8080"
-  echo_prompt ""
-  echo_prompt "To sign in, use the following default credentials:"
-  echo_prompt "  Username: admin@opengovernance.io"
-  echo_prompt "  Password: password"
-}
-
-# Function to deploy port-forward instructions based on conditions
+# Function to provide port-forward instructions based on conditions
 function provide_port_forward_instructions() {
   echo_error "OpenGovernance is running but not accessible via Ingress."
   echo_prompt "You can access it using port-forwarding as follows:"
@@ -1121,7 +1085,7 @@ function display_completion_message() {
     protocol="https"
   fi
 
-  echo_info "Installation Complete"
+  echo_primary "Installation Complete"
 
   echo_prompt ""
   echo_prompt "-----------------------------------------------------"
@@ -1130,7 +1094,7 @@ function display_completion_message() {
   if [ "$INSTALL_TYPE" -ne 3 ] && [ "$INSTALL_TYPE" -ne 4 ]; then
     echo_prompt "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
   elif [ "$INSTALL_TYPE" -eq 4 ]; then
-    echo_prompt "Access your OpenGovernance instance at: ${protocol}://${INGRESS_EXTERNAL_IP}"
+    echo_prompt "Access your OpenGovernance instance at: ${protocol}://localhost:8080"
   else
     echo_prompt "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
   fi
@@ -1168,7 +1132,7 @@ function run_installation_logic() {
 
     # If not in silent mode, prompt for installation type
     if [ "$SILENT_INSTALL" = false ]; then
-      echo_info "Starting interactive installation type selection..."
+      echo_detail "Starting interactive installation type selection..."
       choose_install_type
     fi
 
