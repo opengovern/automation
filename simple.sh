@@ -223,6 +223,32 @@ check_opengovernance_installation() {
     fi
 }
 
+# Function to get cluster information
+get_cluster_info() {
+    # Check if a Kubernetes context is set and kubectl can connect to a cluster
+    if kubectl config current-context > /dev/null 2>&1; then
+        # Verify if kubectl can communicate with the cluster
+        if kubectl cluster-info > /dev/null 2>&1; then
+            # Extract and display the control plane URL for further analysis
+            local control_plane_url
+            control_plane_url=$(kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true)
+            
+            if [[ -n "$control_plane_url" ]]; then
+                echo "$control_plane_url"
+            else
+                echo_error "Unable to determine control plane URL."
+                return 1
+            fi
+        else
+            echo_error "Kubernetes cluster is unreachable. Please check your connection."
+            return 1
+        fi
+    else
+        echo_error "No Kubernetes context is currently set in kubectl."
+        return 1
+    fi
+}
+
 # Function to detect Kubernetes provider and deploy
 detect_kubernetes_provider_and_deploy() {
     local cluster_info
@@ -660,14 +686,8 @@ deploy_to_digitalocean() {
                 doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
                 ;;
             2)
-                # Prompt user for new cluster name
-                echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
-                read -r new_cluster_name < /dev/tty
-                if [[ -z "$new_cluster_name" ]]; then
-                    echo_error "Cluster name cannot be empty. Exiting."
-                    exit 1
-                fi
-                create_cluster_digitalocean "$new_cluster_name"
+                # Prompt user for new cluster name with validation
+                create_unique_digitalocean_cluster
                 ;;
             3)
                 echo_primary "Exiting."
@@ -691,7 +711,8 @@ deploy_to_digitalocean() {
 
         case "$do_option" in
             1)
-                create_cluster_digitalocean "$KUBE_CLUSTER_NAME"
+                # Prompt user for new cluster name with validation
+                create_unique_digitalocean_cluster
                 ;;
             2)
                 echo_primary "Exiting."
@@ -711,48 +732,56 @@ deploy_to_digitalocean() {
     install_opengovernance_with_helm
 }
 
-# Function to create a Kubernetes cluster on DigitalOcean
-create_cluster_digitalocean() {
-    local cluster_name="$1"
-
-    # Before creating the cluster, provide the region and cluster name
-    echo_primary "Cluster Name: '$cluster_name'"
-    echo_primary "Region: '$DIGITALOCEAN_REGION'"
-
-    # Ask if they want to change the cluster name or region
-    echo_prompt -n "Change cluster name or region? Press 'y' to change, or 'Enter' to proceed (auto-continue in 30s): "
-    read -r response < /dev/tty
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        # User wants to change the cluster name and/or region
-        # Prompt for new cluster name
-        echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
+# Function to create a unique Kubernetes cluster on DigitalOcean
+create_unique_digitalocean_cluster() {
+    while true; do
+        echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
         read -r new_cluster_name < /dev/tty
-        if [[ -n "$new_cluster_name" ]]; then
-            cluster_name="$new_cluster_name"
-            KUBE_CLUSTER_NAME="$new_cluster_name"
+
+        # Check if the cluster name is empty
+        if [[ -z "$new_cluster_name" ]]; then
+            echo_error "Cluster name cannot be empty. Please enter a valid name."
+            continue
         fi
 
-        # Prompt for new region
-        echo_prompt -n "Enter new region [current: $DIGITALOCEAN_REGION]: "
-        read -r new_region < /dev/tty
-        if [[ -n "$new_region" ]]; then
-            DIGITALOCEAN_REGION="$new_region"
+        # Check if the cluster name already exists
+        if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$new_cluster_name$"; then
+            echo_error "A Kubernetes cluster named '$new_cluster_name' already exists. Please choose a different name."
+            continue
         fi
-    else
-        # Timeout or user pressed Enter, proceed
-        echo_detail "No response received or user chose not to change. Proceeding with current cluster name and region."
-    fi
 
-    # Proceed with creating the cluster
-    echo_primary "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$DIGITALOCEAN_REGION'... (Expected time: 3-5 minutes)"
-    doctl kubernetes cluster create "$cluster_name" --region "$DIGITALOCEAN_REGION" \
-        --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
+        # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
+        if [[ ! "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
+            echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
+            continue
+        fi
 
-    # Save kubeconfig for the cluster
-    doctl kubernetes cluster kubeconfig save "$cluster_name"
+        # Prompt to confirm region (optional)
+        echo_prompt -n "Enter region for the new cluster [Default: $DIGITALOCEAN_REGION]: "
+        read -r input_region < /dev/tty
+        if [[ -n "$input_region" ]]; then
+            DIGITALOCEAN_REGION="$input_region"
+        fi
 
-    # Wait for nodes to become ready
-    check_ready_nodes "DigitalOcean"
+        # Confirm the details
+        echo_primary "Creating DigitalOcean Kubernetes cluster '$new_cluster_name' in region '$DIGITALOCEAN_REGION'..."
+        echo_primary "This step may take 3-5 minutes."
+
+        # Create the cluster
+        if doctl kubernetes cluster create "$new_cluster_name" --region "$DIGITALOCEAN_REGION" \
+            --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait; then
+            echo_info "Cluster '$new_cluster_name' created successfully."
+        else
+            echo_error "Failed to create cluster '$new_cluster_name'. Please try again."
+            continue
+        fi
+
+        # Save kubeconfig for the cluster
+        doctl kubernetes cluster kubeconfig save "$new_cluster_name"
+
+        # Exit the loop after successful creation
+        break
+    done
 }
 
 # Function to check if Kubernetes nodes are ready, with specific checks for cloud providers, Minikube, and Kind
