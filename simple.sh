@@ -199,8 +199,24 @@ check_opengovernance_installation() {
         helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o json | jq -r '.[0].status // "unknown"')
 
         if [ "$helm_release_status" == "deployed" ]; then
-            echo_error "An existing OpenGovernance installation was found. Unable to proceed."
-            exit 1  # Exit the script with an error
+            echo_primary "An existing OpenGovernance installation was found and is healthy."
+            echo_primary "Do you want to reconfigure it? (yes/no): "
+            read -r reconfig_choice < /dev/tty
+
+            case "$reconfig_choice" in
+                yes|y|Y)
+                    echo_info "Proceeding with reconfiguration."
+                    return 0  # Allow script to proceed with configuration
+                    ;;
+                no|n|N)
+                    echo_primary "Exiting as per user request."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid input. Exiting."
+                    exit 1
+                    ;;
+            esac
         elif [ "$helm_release_status" == "failed" ]; then
             echo_error "OpenGovernance is installed but not in 'deployed' state (current status: $helm_release_status)."
             exit 1
@@ -309,11 +325,11 @@ detect_kubernetes_provider_and_deploy() {
         1)
             # Check if OpenGovernance is already installed
             if check_opengovernance_installation; then
-                # If installation exists, the function will exit
-                :
+                # If installation exists and user chooses to reconfigure, proceed
+                determine_and_deploy_provider "$cluster_info" "true"
             else
                 # If no installation exists, determine the provider and execute provider-specific scripts
-                determine_and_deploy_provider "$cluster_info" "true"
+                determine_and_deploy_provider "$cluster_info" "false"
             fi
             ;;
         2)
