@@ -44,6 +44,7 @@ PROVIDER_ERRORS=()
 # Initialize variables
 INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrastructure directory
 INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
+CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
 
 # Detect Operating System
 OS_TYPE="$(uname -s)"
@@ -172,16 +173,6 @@ check_provider_clis() {
         "gcloud config list --format='value(core.project)' || echo 'Unknown Project'"
     check_provider_cli "DigitalOcean" "doctl" "doctl account get" \
         "doctl account get --format UUID,Email --no-header | awk '{print \"UUID: \" \$1 \", Email: \" \$2}'"
-
-    # List unavailable platforms with reasons
-    if [[ ${#UNAVAILABLE_PLATFORMS[@]} -ne 0 ]]; then
-        echo_primary "The following providers are not available:"
-        for error in "${PROVIDER_ERRORS[@]}"; do
-            echo_detail "$error"
-        done
-    fi
-
-    # Proceed even if no providers are available
 }
 
 # Function to check if kubectl is configured
@@ -277,24 +268,31 @@ detect_kubernetes_provider_and_deploy() {
     case "$cluster_info" in
         *".azmk8s.io"*|*"azure"*)
             echo_primary "Detected AKS (Azure) cluster."
+            CURRENT_PROVIDER="Azure"
             ;;
         *".eks.amazonaws.com"*|*"amazonaws.com"*)
             echo_primary "Detected EKS (AWS) cluster."
+            CURRENT_PROVIDER="AWS"
             ;;
         *".gke.io"*|*"gke"*)
             echo_primary "Detected GKE (GCP) cluster."
+            CURRENT_PROVIDER="GCP"
             ;;
         *".k8s.ondigitalocean.com"*|*"digitalocean"*|*"do-"*)
             echo_primary "Detected DigitalOcean Kubernetes cluster."
+            CURRENT_PROVIDER="DigitalOcean"
             ;;
         *"minikube"*)
             echo_primary "Detected Minikube cluster."
+            CURRENT_PROVIDER="Minikube"
             ;;
         *"kind"*)
             echo_primary "Detected Kind cluster."
+            CURRENT_PROVIDER="Kind"
             ;;
         *)
             echo_primary "Unable to identify Kubernetes provider."
+            CURRENT_PROVIDER="Unknown"
             ;;
     esac
 
@@ -341,22 +339,27 @@ determine_and_deploy_provider() {
     case "$cluster_info" in
         *".azmk8s.io"*|*"azure"*)
             echo_primary "Deploying OpenGovernance to Azure."
+            CURRENT_PROVIDER="Azure"
             deploy_via_curl "azure"
             ;;
         *".eks.amazonaws.com"*|*"amazonaws.com"*)
             echo_primary "Deploying OpenGovernance to AWS."
+            CURRENT_PROVIDER="AWS"
             deploy_via_curl "aws"
             ;;
         *".gke.io"*|*"gke"*)
             echo_primary "Deploying OpenGovernance to GCP."
+            CURRENT_PROVIDER="GCP"
             deploy_via_curl "gcp"
             ;;
         *".k8s.ondigitalocean.com"*|*"digitalocean"*|*"do-"*)
             echo_primary "Deploying OpenGovernance to DigitalOcean."
+            CURRENT_PROVIDER="DigitalOcean"
             deploy_to_digitalocean
             ;;
         *"minikube"*)
             echo_primary "Deploying OpenGovernance to Minikube."
+            CURRENT_PROVIDER="Minikube"
             if warn_minikube_kind "Minikube"; then
                 install_opengovernance_with_helm
             else
@@ -366,6 +369,7 @@ determine_and_deploy_provider() {
             ;;
         *"kind"*)
             echo_primary "Deploying OpenGovernance to Kind."
+            CURRENT_PROVIDER="Kind"
             if warn_minikube_kind "Kind"; then
                 install_opengovernance_with_helm
             else
@@ -394,7 +398,7 @@ deploy_via_curl() {
     local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/${provider}/scripts/simple.sh"
 
     if curl --head --silent --fail "$script_url" >/dev/null; then
-        curl -sL "$script_url" | bash
+        curl -sL "$script_url" | bash -s -- "$KUBE_NAMESPACE"
     else
         echo_error "Deployment script for $provider is not accessible."
         exit 1
@@ -449,18 +453,22 @@ choose_deployment() {
         case "$selected_platform" in
             "AWS")
                 echo_primary "Deploying OpenGovernance to AWS."
+                CURRENT_PROVIDER="AWS"
                 deploy_via_curl "aws"
                 ;;
             "Azure")
                 echo_primary "Deploying OpenGovernance to Azure."
+                CURRENT_PROVIDER="Azure"
                 deploy_via_curl "azure"
                 ;;
             "GCP")
                 echo_primary "Deploying OpenGovernance to GCP."
+                CURRENT_PROVIDER="GCP"
                 deploy_via_curl "gcp"
                 ;;
             "DigitalOcean")
                 echo_primary "Deploying OpenGovernance to DigitalOcean."
+                CURRENT_PROVIDER="DigitalOcean"
                 deploy_to_digitalocean
                 ;;
             *)
@@ -471,7 +479,7 @@ choose_deployment() {
     done
 }
 
-# Function to deploy to DigitalOcean (Corrected)
+# Function to deploy to DigitalOcean (Enhanced with Configuration Prompt)
 deploy_to_digitalocean() {
     # Ensure required variables are set
     DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc1}"
@@ -631,28 +639,15 @@ install_opengovernance_with_helm() {
 
     check_pods_and_jobs
 
-    echo_primary "Setting up port-forwarding to access OpenGovernance locally."
-    if ! kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
-        echo_error "Failed to initiate port-forwarding."
-        provide_port_forward_instructions
-        return
-    fi
+    # Check if the current provider is DigitalOcean
+    if [[ "$CURRENT_PROVIDER" == "DigitalOcean" ]]; then
+        echo_info "Detected DigitalOcean as the current provider. Executing DigitalOcean automation script."
 
-    PORT_FORWARD_PID=$!
-
-    # Wait briefly to ensure port-forwarding is established
-    sleep 5
-
-    if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
-        echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
-        echo_prompt "OpenGovernance is accessible at http://localhost:8080"
-        echo_prompt "To sign in, use the following default credentials:"
-        echo_prompt "  Username: admin@opengovernance.io"
-        echo_prompt "  Password: password"
-        echo_prompt "You can terminate port-forwarding by running: kill $PORT_FORWARD_PID"
+        # Invoke the configuration prompt before running the automation script
+        configure_digitalocean_app
     else
-        echo_error "Port-forwarding failed to establish."
-        provide_port_forward_instructions
+        # For other providers, proceed to set up port-forwarding
+        setup_port_forwarding
     fi
 }
 
@@ -726,6 +721,94 @@ warn_minikube_kind() {
         return 0
     else
         return 1
+    fi
+}
+
+# -----------------------------
+# New Function: configure_digitalocean_app
+# -----------------------------
+configure_digitalocean_app() {
+    echo_primary "How would you like to configure the OpenGovernance application?"
+
+    echo_primary "1) Configure with HTTPS and Hostname (DNS records required after installation)"
+    echo_primary "2) Configure without HTTPS (DNS records required after installation)"
+    echo_primary "3) No further configuration required"
+
+    while true; do
+        echo_prompt -n "Select an option (1-3): "
+        read -r config_choice < /dev/tty
+
+        case "$config_choice" in
+            1)
+                INSTALL_TYPE=1
+                ;;
+            2)
+                INSTALL_TYPE=2
+                ;;
+            3)
+                INSTALL_TYPE=3
+                ;;
+            *)
+                echo_error "Invalid selection. Please choose between 1 and 3."
+                continue
+                ;;
+        esac
+
+        break
+    done
+
+    case "$INSTALL_TYPE" in
+        1|2)
+            # Map user choice to script arguments
+            # 1 -> -t 1
+            # 2 -> -t 2
+            local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/do-automation.sh"
+            echo_info "Executing DigitalOcean automation script with installation type $INSTALL_TYPE."
+
+            if curl --head --silent --fail "$script_url" >/dev/null; then
+                echo_detail "Fetching and executing DigitalOcean automation script."
+                # Download and execute the script, passing the installation type and Kubernetes namespace
+                curl -sL "$script_url" | bash -s -- --type "$INSTALL_TYPE" --kube-namespace "$KUBE_NAMESPACE"
+                echo_info "DigitalOcean automation script executed successfully."
+            else
+                echo_error "DigitalOcean automation script is not accessible at $script_url."
+                exit 1
+            fi
+            ;;
+        3)
+            # Skip automation script and proceed to port-forwarding
+            echo_primary "Skipping further configuration as per user selection."
+            setup_port_forwarding
+            ;;
+    esac
+}
+
+# -----------------------------
+# New Function: setup_port_forwarding
+# -----------------------------
+setup_port_forwarding() {
+    echo_primary "Setting up port-forwarding to access OpenGovernance locally."
+    if ! kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
+        echo_error "Failed to initiate port-forwarding."
+        provide_port_forward_instructions
+        return
+    fi
+
+    PORT_FORWARD_PID=$!
+
+    # Wait briefly to ensure port-forwarding is established
+    sleep 5
+
+    if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
+        echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
+        echo_prompt "OpenGovernance is accessible at http://localhost:8080"
+        echo_prompt "To sign in, use the following default credentials:"
+        echo_prompt "  Username: admin@opengovernance.io"
+        echo_prompt "  Password: password"
+        echo_prompt "You can terminate port-forwarding by running: kill $PORT_FORWARD_PID"
+    else
+        echo_error "Port-forwarding failed to establish."
+        provide_port_forward_instructions
     fi
 }
 
