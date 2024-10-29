@@ -313,7 +313,7 @@ detect_kubernetes_provider_and_deploy() {
                 :
             else
                 # If no installation exists, determine the provider and execute provider-specific scripts
-                determine_and_deploy_provider "$cluster_info"
+                determine_and_deploy_provider "$cluster_info" "true"
             fi
             ;;
         2)
@@ -335,6 +335,7 @@ detect_kubernetes_provider_and_deploy() {
 # Function to determine provider from cluster_info and deploy accordingly
 determine_and_deploy_provider() {
     local cluster_info="$1"
+    local deploy_existing="$2"  # 'true' or 'false'
 
     case "$cluster_info" in
         *".azmk8s.io"*|*"azure"*)
@@ -355,7 +356,7 @@ determine_and_deploy_provider() {
         *".k8s.ondigitalocean.com"*|*"digitalocean"*|*"do-"*)
             echo_primary "Deploying OpenGovernance to DigitalOcean."
             CURRENT_PROVIDER="DigitalOcean"
-            deploy_to_digitalocean
+            deploy_to_digitalocean "$deploy_existing"
             ;;
         *"minikube"*)
             echo_primary "Deploying OpenGovernance to Minikube."
@@ -469,7 +470,7 @@ choose_deployment() {
             "DigitalOcean")
                 echo_primary "Deploying OpenGovernance to DigitalOcean."
                 CURRENT_PROVIDER="DigitalOcean"
-                deploy_to_digitalocean
+                deploy_to_digitalocean "false"  # 'false' indicates not deploying to existing cluster
                 ;;
             *)
                 echo_error "Unsupported platform: $selected_platform"
@@ -481,45 +482,61 @@ choose_deployment() {
 
 # Function to deploy to DigitalOcean (Enhanced with Configuration Prompt)
 deploy_to_digitalocean() {
+    local deploy_existing="$1"  # 'true' or 'false'
+
     # Ensure required variables are set
     DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc1}"
     KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
     # Check if the cluster exists using 'doctl kubernetes cluster get'
     if doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" >/dev/null 2>&1; then
-        echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
+        if [[ "$deploy_existing" == "true" ]]; then
+            echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+            # Retrieve kubeconfig for the cluster
+            doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+            # Proceed to install OpenGovernance with Helm
+            install_opengovernance_with_helm
+        else
+            echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
-        # Prompt user for choice
-        echo_primary "Choose an option for deploying to DigitalOcean Kubernetes cluster:"
-        echo_primary "1. Use existing cluster '$KUBE_CLUSTER_NAME'"
-        echo_primary "2. Create a new cluster"
-        echo_primary "3. Exit"
+            # Prompt user for choice
+            echo_primary "Choose an option for deploying to DigitalOcean Kubernetes cluster:"
+            echo_primary "1. Use existing cluster '$KUBE_CLUSTER_NAME'"
+            echo_primary "2. Create a new cluster"
+            echo_primary "3. Exit"
 
-        echo_prompt -n "Select an option (1-3): "
-        read -r do_option < /dev/tty
+            echo_prompt -n "Select an option (1-3): "
+            read -r do_option < /dev/tty
 
-        case "$do_option" in
-            1)
-                echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
-                # Retrieve kubeconfig for the cluster
-                doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-                # Proceed to install OpenGovernance with Helm
-                install_opengovernance_with_helm
-                ;;
-            2)
-                # Prompt user for new cluster name with validation
-                create_unique_digitalocean_cluster
-                ;;
-            3)
-                echo_primary "Exiting."
-                exit 0
-                ;;
-            *)
-                echo_error "Invalid selection. Exiting."
-                exit 1
-                ;;
-        esac
+            case "$do_option" in
+                1)
+                    echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+                    # Retrieve kubeconfig for the cluster
+                    doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+                    # Proceed to install OpenGovernance with Helm
+                    install_opengovernance_with_helm
+                    ;;
+                2)
+                    # Prompt user for new cluster name with validation
+                    create_unique_digitalocean_cluster
+                    ;;
+                3)
+                    echo_primary "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid selection. Exiting."
+                    exit 1
+                    ;;
+            esac
+        fi
     else
+        if [[ "$deploy_existing" == "true" ]]; then
+            echo_error "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
+            echo_primary "Cannot deploy to a non-existent cluster."
+            exit 1
+        fi
+
         # Cluster does not exist, prompt user to create or exit
         echo_primary "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
 
@@ -628,7 +645,7 @@ install_opengovernance_with_helm() {
 
     # Ensure KUBE_NAMESPACE is set
     KUBE_NAMESPACE="${KUBE_NAMESPACE:-opengovernance}"
-    echo_detail "Installing OpenGovernance via Helm in namespace '$KUBE_NAMESPACE'."
+    echo_detail "Installing OpenGovernance via Helm in namespace '$KUBE_NAMESPACE' (5-10 mins)."
     if ! helm_quiet install opengovernance opengovernance/opengovernance \
         -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait; then  # Timeout increased to 15m
         echo_error "Helm installation failed."
@@ -729,10 +746,12 @@ warn_minikube_kind() {
 # -----------------------------
 configure_digitalocean_app() {
     echo_primary "How would you like to configure the OpenGovernance application?"
-
+    echo_primary "It takes 2-5 mins to complete."
     echo_primary "1) Configure with HTTPS and Hostname (DNS records required after installation)"
     echo_primary "2) Configure without HTTPS (DNS records required after installation)"
     echo_primary "3) No further configuration required"
+    echo_primary ""
+    echo_primary "You will need to create DNS records for "
 
     while true; do
         echo_prompt -n "Select an option (1-3): "
@@ -760,8 +779,8 @@ configure_digitalocean_app() {
     case "$INSTALL_TYPE" in
         1|2)
             # Map user choice to script arguments
-            # 1 -> -t 1
-            # 2 -> -t 2
+            # 1 -> --type 1
+            # 2 -> --type 2
             local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/do-automation.sh"
             echo_info "Executing DigitalOcean automation script with installation type $INSTALL_TYPE."
 
