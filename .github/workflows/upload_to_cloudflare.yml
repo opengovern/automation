@@ -63,10 +63,6 @@ jobs:
             new_tag="v${major}.${minor}.${patch}"
           fi
 
-          # Create and push the new tag
-#          git tag "$new_tag"
-#          git push https://$TAG_CREATION_TOKEN@github.com/opengovern/platform-configuration "$new_tag"
-
           # Set the new tag as an output
           echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
 
