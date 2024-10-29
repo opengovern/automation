@@ -171,23 +171,30 @@ is_kubectl_configured() {
 }
 
 get_cluster_info() {
-    # Check if kubectl is connected to a cluster
-    if kubectl cluster-info > /dev/null 2>&1; then
-        # Extract and display the control plane URL for further analysis
-        local control_plane_url
-        control_plane_url=$(kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true)
-        
-        if [[ -n "$control_plane_url" ]]; then
-            echo "$control_plane_url"
+    # Check if a Kubernetes context is set and kubectl can connect to a cluster
+    if kubectl config current-context > /dev/null 2>&1; then
+        # Verify if kubectl can communicate with the cluster
+        if kubectl cluster-info > /dev/null 2>&1; then
+            # Extract and display the control plane URL for further analysis
+            local control_plane_url
+            control_plane_url=$(kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true)
+            
+            if [[ -n "$control_plane_url" ]]; then
+                echo "$control_plane_url"
+            else
+                echo_error "Unable to determine control plane URL."
+                return 1
+            fi
         else
-            echo_error "Unable to determine control plane URL."
+            echo_error "Kubernetes cluster is unreachable. Please check your connection."
             return 1
         fi
     else
-        echo_error "There is no existing Kubernetes Cluster"
+        echo_error "No Kubernetes context is currently set in kubectl."
         return 1
     fi
 }
+
 
 # Function to detect Kubernetes provider and deploy
 detect_kubernetes_provider_and_deploy() {
