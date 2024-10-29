@@ -27,9 +27,9 @@ MISSING_TOOLS=()
 AVAILABLE_PLATFORMS=()
 PROVIDER_CONFIGS=()
 
-# Initialize cluster-related variables
-KUBE_REGION="${KUBE_REGION:-nyc1}"            # Default region, can be overridden by environment variable
-KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance-cluster}"    # Default cluster name
+# Initialize variables
+INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrastructure directory
+INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
 
 # Detect Operating System
 OS_TYPE="$(uname -s)"
@@ -105,7 +105,7 @@ check_dependencies() {
     done
 
     if ! command_exists "terraform" && ! command_exists "tofu"; then
-        echo_error "Either Terraform or OpenTofu is required but not installed."
+        echo_error "Neither Terraform nor OpenTofu is installed."
         MISSING_TOOLS+=("terraform/OpenTofu")
     fi
 
@@ -170,13 +170,21 @@ is_kubectl_configured() {
     fi
 }
 
-# Function to get cluster info
 get_cluster_info() {
+    # Check if kubectl is connected to a cluster
     if kubectl cluster-info > /dev/null 2>&1; then
-        # Extract the URL of the Kubernetes control plane
-        kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true
+        # Extract and display the control plane URL for further analysis
+        local control_plane_url
+        control_plane_url=$(kubectl cluster-info | grep -i "control plane" | awk '{print $NF}' || true)
+        
+        if [[ -n "$control_plane_url" ]]; then
+            echo "$control_plane_url"
+        else
+            echo_error "Unable to determine control plane URL."
+            return 1
+        fi
     else
-        echo_error "kubectl is not configured correctly."
+        echo_error "There is no existing Kubernetes Cluster"
         return 1
     fi
 }
@@ -187,36 +195,37 @@ detect_kubernetes_provider_and_deploy() {
     cluster_info=$(get_cluster_info) || true
 
     if [[ -z "$cluster_info" ]]; then
-        echo_primary "Unable to retrieve cluster info."
+        echo_primary "Unable to retrieve cluster information."
         choose_deployment
         return
     fi
 
-    echo_info "Cluster info: $cluster_info"
+    echo_info "Cluster control plane URL: $cluster_info"
 
     case "$cluster_info" in
         *".azmk8s.io"*|*"azure"*)
-            echo_primary "Cluster on AKS (Azure). Deploying OpenGovernance to Azure."
+            echo_primary "Detected AKS (Azure) cluster. Deploying OpenGovernance to Azure."
             deploy_via_curl "azure"
             ;;
         *".eks.amazonaws.com"*|*"amazonaws.com"*)
-            echo_primary "Cluster on EKS (AWS). Deploying OpenGovernance to AWS."
+            echo_primary "Detected EKS (AWS) cluster. Deploying OpenGovernance to AWS."
             deploy_via_curl "aws"
             ;;
         *".gke.io"*|*"gke"*)
-            echo_primary "Cluster on GKE (GCP). Deploying OpenGovernance to GCP."
+            echo_primary "Detected GKE (GCP) cluster. Deploying OpenGovernance to GCP."
             deploy_via_curl "gcp"
             ;;
         *".k8s.ondigitalocean.com"*|*"digitalocean"*|*"do-"*)
-            echo_primary "Cluster on DigitalOcean. Deploying OpenGovernance to DigitalOcean."
+            echo_primary "Detected DigitalOcean Kubernetes cluster. Deploying OpenGovernance to DigitalOcean."
             deploy_to_digitalocean
             ;;
         *)
-            echo_primary "Kubernetes provider undetermined."
+            echo_primary "Unable to identify Kubernetes provider."
             choose_deployment
             ;;
     esac
 }
+
 
 # Function to deploy via curl
 deploy_via_curl() {
@@ -272,7 +281,7 @@ choose_deployment() {
         case "$selected_platform" in
             "AWS")
                 echo_primary "Deploying OpenGovernance to AWS."
-                deploy_via_curl "aws"
+                deploy_to_aws
                 ;;
             "Azure")
                 echo_primary "Deploying OpenGovernance to Azure."
@@ -327,110 +336,72 @@ check_opengovernance_installation() {
     fi
 }
 
-# Function to create a Kubernetes cluster on DigitalOcean
-create_cluster() {
-    local cluster_name="$1"
-
-    # Before creating the cluster, provide the region and cluster name
-    echo_primary "Cluster Name: '$cluster_name'"
-    echo_primary "Region: '$KUBE_REGION'"
-
-    # Ask if they want to change the cluster name or region
-    echo_prompt -n "Do you want to change the cluster name or region? Press 'y' to change, or press 'Enter' to proceed within 30 seconds: "
-    read -t 30 response < /dev/tty
-    if [ $? -eq 0 ]; then
-        # User provided input
-        if [ -z "$response" ]; then
-            # User pressed Enter, proceed
-            :
-        elif [[ "$response" =~ ^[Yy]$ ]]; then
-            # User wants to change the cluster name and/or region
-            # Prompt for new cluster name
-            echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
-            read new_cluster_name < /dev/tty
-            if [ -n "$new_cluster_name" ]; then
-                cluster_name="$new_cluster_name"
-                KUBE_CLUSTER_NAME="$new_cluster_name"
-            fi
-
-            # Prompt for new region
-            echo_prompt -n "Enter new region [current: $KUBE_REGION]: "
-            read new_region < /dev/tty
-            if [ -n "$new_region" ]; then
-                KUBE_REGION="$new_region"
-            fi
-        fi
-    else
-        # Timeout, no response
-        echo_prompt ""
-        echo_detail "No response received in 30 seconds. Proceeding with current cluster name and region."
-    fi
-
-    # Proceed with creating the cluster
-    echo_primary "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'... (Expected time: 3-5 minutes)"
-    doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
-        --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
-
-    # Save kubeconfig for the cluster
-    doctl kubernetes cluster kubeconfig save "$cluster_name"
-
-    # Wait for nodes to become ready
-    check_ready_nodes
-}
-
-# Function to check if Kubernetes nodes are ready
-check_ready_nodes() {
-    local attempts=0
-    local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
-    local sleep_time=30
-
-    while [ $attempts -lt $max_attempts ]; do
-        READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ')
-        if [ "$READY_NODES" -ge 3 ]; then
-            echo_info "Required nodes are ready. ($READY_NODES nodes)"
-            return 0
-        fi
-
-        attempts=$((attempts + 1))
-        echo_detail "Waiting for nodes to become ready... ($attempts/$max_attempts)"
-        sleep $sleep_time
-    done
-
-    echo_error "At least three Kubernetes nodes must be ready, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
-    exit 1
-}
-
-# Function to deploy to DigitalOcean
-deploy_to_digitalocean() {
-    # Ensure required variables are set
-    KUBE_REGION="${KUBE_REGION:-nyc1}"
-    KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance-cluster}"
-
-    # Check if the cluster exists
-    if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$KUBE_CLUSTER_NAME$"; then
-        echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
-
-        # Prompt user to use existing cluster or exit
-        echo_prompt -n "Do you want to use the existing cluster '$KUBE_CLUSTER_NAME'? Press 'y' to use, or any other key to exit: "
-        read -r use_existing < /dev/tty
-        if [[ "$use_existing" =~ ^[Yy]$ ]]; then
-            echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
-            # Retrieve kubeconfig for the cluster
-            doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-        else
-            echo_primary "Exiting."
-            exit 1
-        fi
-    else
-        # Create the cluster since it doesn't exist
-        create_cluster "$KUBE_CLUSTER_NAME"
-    fi
-
-    # Wait for nodes to be ready
-    check_ready_nodes
-
-    # Proceed to install OpenGovernance with Helm
+# Function to deploy to AWS
+deploy_to_aws() {
+    check_terraform_or_opentofu
+    prepare_infrastructure_directory
+    deploy_infrastructure_to_aws
     install_opengovernance_with_helm
+}
+
+# Function to check if Terraform or OpenTofu is installed
+check_terraform_or_opentofu() {
+    if command_exists "terraform"; then
+        INFRA_TOOL="terraform"
+        echo_info "Terraform is installed."
+    elif command_exists "tofu"; then
+        INFRA_TOOL="tofu"
+        echo_info "OpenTofu is installed."
+    else
+        echo_error "Neither Terraform nor OpenTofu is installed. Please install one of them and retry."
+        exit 1
+    fi
+}
+
+# Function to prepare the infrastructure directory
+prepare_infrastructure_directory() {
+    # Clone or update the infrastructure repository
+    if [ -d "$INFRA_DIR" ]; then
+        echo_info "Infrastructure directory already exists at $INFRA_DIR. Updating repository..."
+        cd "$INFRA_DIR"
+        git pull
+    else
+        echo_info "Cloning infrastructure repository to $INFRA_DIR..."
+        git clone https://github.com/opengovern/deploy-opengovernance.git "$INFRA_DIR"
+        cd "$INFRA_DIR/aws/infrastructure"
+    fi
+
+    # Navigate to the AWS infrastructure directory
+    INFRA_DIR="$INFRA_DIR/aws/infrastructure"
+    cd "$INFRA_DIR"
+}
+
+# Function to deploy infrastructure to AWS
+deploy_infrastructure_to_aws() {
+    echo_info "Deploying infrastructure to AWS. This step may take 10-15 minutes..."
+
+    if [ "$INFRA_TOOL" == "terraform" ]; then
+        echo_info "Initializing Terraform..."
+        terraform init
+
+        echo_info "Planning Terraform deployment..."
+        terraform plan
+
+        echo_info "Applying Terraform deployment..."
+        terraform apply --auto-approve
+    elif [ "$INFRA_TOOL" == "tofu" ]; then
+        echo_info "Initializing OpenTofu..."
+        tofu init
+
+        echo_info "Planning OpenTofu deployment..."
+        tofu plan
+
+        echo_info "Applying OpenTofu deployment..."
+        tofu apply -auto-approve
+    fi
+
+    echo_info "Configuring kubectl to connect to the new EKS cluster..."
+    eval "$("$INFRA_TOOL" output -raw configure_kubectl)"
 }
 
 # Function to install OpenGovernance with Helm
@@ -508,6 +479,112 @@ provide_port_forward_instructions() {
     echo_prompt "Use the following default credentials to sign in:"
     echo_prompt "  Username: admin@opengovernance.io"
     echo_prompt "  Password: password"
+}
+
+# Function to deploy to DigitalOcean (from previous integration)
+deploy_to_digitalocean() {
+    # Ensure required variables are set
+    KUBE_REGION="${KUBE_REGION:-nyc1}"
+    KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance-cluster}"
+
+    # Check if the cluster exists
+    if doctl kubernetes cluster list --format Name --no-header | grep -qw "^$KUBE_CLUSTER_NAME$"; then
+        echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
+
+        # Prompt user to use existing cluster or exit
+        echo_prompt -n "Do you want to use the existing cluster '$KUBE_CLUSTER_NAME'? Press 'y' to use, or any other key to exit: "
+        read -r use_existing < /dev/tty
+        if [[ "$use_existing" =~ ^[Yy]$ ]]; then
+            echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+            # Retrieve kubeconfig for the cluster
+            doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+        else
+            echo_primary "Exiting."
+            exit 1
+        fi
+    else
+        # Create the cluster since it doesn't exist
+        create_cluster "$KUBE_CLUSTER_NAME"
+    fi
+
+    # Wait for nodes to be ready
+    check_ready_nodes
+
+    # Proceed to install OpenGovernance with Helm
+    install_opengovernance_with_helm
+}
+
+# Function to create a Kubernetes cluster on DigitalOcean
+create_cluster() {
+    local cluster_name="$1"
+
+    # Before creating the cluster, provide the region and cluster name
+    echo_primary "Cluster Name: '$cluster_name'"
+    echo_primary "Region: '$KUBE_REGION'"
+
+    # Ask if they want to change the cluster name or region
+    echo_prompt -n "Do you want to change the cluster name or region? Press 'y' to change, or press 'Enter' to proceed within 30 seconds: "
+    read -t 30 response < /dev/tty
+    if [ $? -eq 0 ]; then
+        # User provided input
+        if [ -z "$response" ]; then
+            # User pressed Enter, proceed
+            :
+        elif [[ "$response" =~ ^[Yy]$ ]]; then
+            # User wants to change the cluster name and/or region
+            # Prompt for new cluster name
+            echo_prompt -n "Enter new cluster name [current: $cluster_name]: "
+            read new_cluster_name < /dev/tty
+            if [ -n "$new_cluster_name" ]; then
+                cluster_name="$new_cluster_name"
+                KUBE_CLUSTER_NAME="$new_cluster_name"
+            fi
+
+            # Prompt for new region
+            echo_prompt -n "Enter new region [current: $KUBE_REGION]: "
+            read new_region < /dev/tty
+            if [ -n "$new_region" ]; then
+                KUBE_REGION="$new_region"
+            fi
+        fi
+    else
+        # Timeout, no response
+        echo_prompt ""
+        echo_detail "No response received in 30 seconds. Proceeding with current cluster name and region."
+    fi
+
+    # Proceed with creating the cluster
+    echo_primary "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$KUBE_REGION'... (Expected time: 3-5 minutes)"
+    doctl kubernetes cluster create "$cluster_name" --region "$KUBE_REGION" \
+        --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait
+
+    # Save kubeconfig for the cluster
+    doctl kubernetes cluster kubeconfig save "$cluster_name"
+
+    # Wait for nodes to become ready
+    check_ready_nodes
+}
+
+# Function to check if Kubernetes nodes are ready
+check_ready_nodes() {
+    local attempts=0
+    local max_attempts=10  # 10 attempts * 30 seconds = 5 minutes
+    local sleep_time=30
+
+    while [ $attempts -lt $max_attempts ]; do
+        READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c ' Ready ')
+        if [ "$READY_NODES" -ge 3 ]; then
+            echo_info "Required nodes are ready. ($READY_NODES nodes)"
+            return 0
+        fi
+
+        attempts=$((attempts + 1))
+        echo_detail "Waiting for nodes to become ready... ($attempts/$max_attempts)"
+        sleep $sleep_time
+    done
+
+    echo_error "At least three Kubernetes nodes must be ready, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
+    exit 1
 }
 
 # -----------------------------

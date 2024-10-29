@@ -17,6 +17,9 @@ exec > >(tee -i "$LOGFILE") 2>&1
 # Open file descriptor 3 for appending to the log file only
 exec 3>> "$LOGFILE"
 
+# Initialize variables
+SKIP_INFRA_SETUP=false  # Default value for --skip-infra-setup
+
 # -----------------------------
 # Function Definitions
 # -----------------------------
@@ -32,12 +35,20 @@ echo_info() {
     echo "$message" >&3
 }
 
+# Function to display primary messages to console and log
+echo_primary() {
+    local message="$1"
+    printf "%s\n" "$message"
+    # Log detailed message
+    echo "$message" >&3
+}
+
 # Function to display error messages to console and log
 echo_error() {
     local message="$1"
     # Always print concise error message to console
     printf "Error: %s\n" "$message"
-    # Log detailed error message
+    # Log detailed message
     echo "Error: $message" >&3
 }
 
@@ -46,8 +57,9 @@ usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
-    echo "  --debug             Enable debug mode for detailed output."
-    echo "  -h, --help          Display this help message."
+    echo "  --debug                 Enable debug mode for detailed output."
+    echo "  --skip-infra-setup      Skip infrastructure setup if prerequisites are met."
+    echo "  -h, --help              Display this help message."
     exit 1
 }
 
@@ -88,57 +100,40 @@ check_aws_auth() {
     echo_info "AWS CLI is authenticated."
 }
 
-# Function to clone the repository
-clone_repository() {
-    if [ -d "$REPO_DIR" ]; then
-        echo_info "Repository '$REPO_DIR' already exists. Pulling the latest changes..."
-        git -C "$REPO_DIR" pull
+# Function to get cluster info
+get_cluster_info() {
+    kubectl cluster-info | head -n 1
+}
+
+# Function to confirm the Kubernetes provider is AWS
+confirm_provider_is_aws() {
+    local cluster_info
+    cluster_info=$(get_cluster_info)
+    if [[ -z "$cluster_info" ]]; then
+        echo_error "Unable to retrieve cluster info."
+        return 1
+    fi
+    echo_info "Cluster info: $cluster_info"
+    if [[ "$cluster_info" == *eks.amazonaws.com* ]]; then
+        echo_info "Cluster is running on AWS EKS."
+        return 0
     else
-        echo_info "Cloning repository from $REPO_URL..."
-        git clone "$REPO_URL"
+        echo_error "Cluster is not running on AWS EKS."
+        return 1
     fi
 }
 
-# Function to deploy infrastructure using Terraform or OpenTofu
-deploy_infrastructure() {
-    echo_info "Deploying infrastructure. This step may take 10-15 minutes..."
-    echo_info "Navigating to infrastructure directory: $INFRA_DIR"
-    cd "$INFRA_DIR"
-
-    if [ "$INFRA_TOOL" == "terraform" ]; then
-        echo_info "Initializing Terraform..."
-        terraform init
-
-        echo_info "Planning Terraform deployment..."
-        terraform plan
-
-        echo_info "Applying Terraform deployment..."
-        terraform apply --auto-approve
-    elif [ "$INFRA_TOOL" == "tofu" ]; then
-        echo_info "Initializing OpenTofu..."
-        tofu init
-
-        echo_info "Planning OpenTofu deployment..."
-        tofu plan
-
-        echo_info "Applying OpenTofu deployment..."
-        tofu apply -auto-approve
+# Function to check if there are at least three ready nodes
+check_ready_nodes() {
+    local ready_nodes
+    ready_nodes=$(kubectl get nodes --no-headers | grep -c ' Ready ')
+    if [ "$ready_nodes" -lt 3 ]; then
+        echo_error "At least three Kubernetes nodes must be ready. Currently, $ready_nodes node(s) are ready."
+        return 1
+    else
+        echo_info "There are $ready_nodes ready nodes."
+        return 0
     fi
-
-    echo_info "Connecting to the Kubernetes cluster..."
-    eval "$("$INFRA_TOOL" output -raw configure_kubectl)"
-}
-
-# Function to provide port-forwarding instructions
-provide_port_forward_instructions() {
-    echo_error "OpenGovernance is running but not accessible via Ingress."
-    echo "You can access it using port-forwarding as follows:"
-    echo "kubectl port-forward -n $NAMESPACE service/nginx-proxy 8080:80"
-    echo "Then, access it at http://localhost:8080"
-    echo ""
-    echo "To sign in, use the following default credentials:"
-    echo "  Username: admin@opengovernance.io"
-    echo "  Password: password"
 }
 
 # Function to check if kubectl is connected to a cluster, Helm is installed, and at least three nodes are ready
@@ -166,6 +161,51 @@ check_prerequisites() {
 
     # If all checks pass
     echo_info "Checking Prerequisites...Completed"
+}
+
+# Function to clone the repository
+clone_repository() {
+    REPO_URL="https://github.com/opengovern/deploy-opengovernance.git"
+    REPO_DIR="deploy-opengovernance"
+    if [ -d "$REPO_DIR" ]; then
+        echo_info "Repository '$REPO_DIR' already exists. Pulling the latest changes..."
+        git -C "$REPO_DIR" pull
+    else
+        echo_info "Cloning repository from $REPO_URL..."
+        git clone "$REPO_URL"
+    fi
+}
+
+# Function to deploy infrastructure using Terraform or OpenTofu
+deploy_infrastructure() {
+    INFRA_DIR="deploy-opengovernance/aws/infra"
+
+    echo_info "Deploying infrastructure. This step may take 10-15 minutes..."
+    echo_info "Navigating to infrastructure directory: $INFRA_DIR"
+    cd "$INFRA_DIR"
+
+    if [ "$INFRA_TOOL" == "terraform" ]; then
+        echo_info "Initializing Terraform..."
+        terraform init
+
+        echo_info "Planning Terraform deployment..."
+        terraform plan
+
+        echo_info "Applying Terraform deployment..."
+        terraform apply --auto-approve
+    elif [ "$INFRA_TOOL" == "tofu" ]; then
+        echo_info "Initializing OpenTofu..."
+        tofu init
+
+        echo_info "Planning OpenTofu deployment..."
+        tofu plan
+
+        echo_info "Applying OpenTofu deployment..."
+        tofu apply -auto-approve
+    fi
+
+    echo_info "Connecting to the Kubernetes cluster..."
+    eval "$("$INFRA_TOOL" output -raw configure_kubectl)"
 }
 
 # Function to check OpenGovernance readiness
@@ -233,6 +273,24 @@ prompt_user_options() {
     esac
 }
 
+# Function to provide port-forwarding instructions
+provide_port_forward_instructions() {
+    echo ""
+    echo "========================================="
+    echo "Port-Forwarding Instructions"
+    echo "========================================="
+    echo "OpenGovernance is running but not accessible via Ingress."
+    echo "You can access it using port-forwarding as follows:"
+    echo ""
+    echo "kubectl port-forward -n $NAMESPACE service/nginx-proxy 8080:80"
+    echo ""
+    echo "Then, access it at http://localhost:8080"
+    echo ""
+    echo "To sign in, use the following default credentials:"
+    echo "  Username: admin@opengovernance.io"
+    echo "  Password: password"
+    echo ""
+}
 
 # Function to configure OpenGovernance based on user input
 configure_opengovernance() {
@@ -519,19 +577,7 @@ EOF
     get_load_balancer_dns
 
     # Prompt user to create CNAME record for domain mapping
-    echo ""
-    echo "==============================="
-    echo "CNAME Record Creation Required"
-    echo "==============================="
-    echo "Please create the following CNAME record in your DNS provider to map your domain to the Load Balancer:"
-    echo ""
-    echo "Host/Name: $DOMAIN"
-    echo "Type: CNAME"
-    echo "Value/Points to: $LB_DNS"
-    echo "TTL: 300 (or default)"
-    echo ""
-    echo "After creating the CNAME record, your service should be accessible at https://$DOMAIN"
-    echo ""
+    prompt_cname_domain_creation
 }
 
 # Function to set up OpenGovernance with Domain but Without SSL
@@ -644,21 +690,6 @@ EOF
     prompt_cname_domain_creation_no_ssl
 }
 
-# Function to update Helm release
-update_helm_release() {
-    echo_info "Updating Helm release: $HELM_RELEASE with domain: $DOMAIN and protocol: $PROTOCOL"
-    echo_info "This step may take 3-5 minutes..."
-
-    helm_quiet upgrade "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: ${PROTOCOL}://${DOMAIN}/dex
-EOF
-    echo_info "Helm release $HELM_RELEASE has been updated."
-}
-
 # Function to restart Kubernetes pods
 restart_pods() {
     echo_info "Restarting OpenGovernance Pods to Apply Changes."
@@ -685,6 +716,10 @@ while [[ "$#" -gt 0 ]]; do
             DEBUG_MODE=true
             shift
             ;;
+        --skip-infra-setup)
+            SKIP_INFRA_SETUP=true
+            shift
+            ;;
         -h|--help)
             usage
             ;;
@@ -705,28 +740,44 @@ check_command "jq"
 check_command "helm"
 check_prerequisites
 
-# Step 2: Check AWS CLI authentication
+# Check AWS CLI authentication
 check_aws_auth
 
-# Step 3: Clone repository and deploy infrastructure
-clone_repository
-deploy_infrastructure
+if [ "$SKIP_INFRA_SETUP" = true ]; then
+    echo_info "Skipping infrastructure setup as per --skip-infra-setup flag."
+    # Step 2: Confirm provider is AWS
+    if confirm_provider_is_aws && check_ready_nodes; then
+        echo_info "Cluster is on AWS and has sufficient ready nodes. Skipping infrastructure setup."
+    else
+        echo_error "Prerequisites for skipping infrastructure setup are not met."
+        exit 1
+    fi
+else
+    # Step 2: Clone repository and deploy infrastructure
+    clone_repository
+    deploy_infrastructure
+fi
 
-# Step 4: Run Helm install without any configuration
+# Step 3: Run Helm install without any configuration
 echo_info "Installing Helm chart. This step may take 5-7 minutes..."
+HELM_RELEASE="opengovernance"
+HELM_CHART="https://charts.opengovernance.com/opengovernance-latest.tgz"
+NAMESPACE="opengovernance"
+INGRESS_NAME="opengovernance-ingress"
+
 helm_quiet install "$HELM_RELEASE" "$HELM_CHART" -n "$NAMESPACE" --create-namespace
 
 echo_info "Helm install completed."
 
-# Step 5: Check pods and migrator jobs
+# Step 4: Check pods and migrator jobs
 echo_info "Checking OpenGovernance pod and migrator job readiness..."
 check_pods_and_jobs
 
-# Step 6: Prompt user for OpenGovernance setup options
+# Step 5: Prompt user for OpenGovernance setup options
 prompt_user_options
 configure_opengovernance
 
-# Step 7: Restart relevant Kubernetes pods to apply changes
+# Step 6: Restart relevant Kubernetes pods to apply changes
 if [[ "${SETUP_DOMAIN_AND_SSL:-0}" -eq 1 || "${SETUP_DOMAIN_NO_SSL:-0}" -eq 1 ]]; then
     restart_pods
 fi
@@ -735,8 +786,10 @@ echo ""
 echo "======================================="
 echo "Deployment Script Completed Successfully!"
 echo "======================================="
-if [[ "${SETUP_DOMAIN_AND_SSL:-0}" -eq 1 || "${SETUP_DOMAIN_NO_SSL:-0}" -eq 1 ]]; then
-    echo "Your service should now be fully operational at ${PROTOCOL}://${DOMAIN}"
+if [[ "${SETUP_DOMAIN_AND_SSL:-0}" -eq 1 ]]; then
+    echo "Your service should now be fully operational at https://$DOMAIN"
+elif [[ "${SETUP_DOMAIN_NO_SSL:-0}" -eq 1 ]]; then
+    echo "Your service should now be fully operational at http://$DOMAIN"
 fi
 echo "======================================="
 
