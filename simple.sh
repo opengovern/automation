@@ -651,14 +651,14 @@ provide_port_forward_instructions() {
     echo_prompt "  Password: password"
 }
 
-# Function to deploy to DigitalOcean (Updated)
+# Function to deploy to DigitalOcean (Corrected)
 deploy_to_digitalocean() {
     # Ensure required variables are set
     DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc1}"
     KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
-    # Check if the cluster exists
-    if doctl kubernetes cluster list --format Name --no-header -o value | grep -qw "^$KUBE_CLUSTER_NAME$"; then
+    # Check if the cluster exists using 'doctl kubernetes cluster get'
+    if doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" >/dev/null 2>&1; then
         echo_error "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
 
         # Prompt user for choice
@@ -732,7 +732,7 @@ deploy_to_digitalocean() {
     install_opengovernance_with_helm
 }
 
-# Function to create a unique Kubernetes cluster on DigitalOcean
+# Function to create a unique Kubernetes cluster on DigitalOcean (Corrected)
 create_unique_digitalocean_cluster() {
     while true; do
         echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
