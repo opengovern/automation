@@ -4,21 +4,23 @@ on:
   push:
     branches:
       - main
-    paths:
-      - simple.sh  # Only trigger if simple.sh is updated
+#    paths:
+#      - simple.sh
 
 jobs:
   upload:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Install AWS CLI
         run: |
-          sudo apt-get update
-          sudo apt-get install -y awscli
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" 
+          unzip -o awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
 
       - name: Configure AWS CLI for Cloudflare R2
         env:
@@ -29,8 +31,54 @@ jobs:
           aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
           aws configure set default.region us-east-1
 
-      - name: Upload simple.sh to Cloudflare R2
+      - name: Upload installer file to Cloudflare R2
         env:
-          BUCKET_NAME: "opengovernance"
+          BUCKET_URL: ${{ vars.PROD_CLOUDFLARE_INSTALLER_BUCKET }}
+          SOURCE_FILE: ${{ vars.OG_INSTALLER_MAIN_INSTALLER_FILE }}
+          TARGET_FILE: ${{ vars.OG_INSTALLER_ON_CLOUDFLARE_MAIN_INSTALLER_FILE }}
         run: |
-          aws --endpoint-url https://2d6651d596663cce624bd513238102e7.r2.cloudflarestorage.com s3 cp simple.sh s3://$BUCKET_NAME/simple.sh
+          aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://scripts/$TARGET_FILE"
+
+      - name: Bump Version and Create Tag
+        if: ${{ success() }}
+        id: versioning
+        env:
+          TAG_CREATION_TOKEN: ${{ secrets.OG_RELEASE_TAG_UPDATE }}
+        run: |
+          # Configure git with the token to allow tag creation
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch --tags
+
+          # Get the latest tag and increment based on semantic versioning rules
+          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            # If no tags exist, start at v0.1.0
+            new_tag="v0.1.0"
+          else
+            # Split the latest tag into major, minor, and patch
+            IFS='.' read -r major minor patch <<< "${latest_tag//v/}"
+            # Increment the patch version
+            patch=$((patch + 1))
+            new_tag="v${major}.${minor}.${patch}"
+          fi
+
+          # Set the new tag as an output
+          echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        if: ${{ success() && steps.versioning.outcome == 'success' }}
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.OG_RELEASE_TAG_UPDATE }}
+        with:
+          tag_name: ${{ steps.versioning.outputs.new_tag }}
+          release_name: "Release ${{ steps.versioning.outputs.new_tag }}"
+          body: "Automated release for ${{ steps.versioning.outputs.new_tag }}"
+          draft: false
+          prerelease: false
+
+      - name: Display new tag
+        if: ${{ success() && steps.versioning.outcome == 'success' }}
+        run: |
+          echo "Created new tag: ${{ steps.versioning.outputs.new_tag }}"
