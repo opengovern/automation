@@ -427,7 +427,7 @@ function check_prerequisites() {
     echo_primary "Region: '$KUBE_REGION'"
 
     # Ask if they want to change the cluster name or region
-    echo_prompt -n "Change cluster name or region? Press 'y' to change, or 'Enter' to proceed (auto-proceed in 30 seconds):"
+    echo_prompt -n "Do you want to change the cluster name or region? Press 'y' to change, or press 'Enter' to proceed within 30 seconds: "
     read -t 30 response < /dev/tty
     if [ $? -eq 0 ]; then
       # User provided input
@@ -519,22 +519,34 @@ function check_prerequisites() {
           create_cluster "$KUBE_CLUSTER_NAME"
         fi
       else
-        echo_error "doctl is installed but not configured."
+        # User guidance when doctl is installed but not configured, and kubectl is not connected
+        echo_error "doctl is installed but not configured, and kubectl is not connected."
         echo_prompt ""
-        echo_prompt "Please configure doctl or connect kubectl to your Kubernetes cluster by following these steps:"
-        echo_prompt "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
-        echo_prompt "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
-        echo_prompt "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+        echo_prompt "OpenGovernance needs kubectl to be configured and connected."
+        echo_prompt ""
+        echo_prompt "In your DigitalOcean account, navigate to the Kubernetes section, and click 'Create Cluster' with the following configuration:"
+        echo_prompt "  - Kubernetes Version: 1.31.x or Higher"
+        echo_prompt "  - Machine Type: Dedicated CPUs > General Purpose - Premium Intel (10 Gbps)"
+        echo_prompt "  - Node Plan: 4 vCPUs / 16GB RAM / 60GB SSD (1 Node Pool x 3 Nodes)"
+        echo_prompt ""
+        echo_prompt "After the cluster is created, remember to connect to the Kubernetes cluster by following DigitalOcean's instructions:"
+        echo_prompt "  https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
         echo_prompt ""
         exit 1
       fi
     else
-      echo_error "doctl is not installed."
+      # User guidance when doctl is not installed and kubectl is not connected
+      echo_error "doctl is not installed, and kubectl is not connected."
       echo_prompt ""
-      echo_prompt "Please install doctl or connect kubectl to an existing Kubernetes cluster by following these steps:"
-      echo_prompt "1. Visit the OpenGovernance DigitalOcean Deployment Guide: https://docs.opengovernance.io/oss/getting-started/introduction/digitalocean-deployment-guide"
-      echo_prompt "2. If you have already created a cluster, configure kubectl to connect by clicking 'Connect to Cluster' in the DigitalOcean portal or refer to:"
-      echo_prompt "   https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
+      echo_prompt "OpenGovernance needs kubectl to be configured and connected."
+      echo_prompt ""
+      echo_prompt "In your DigitalOcean account, navigate to the Kubernetes section, and click 'Create Cluster' with the following configuration:"
+      echo_prompt "  - Kubernetes Version: 1.31.x or Higher"
+      echo_prompt "  - Machine Type: Dedicated CPUs > General Purpose - Premium Intel (10 Gbps)"
+      echo_prompt "  - Node Plan: 4 vCPUs / 16GB RAM / 60GB SSD (1 Node Pool x 3 Nodes)"
+      echo_prompt ""
+      echo_prompt "After the cluster is created, remember to connect to the Kubernetes cluster by following DigitalOcean's instructions:"
+      echo_prompt "  https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/"
       echo_prompt ""
       exit 1
     fi
@@ -683,7 +695,7 @@ function install_opengovernance_with_https() {
   # Perform Helm installation with custom configuration
   echo_detail "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -708,7 +720,7 @@ function install_opengovernance_with_hostname_only() {
   # Perform Helm installation with custom configuration
   echo_detail "Performing installation with custom configuration."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -734,7 +746,7 @@ function install_opengovernance_with_public_ip() {
   helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
   helm_quiet repo update
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait \
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
     -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -773,7 +785,7 @@ function install_opengovernance_no_ingress() {
   # Perform Helm installation
   echo_detail "Installing OpenGovernance via Helm without Ingress."
 
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait
+  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait
 
   echo_detail "OpenGovernance installation without Ingress completed."
   echo_detail "Application Installed successfully."
