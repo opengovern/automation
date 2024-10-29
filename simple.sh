@@ -45,6 +45,7 @@ PROVIDER_ERRORS=()
 INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrastructure directory
 INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
 CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
+KUBECTL_CONFIGURED=false  # Variable to track if kubectl is configured
 
 # Detect Operating System
 OS_TYPE="$(uname -s)"
@@ -59,6 +60,41 @@ if [[ "$OS" == "UNKNOWN" ]]; then
     echo_error "Unsupported Operating System: $OS_TYPE"
     exit 1
 fi
+
+# -----------------------------
+# State Management
+# -----------------------------
+STATE_FILE="$HOME/opengovernance_install.state"
+
+# Load state if state file exists
+if [[ -f "$STATE_FILE" ]]; then
+    echo "State file found. Resuming from last saved state."
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+else
+    echo "No state file found. Starting fresh."
+    CURRENT_STEP=1
+    # Initialize state variables
+    DIGITALOCEAN_CLUSTER_CREATED="false"
+    OPENGOVERNANCE_INSTALLED="false"
+    DIGITALOCEAN_APP_CONFIGURED="false"
+fi
+
+save_state() {
+    {
+        echo "CURRENT_STEP=$CURRENT_STEP"
+        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
+        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
+        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
+        echo "INFRA_DIR=\"$INFRA_DIR\""
+        echo "INFRA_TOOL=\"$INFRA_TOOL\""
+        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
+        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
+        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
+        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
+        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+    } > "$STATE_FILE"
+}
 
 # -----------------------------
 # Function Definitions
@@ -178,8 +214,10 @@ check_provider_clis() {
 # Function to check if kubectl is configured
 is_kubectl_configured() {
     if kubectl cluster-info >/dev/null 2>&1; then
+        KUBECTL_CONFIGURED=true
         return 0
     else
+        KUBECTL_CONFIGURED=false
         return 1
     fi
 }
@@ -312,6 +350,9 @@ detect_kubernetes_provider_and_deploy() {
             ;;
     esac
 
+    # Save state after detecting provider
+    save_state
+
     # Ask user if they want to deploy to the existing cluster or create a new one
     echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
     echo_primary "1. Deploy to existing cluster"
@@ -357,26 +398,31 @@ determine_and_deploy_provider() {
         *".azmk8s.io"*|*"azure"*)
             echo_primary "Deploying OpenGovernance to Azure."
             CURRENT_PROVIDER="Azure"
+            save_state
             deploy_via_curl "azure"
             ;;
         *".eks.amazonaws.com"*|*"amazonaws.com"*)
             echo_primary "Deploying OpenGovernance to AWS."
             CURRENT_PROVIDER="AWS"
+            save_state
             deploy_via_curl "aws"
             ;;
         *".gke.io"*|*"gke"*)
             echo_primary "Deploying OpenGovernance to GCP."
             CURRENT_PROVIDER="GCP"
+            save_state
             deploy_via_curl "gcp"
             ;;
         *".k8s.ondigitalocean.com"*|*"digitalocean"*|*"do-"*)
             echo_primary "Deploying OpenGovernance to DigitalOcean."
             CURRENT_PROVIDER="DigitalOcean"
+            save_state
             deploy_to_digitalocean "$deploy_existing"
             ;;
         *"minikube"*)
             echo_primary "Deploying OpenGovernance to Minikube."
             CURRENT_PROVIDER="Minikube"
+            save_state
             if warn_minikube_kind "Minikube"; then
                 install_opengovernance_with_helm
             else
@@ -387,6 +433,7 @@ determine_and_deploy_provider() {
         *"kind"*)
             echo_primary "Deploying OpenGovernance to Kind."
             CURRENT_PROVIDER="Kind"
+            save_state
             if warn_minikube_kind "Kind"; then
                 install_opengovernance_with_helm
             else
@@ -471,21 +518,25 @@ choose_deployment() {
             "AWS")
                 echo_primary "Deploying OpenGovernance to AWS."
                 CURRENT_PROVIDER="AWS"
+                save_state
                 deploy_via_curl "aws"
                 ;;
             "Azure")
                 echo_primary "Deploying OpenGovernance to Azure."
                 CURRENT_PROVIDER="Azure"
+                save_state
                 deploy_via_curl "azure"
                 ;;
             "GCP")
                 echo_primary "Deploying OpenGovernance to GCP."
                 CURRENT_PROVIDER="GCP"
+                save_state
                 deploy_via_curl "gcp"
                 ;;
             "DigitalOcean")
                 echo_primary "Deploying OpenGovernance to DigitalOcean."
                 CURRENT_PROVIDER="DigitalOcean"
+                save_state
                 deploy_to_digitalocean "false"  # 'false' indicates not deploying to existing cluster
                 ;;
             *)
@@ -588,6 +639,12 @@ deploy_to_digitalocean() {
 
 # Function to create a unique Kubernetes cluster on DigitalOcean (Enhanced with Region Selection)
 create_unique_digitalocean_cluster() {
+    # Check if cluster is already created
+    if [[ "$DIGITALOCEAN_CLUSTER_CREATED" == "true" ]]; then
+        echo_info "DigitalOcean cluster '$KUBE_CLUSTER_NAME' already created."
+        return
+    fi
+
     while true; do
         echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
         read -r new_cluster_name < /dev/tty
@@ -658,11 +715,14 @@ create_unique_digitalocean_cluster() {
         # Confirm the details
         echo_primary "Creating DigitalOcean Kubernetes cluster '$new_cluster_name' in region '$DIGITALOCEAN_REGION'..."
         echo_primary "This step may take 3-5 minutes."
+        save_state  # Save state before starting cluster creation
 
         # Create the cluster
         if doctl kubernetes cluster create "$new_cluster_name" --region "$DIGITALOCEAN_REGION" \
             --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait; then
             echo_info "Cluster '$new_cluster_name' created successfully."
+            DIGITALOCEAN_CLUSTER_CREATED="true"
+            save_state  # Save state after cluster creation
         else
             echo_error "Failed to create cluster '$new_cluster_name'. Please try again."
             continue
@@ -681,6 +741,10 @@ create_unique_digitalocean_cluster() {
 
 # Function to install OpenGovernance with Helm
 install_opengovernance_with_helm() {
+    if [[ "$OPENGOVERNANCE_INSTALLED" == "true" ]]; then
+        echo_info "OpenGovernance is already installed."
+        return
+    fi
 
     echo_detail "Adding OpenGovernance Helm repository."
     if ! helm_quiet repo add opengovernance https://opengovern.github.io/charts; then
@@ -697,6 +761,7 @@ install_opengovernance_with_helm() {
     # Ensure KUBE_NAMESPACE is set
     KUBE_NAMESPACE="${KUBE_NAMESPACE:-opengovernance}"
     echo_detail "Installing OpenGovernance via Helm in namespace '$KUBE_NAMESPACE' (5-10 mins)."
+    save_state  # Save state before starting Helm installation
     if ! helm_quiet install opengovernance opengovernance/opengovernance \
         -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait; then  # Timeout increased to 15m
         echo_error "Helm installation failed."
@@ -704,6 +769,8 @@ install_opengovernance_with_helm() {
     fi
 
     echo_detail "OpenGovernance installed successfully."
+    OPENGOVERNANCE_INSTALLED="true"
+    save_state  # Save state after Helm installation
 
     check_pods_and_jobs
 
@@ -770,7 +837,6 @@ check_ready_nodes() {
     done
 
     echo_error "At least $required_nodes Kubernetes nodes must be ready for $provider, but only $READY_NODES node(s) are ready after $((max_attempts * sleep_time / 60)) minutes."
-    echo_warning "$provider requires at least 3 nodes (4 vCPUs, 16GB RAM each) for optimal performance with OpenGovernance."
     echo_primary "Please ensure 3 nodes are ready before proceeding."
     exit 1
 }
@@ -778,10 +844,9 @@ check_ready_nodes() {
 # Function to warn user on Minikube or Kind deployment
 warn_minikube_kind() {
     local provider="$1"
-    echo_warning "Detected $provider cluster."
-    echo_warning "No minimum node requirement for $provider, but note:"
-    echo_warning "OpenGovernance uses OpenSearch with 3 nodes, which can be resource-intensive on desktops/laptops."
-    echo_warning "We strongly recommend at least 16GB of RAM for stability."
+    echo_primary "Detected $provider cluster."
+    echo_primary "OpenGovernance uses OpenSearch with 3 nodes, which can be resource-intensive on desktops/laptops."
+    echo_primary "We strongly recommend at least 16GB of RAM for stability."
     
     echo_prompt -n "Do you wish to proceed? (yes/no): "
     read -r proceed < /dev/tty
@@ -792,10 +857,13 @@ warn_minikube_kind() {
     fi
 }
 
-# -----------------------------
-# New Function: configure_digitalocean_app
-# -----------------------------
+# Function to configure DigitalOcean app
 configure_digitalocean_app() {
+    if [[ "$DIGITALOCEAN_APP_CONFIGURED" == "true" ]]; then
+        echo_info "DigitalOcean application is already configured."
+        return
+    fi
+
     echo_primary "How would you like to configure the OpenGovernance application?"
     echo_primary "It takes 2-5 mins to complete."
     echo_primary "1) Configure with HTTPS and Hostname (DNS records required after installation)"
@@ -834,12 +902,15 @@ configure_digitalocean_app() {
             # 2 -> --type 2
             local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/do-automation.sh"
             echo_info "Executing DigitalOcean automation script with installation type $INSTALL_TYPE."
+            save_state  # Save state before executing automation script
 
             if curl --head --silent --fail "$script_url" >/dev/null; then
                 echo_detail "Fetching and executing DigitalOcean automation script."
                 # Download and execute the script, passing the installation type and Kubernetes namespace
                 curl -sL "$script_url" | bash -s -- --type "$INSTALL_TYPE" --kube-namespace "$KUBE_NAMESPACE"
                 echo_info "DigitalOcean automation script executed successfully."
+                DIGITALOCEAN_APP_CONFIGURED="true"
+                save_state  # Save state after executing automation script
             else
                 echo_error "DigitalOcean automation script is not accessible at $script_url."
                 exit 1
@@ -853,9 +924,7 @@ configure_digitalocean_app() {
     esac
 }
 
-# -----------------------------
-# New Function: setup_port_forwarding
-# -----------------------------
+# Function to set up port-forwarding
 setup_port_forwarding() {
     echo_primary "Setting up port-forwarding to access OpenGovernance locally."
     if ! kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
@@ -888,19 +957,40 @@ setup_port_forwarding() {
 
 echo_info "OpenGovernance installation script started."
 
-check_dependencies
+# Step 1: Check dependencies
+if [ "$CURRENT_STEP" -le 1 ]; then
+    check_dependencies
+    CURRENT_STEP=2
+    save_state
+fi
 
-if is_kubectl_configured; then
-    # kubectl is connected to a cluster
-    detect_kubernetes_provider_and_deploy
-else
-    # kubectl is not connected to a cluster
-    check_provider_clis
-    # Allow user to choose deployment
-    choose_deployment
+# Step 2: Check if kubectl is configured
+if [ "$CURRENT_STEP" -le 2 ]; then
+    if is_kubectl_configured; then
+        KUBECTL_CONFIGURED=true
+    else
+        KUBECTL_CONFIGURED=false
+    fi
+    CURRENT_STEP=3
+    save_state
+fi
+
+# Step 3: Proceed based on kubectl configuration
+if [ "$CURRENT_STEP" -le 3 ]; then
+    if [ "$KUBECTL_CONFIGURED" == "true" ]; then
+        detect_kubernetes_provider_and_deploy
+    else
+        check_provider_clis
+        choose_deployment
+    fi
+    CURRENT_STEP=4
+    save_state
 fi
 
 echo_primary "OpenGovernance installation script completed successfully."
+
+# Cleanup state file after successful completion
+rm -f "$STATE_FILE"
 
 # Exit script successfully
 exit 0
