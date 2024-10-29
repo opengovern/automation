@@ -238,11 +238,23 @@ save_state() {
         echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
         echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
         echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+        echo "RESUMING_FROM_STATE=\"$RESUMING_FROM_STATE\""
         # Include user inputs and selections
         for key in "${!USER_INPUTS[@]}"; do
             echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
         done
     } > "$STATE_FILE"
+}
+
+# Function to load state
+load_state() {
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+    # Reconstruct USER_INPUTS array
+    USER_INPUTS=()
+    for key in $(compgen -A variable | grep '^USER_INPUT_'); do
+        USER_INPUTS+=("${!key}")
+    done
 }
 
 # Function to detect Kubernetes provider and deploy
@@ -305,41 +317,46 @@ detect_kubernetes_provider_and_deploy() {
     save_state
 
     # Ask user if they want to deploy to the existing cluster or create a new one
-    echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
-    echo_primary "1. Deploy to existing cluster"
-    echo_primary "2. Create a new cluster"
-    echo_primary "3. Exit"
+    if [[ "$RESUMING_FROM_STATE" == "true" && "$CURRENT_STEP" -gt 3 ]]; then
+        echo_info "Resuming deployment to existing cluster."
+        determine_and_deploy_provider "$cluster_info" "true"
+    else
+        echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
+        echo_primary "1. Deploy to existing cluster"
+        echo_primary "2. Create a new cluster"
+        echo_primary "3. Exit"
 
-    echo_prompt -n "Select an option (1-3): "
-    read -r deploy_choice < /dev/tty
-    USER_INPUTS+=("Deployment choice: $deploy_choice")
-    save_state  # Save state after user input
+        echo_prompt -n "Select an option (1-3): "
+        read -r deploy_choice < /dev/tty
+        USER_INPUTS+=("Deployment choice: $deploy_choice")
+        save_state  # Save state after user input
 
-    case "$deploy_choice" in
-        1)
-            # Check if OpenGovernance is already installed
-            if check_opengovernance_installation; then
-                # If installation exists and user chooses to reconfigure, proceed
-                determine_and_deploy_provider "$cluster_info" "true"
-            else
-                # If no installation exists, determine the provider and execute provider-specific scripts
-                determine_and_deploy_provider "$cluster_info" "false"
-            fi
-            ;;
-        2)
-            # Proceed to provider selection for creating a new cluster
-            check_provider_clis
-            choose_deployment
-            ;;
-        3)
-            echo_primary "Exiting."
-            exit 0
-            ;;
-        *)
-            echo_error "Invalid selection. Exiting."
-            exit 1
-            ;;
-    esac
+        case "$deploy_choice" in
+            1)
+                # Check if OpenGovernance is already installed
+                if check_opengovernance_installation; then
+                    # If installation exists and user chooses to reconfigure, proceed
+                    determine_and_deploy_provider "$cluster_info" "true"
+                else
+                    # If no installation exists, determine the provider and execute provider-specific scripts
+                    determine_and_deploy_provider "$cluster_info" "false"
+                fi
+                ;;
+            2)
+                # Proceed to provider selection for creating a new cluster
+                check_provider_clis
+                choose_deployment
+                ;;
+            3)
+                echo_primary "Exiting."
+                exit 0
+                ;;
+            *)
+                echo_error "Invalid selection. Exiting."
+                exit 1
+                ;;
+        esac
+    fi
 }
 
 # Function to determine provider from cluster_info and deploy accordingly
@@ -424,6 +441,13 @@ deploy_via_curl() {
 
 # Function to allow user to choose deployment based on available platforms
 choose_deployment() {
+    # If resuming and already selected a platform, skip this step
+    if [[ "$RESUMING_FROM_STATE" == "true" && "$CURRENT_STEP" -gt 3 ]]; then
+        echo_info "Resuming deployment to $CURRENT_PROVIDER."
+        determine_and_deploy_provider_from_selection
+        return
+    fi
+
     echo_primary "Where would you like to deploy OpenGovernance to?"
 
     local option=1
@@ -468,30 +492,24 @@ choose_deployment() {
         fi
 
         selected_platform="${opts[platform_choice-1]}"
+        CURRENT_PROVIDER="$selected_platform"
+        save_state  # Save selected platform
 
         case "$selected_platform" in
             "AWS")
                 echo_primary "Deploying OpenGovernance to AWS."
-                CURRENT_PROVIDER="AWS"
-                save_state
                 deploy_via_curl "aws"
                 ;;
             "Azure")
                 echo_primary "Deploying OpenGovernance to Azure."
-                CURRENT_PROVIDER="Azure"
-                save_state
                 deploy_via_curl "azure"
                 ;;
             "GCP")
                 echo_primary "Deploying OpenGovernance to GCP."
-                CURRENT_PROVIDER="GCP"
-                save_state
                 deploy_via_curl "gcp"
                 ;;
             "DigitalOcean")
                 echo_primary "Deploying OpenGovernance to DigitalOcean."
-                CURRENT_PROVIDER="DigitalOcean"
-                save_state
                 deploy_to_digitalocean "false"  # 'false' indicates not deploying to existing cluster
                 ;;
             *)
@@ -502,12 +520,37 @@ choose_deployment() {
     done
 }
 
-# Function to deploy to DigitalOcean (Enhanced with Configuration Prompt)
+# Function to determine and deploy based on user selection (for resuming)
+determine_and_deploy_provider_from_selection() {
+    case "$CURRENT_PROVIDER" in
+        "AWS")
+            echo_primary "Deploying OpenGovernance to AWS."
+            deploy_via_curl "aws"
+            ;;
+        "Azure")
+            echo_primary "Deploying OpenGovernance to Azure."
+            deploy_via_curl "azure"
+            ;;
+        "GCP")
+            echo_primary "Deploying OpenGovernance to GCP."
+            deploy_via_curl "gcp"
+            ;;
+        "DigitalOcean")
+            echo_primary "Deploying OpenGovernance to DigitalOcean."
+            deploy_to_digitalocean "false"  # 'false' indicates not deploying to existing cluster
+            ;;
+        *)
+            echo_error "Unsupported or unidentified platform: $CURRENT_PROVIDER"
+            ;;
+    esac
+}
+
+# Function to deploy to DigitalOcean
 deploy_to_digitalocean() {
     local deploy_existing="$1"  # 'true' or 'false'
 
     # Ensure required variables are set
-    DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc1}"
+    DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc3}"
     KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
     # Check if the cluster exists using 'doctl kubernetes cluster get'
@@ -596,7 +639,7 @@ deploy_to_digitalocean() {
     install_opengovernance_with_helm
 }
 
-# Function to create a unique Kubernetes cluster on DigitalOcean (Enhanced with Region Selection)
+# Function to create a unique Kubernetes cluster on DigitalOcean
 create_unique_digitalocean_cluster() {
     # Check if cluster is already created
     if [[ "$DIGITALOCEAN_CLUSTER_CREATED" == "true" ]]; then
@@ -835,6 +878,7 @@ configure_digitalocean_app() {
     echo_primary "3) No further configuration required"
     echo_primary ""
     echo_primary "You will need to create DNS records for "
+    # (You may want to specify what DNS records are needed here)
 
     while true; do
         echo_prompt -n "Select an option (1-3): "
@@ -948,11 +992,23 @@ save_state() {
         echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
         echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
         echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
+        echo "RESUMING_FROM_STATE=\"$RESUMING_FROM_STATE\""
         # Include user inputs and selections
         for key in "${!USER_INPUTS[@]}"; do
             echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
         done
     } > "$STATE_FILE"
+}
+
+# Function to load state
+load_state() {
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+    # Reconstruct USER_INPUTS array
+    USER_INPUTS=()
+    for key in $(compgen -A variable | grep '^USER_INPUT_'); do
+        USER_INPUTS+=("${!key}")
+    done
 }
 
 # -----------------------------
@@ -986,6 +1042,7 @@ INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrast
 INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
 CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
 KUBECTL_CONFIGURED=false  # Variable to track if kubectl is configured
+RESUMING_FROM_STATE="false"
 
 # Detect Operating System
 OS_TYPE="$(uname -s)"
@@ -1008,10 +1065,31 @@ fi
 # Generate or load install-run-id
 if [[ -f "$STATE_FILE" ]]; then
     echo "State file found. Resuming from last saved state."
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
+
+    # Prompt user to decide whether to resume
+    echo_prompt -n "Do you want to resume the previous installation? (yes/no): "
+    read -r resume_choice < /dev/tty
+
+    if [[ "$resume_choice" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        RESUMING_FROM_STATE="true"
+        load_state
+    else
+        echo "Starting a new installation."
+        RESUMING_FROM_STATE="false"
+        CURRENT_STEP=1
+        # Initialize state variables
+        DIGITALOCEAN_CLUSTER_CREATED="false"
+        OPENGOVERNANCE_INSTALLED="false"
+        DIGITALOCEAN_APP_CONFIGURED="false"
+        KUBECTL_CONFIGURED="false"
+        INSTALL_RUN_ID=$(date +%s%N | cut -b1-13)  # 13-digit nanosecond timestamp
+        START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+        # Save initial state
+        save_state
+    fi
 else
     echo "No state file found. Starting fresh."
+    RESUMING_FROM_STATE="false"
     CURRENT_STEP=1
     # Initialize state variables
     DIGITALOCEAN_CLUSTER_CREATED="false"
