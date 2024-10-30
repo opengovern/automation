@@ -45,10 +45,6 @@ data "aws_availability_zones" "available" {
 
 data "aws_region" "current" {}
 
-# Data source to get the specific KMS alias
-data "aws_kms_alias" "ebs" {
-  name = "alias/eks/${local.name}/ebs"
-}
 ################################################################################
 # Random Resources
 ################################################################################
@@ -75,12 +71,6 @@ locals {
     Name        = local.name
     Environment = var.environment
   }
-
-  # Check if the KMS alias already exists
-  kms_alias_exists = can(data.aws_kms_alias.ebs.id)
-
-  ebs_kms_key_id = local.kms_alias_exists ? data.aws_kms_alias.ebs.target_key_id : module.ebs_kms_key[0].key_id
-
 }
 
 ################################################################################
@@ -159,37 +149,14 @@ module "eks" {
             volume_size           = 125
             volume_type           = "gp3"
             iops                  = 3000
-            encrypted             = true
-            kms_key_id            = local.ebs_kms_key_id  # Use the KMS key ID
+            encrypted             = false  # Set to false or remove
             delete_on_termination = true
+            # kms_key_id removed
           }
         }
       }
     }
   }
-  tags = local.tags
-}
-
-################################################################################
-# EBS KMS Key
-################################################################################
-
-module "ebs_kms_key" {
-  source  = "terraform-aws-modules/kms/aws"
-  version = "~> 1.5"
-
-  count = local.kms_alias_exists ? 0 : 1
-
-  description = "Customer managed key to encrypt EKS managed node group volumes"
-
-  key_administrators = [data.aws_caller_identity.current.arn]
-  key_service_roles_for_autoscaling = [
-    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling",
-    module.eks.cluster_iam_role_arn,
-  ]
-
-  aliases = ["eks/${local.name}/ebs"]
-
   tags = local.tags
 }
 
@@ -271,7 +238,7 @@ resource "kubernetes_storage_class_v1" "gp3" {
   volume_binding_mode    = "WaitForFirstConsumer"
 
   parameters = {
-    encrypted = "false"
+    encrypted = "false"  # Ensure encryption is set to false
     fsType    = "ext4"
     type      = "gp3"
   }
