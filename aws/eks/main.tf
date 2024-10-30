@@ -1,9 +1,31 @@
 ################################################################################
+# Variables
+################################################################################
+
+variable "region" {
+  description = "The AWS region where resources will be created."
+  type        = string
+  default     = "us-east-2"  # You can change the default region here
+}
+
+variable "environment" {
+  description = "The environment for deployment (e.g., dev, prod)."
+  type        = string
+  default     = "dev"
+}
+
+variable "eks_instance_types" {
+  description = "List of EC2 instance types for the EKS node groups."
+  type        = list(string)
+  default     = ["m5.large"]  # Modify as per your requirements
+}
+
+################################################################################
 # Providers
 ################################################################################
 
 provider "aws" {
-  #region = var.region != "" ? var.region : "us-east-1"
+  region = var.region
 }
 
 provider "kubernetes" {
@@ -92,8 +114,8 @@ module "vpc" {
   enable_nat_gateway = true
   single_nat_gateway = true
 
-  manage_default_network_acl = false
-  manage_default_route_table = false
+  manage_default_network_acl   = false
+  manage_default_route_table   = false
 
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -264,5 +286,5 @@ output "eks_cluster_name" {
 
 output "configure_kubectl" {
   description = "Configure kubectl: make sure you're logged in with the correct AWS profile and run the following command to update your kubeconfig"
-  value       = "aws eks --region ${data.aws_region.current.name} update-kubeconfig --name ${module.eks.cluster_name}"
+  value       = "aws eks --region ${var.region} update-kubeconfig --name ${module.eks.cluster_name}"
 }

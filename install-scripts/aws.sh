@@ -312,7 +312,7 @@ deploy_infrastructure() {
 
     # Check for existing infrastructure
     if $INFRA_BINARY state list >> "$LOGFILE" 2>&1; then
-        STATE_COUNT=$($INFRA_BINARY state list | wc -l | tr -d ' ')
+        STATE_COUNT=`$INFRA_BINARY state list | wc -l | tr -d ' '`
         if [ "$STATE_COUNT" -gt 0 ]; then
             echo_prompt "Existing infrastructure detected. Do you want to (c)lean up existing infra or (u)se it? [c/u]: "
             read USER_CHOICE
@@ -323,9 +323,10 @@ deploy_infrastructure() {
                     ;;
                 u|U)
                     echo_info "Using existing infrastructure. Configuring kubectl..."
-                    KUBECTL_CMD="$($INFRA_BINARY output -raw configure_kubectl)"
-                    echo_info "Executing kubectl configuration command: $KUBECTL_CMD"
+                    KUBECTL_CMD=`$INFRA_BINARY output -raw configure_kubectl`
+                    echo_info "Executing kubectl configuration command."
                     sh -c "$KUBECTL_CMD" >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY output failed."; exit 1; }
+                    return 0  # Skip deployment since we're using existing infra
                     ;;
                 *)
                     echo_error "Invalid choice. Exiting."
@@ -340,15 +341,72 @@ deploy_infrastructure() {
     $INFRA_BINARY init >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY init failed."; exit 1; }
 
     echo_info "Planning $INFRA_BINARY deployment..."
-    $INFRA_BINARY plan >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY plan failed."; exit 1; }
+    $INFRA_BINARY plan -out=plan.tfplan >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY plan failed."; exit 1; }
 
+    echo_info "Generating JSON representation of the plan..."
+    $INFRA_BINARY show -json plan.tfplan > plan.json || { echo_error "$INFRA_BINARY show failed."; exit 1; }
+
+    # Start the apply process in the background
     echo_info "Applying $INFRA_BINARY deployment..."
-    $INFRA_BINARY apply -auto-approve >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY apply failed."; exit 1; }
+    $INFRA_BINARY apply plan.tfplan >> "$LOGFILE" 2>&1 &
+    APPLY_PID=$!
+
+    # Progress monitoring variables
+    CHECK_INTERVAL=60  # in seconds
+    total_actions=`jq '.resource_changes | length' plan.json`
+    if [ "$total_actions" -eq 0 ]; then
+        echo_info "No resources to add, change, or destroy."
+        wait "$APPLY_PID"
+    else
+        # Extract planned resource addresses
+        planned_addresses_file="planned_addresses.txt"
+        jq -r '.resource_changes[].address' plan.json > "$planned_addresses_file"
+
+        echo_info "Monitoring progress..."
+        while kill -0 "$APPLY_PID" 2>/dev/null; do
+            # Count completed resources
+            current_state_resources=`$INFRA_BINARY state list || true`
+            # Save current state resources to a file
+            current_state_file="current_state.txt"
+            echo "$current_state_resources" > "$current_state_file"
+
+            # Compare current state with planned addresses
+            num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
+            if [ "$total_actions" -eq 0 ]; then
+                percent_complete=100
+            else
+                percent_complete=`expr $num_completed \* 100 / $total_actions`
+            fi
+            echo_info "Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
+
+            sleep "$CHECK_INTERVAL"
+        done
+
+        # Final progress check after apply completes
+        current_state_resources=`$INFRA_BINARY state list || true`
+        echo "$current_state_resources" > "$current_state_file"
+        num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
+        if [ "$total_actions" -eq 0 ]; then
+            percent_complete=100
+        else
+            percent_complete=`expr $num_completed \* 100 / $total_actions`
+        fi
+        echo_info "Final Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
+
+        # Clean up temporary files
+        rm -f "$planned_addresses_file" "$current_state_file"
+    fi
+
+    # Wait for the apply process to finish
+    wait "$APPLY_PID" || { echo_error "$INFRA_BINARY apply failed."; exit 1; }
+
+    # Clean up plan files
+    rm -f plan.tfplan plan.json
 
     echo_info "Connecting to the Kubernetes cluster..."
-    KUBECTL_CMD="$($INFRA_BINARY output -raw configure_kubectl)"
+    KUBECTL_CMD=`$INFRA_BINARY output -raw configure_kubectl`
 
-    echo_info "Executing kubectl configuration command: $KUBECTL_CMD"
+    echo_info "Executing kubectl configuration command."
     sh -c "$KUBECTL_CMD" >> "$LOGFILE" 2>&1 || { echo_error "Failed to configure kubectl."; exit 1; }
 
     # Verify kubectl configuration
@@ -358,6 +416,7 @@ deploy_infrastructure() {
     fi
     echo_info "kubectl configured successfully."
 }
+
 
 # -----------------------------
 # Application Installation
