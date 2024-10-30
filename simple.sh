@@ -148,52 +148,30 @@ is_kubectl_configured() {
     fi
 }
 
-# Function to check if OpenGovernance is installed
-check_opengovernance_installation() {
-    # Check if OpenGovernance Helm repo is added and OpenGovernance is installed
-    if helm repo list | grep -qw "opengovernance" && helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
-        # Ensure jq is installed
-        if ! command -v jq &> /dev/null; then
-            echo_error "jq is not installed. Please install jq to enable JSON parsing."
-            exit 1
-        fi
+# Function to check if OpenGovernance is installed and healthy
+function check_opengovernance_installation() {
+  # Check if OpenGovernance is installed
+  if helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
+    echo_info "OpenGovernance is installed."
 
-        # Check Helm release status using jq
-        local helm_release_status
-        helm_release_status=$(helm list -n "$KUBE_NAMESPACE" --filter '^opengovernance$' -o json | jq -r '.[0].status // "unknown"')
+    # Now check if it's healthy
+    local unhealthy_pods
+    unhealthy_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
-        if [ "$helm_release_status" == "deployed" ]; then
-            echo_primary "An existing OpenGovernance installation was found and is healthy."
-            echo_primary "Do you want to reconfigure it? (yes/no): "
-            read -r reconfig_choice < /dev/tty
-            USER_INPUTS+=("Reconfigure existing OpenGovernance installation: $reconfig_choice")
-
-            case "$reconfig_choice" in
-                yes|y|Y)
-                    echo_info "Proceeding with reconfiguration."
-                    return 0  # Allow script to proceed with configuration
-                    ;;
-                no|n|N)
-                    echo_primary "Exiting as per user request."
-                    exit 0
-                    ;;
-                *)
-                    echo_error "Invalid input. Exiting."
-                    exit 1
-                    ;;
-            esac
-        elif [ "$helm_release_status" == "failed" ]; then
-            echo_error "OpenGovernance is installed but not in 'deployed' state (current status: $helm_release_status)."
-            exit 1
-        else
-            echo_error "OpenGovernance is in an unexpected state ('$helm_release_status')."
-            exit 1
-        fi
+    if [ -z "$unhealthy_pods" ]; then
+      echo_primary "OpenGovernance is already installed and healthy."
+      echo_info "Proceeding to reconfigure OpenGovernance with the new parameters."
+      return 1  # Return 1 to indicate that installation should proceed
     else
-        echo_info "Checking for any existing OpenGovernance Installation...No existing Installations found."
-        return 1
+      echo_info "OpenGovernance pods are not all healthy. Proceeding to reconfigure."
+      return 1  # Return 1 to indicate that installation should proceed
     fi
+  else
+    echo_info "OpenGovernance is not installed."
+    return 1  # Return 1 to indicate that installation should proceed
+  fi
 }
+
 
 # Function to get cluster information
 get_cluster_info() {
