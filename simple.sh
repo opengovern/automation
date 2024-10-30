@@ -762,8 +762,12 @@ create_unique_digitalocean_cluster() {
 
         # Prompt to change the default region
         echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
-        echo_prompt -n "Do you wish to change the region? (yes/no): "
+        echo_prompt -n "Do you wish to change the region? (yes/[no]): "
         read -r change_region < /dev/tty
+
+        if [[ -z "$change_region" || "$change_region" =~ ^([nN][oO]?|)$ ]]; then
+            change_region="no"
+        fi
 
         if [[ "$change_region" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             # Retrieve available regions
