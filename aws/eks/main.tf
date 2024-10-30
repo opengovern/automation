@@ -45,9 +45,10 @@ data "aws_availability_zones" "available" {
 
 data "aws_region" "current" {}
 
-# Data source to list all KMS aliases
-data "aws_kms_aliases" "all" {}
-
+# Data source to get the specific KMS alias
+data "aws_kms_alias" "ebs" {
+  name = "alias/eks/${local.name}/ebs"
+}
 ################################################################################
 # Random Resources
 ################################################################################
@@ -76,15 +77,10 @@ locals {
   }
 
   # Check if the KMS alias already exists
-  existing_kms_alias = [
-    for alias in data.aws_kms_aliases.all.aliases : alias
-    if alias.name == "alias/eks/${local.name}/ebs"
-  ]
+  kms_alias_exists = can(data.aws_kms_alias.ebs.id)
 
-  kms_alias_exists = length(local.existing_kms_alias) > 0
+  ebs_kms_key_id = local.kms_alias_exists ? data.aws_kms_alias.ebs.target_key_id : module.ebs_kms_key[0].key_id
 
-  # Use existing key ID if alias exists
-  ebs_kms_key_id = local.kms_alias_exists ? local.existing_kms_alias[0].target_key_id : module.ebs_kms_key[0].key_id
 }
 
 ################################################################################

@@ -224,18 +224,23 @@ check_prerequisites() {
 
     # Ensure Helm repository is added and updated
     ensure_helm_repo
-
+    
     # Check if kubectl is connected to a cluster
-    is_kubectl_active
-
-    if [ "$KUBECTL_ACTIVE" = "true" ]; then
+    if is_kubectl_active; then
         # Determine if there is a suitable cluster
-        is_cluster_suitable
-        if [ "$CLUSTER_SUITABLE" = "true" ]; then
+        if is_cluster_suitable; then
             echo_info "Cluster is suitable for installation."
         else
-            echo_info "Cluster is not suitable for installation."
+            echo_info "Cluster is not suitable for installation. Unsetting current kubectl context."
+            kubectl config unset current-context || { 
+                echo_error "Failed to unset the current kubectl context."
+                exit 1
+            }
+            echo_error "Cluster is not suitable for installation. Exiting."
+            exit 1
         fi
+    else
+        echo_info "kubectl is not connected to any cluster. Proceeding without cluster suitability checks."
     fi
 
     echo_info "Checking Prerequisites...Completed"
@@ -416,7 +421,7 @@ metadata:
     alb.ingress.kubernetes.io/backend-protocol: HTTP
     kubernetes.io/ingress.class: alb
 EOF
-)
+    )
 
     if [ "$USE_HTTPS" = "true" ]; then
         echo_info "Applying Ingress with HTTPS."
@@ -516,6 +521,7 @@ lookup_acm_certificate() {
     fi
 
     echo_info "Found ACM Certificate ARN: $CERTIFICATE_ARN"
+    return 0
 }
 
 # -----------------------------
@@ -715,8 +721,8 @@ if [ "$INSTALL_TYPE" = "1" ]; then
 
     # After domain is confirmed, lookup ACM certificate
     if [ -n "$DOMAIN" ]; then
-        lookup_acm_certificate "$DOMAIN"
-        if [ -n "$CERTIFICATE_ARN" ]; then
+        # Use an if-statement to handle the function's exit status without causing the script to exit
+        if lookup_acm_certificate "$DOMAIN"; then
             USE_HTTPS="true"
             PROTOCOL="https"
             echo_info "ACM certificate found. Proceeding with HTTPS."
