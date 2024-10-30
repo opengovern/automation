@@ -95,9 +95,10 @@ function validate_domain() {
   # Simple regex for domain validation
   if [[ "$domain" =~ ^(([a-zA-Z0-9](-*[a-zA-Z0-9])*)\.)+[a-zA-Z]{2,}$ ]]; then
       echo_info "Domain '$domain' is valid."
+      return 0
   else
       echo_error "Invalid domain: '$domain'. Please enter a valid domain."
-      exit 1
+      return 1
   fi
 }
 
@@ -107,9 +108,10 @@ function validate_email() {
   # Simple regex for email validation
   if [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
       echo_info "Email '$email' is valid."
+      return 0
   else
       echo_error "Invalid email: '$email'. Please enter a valid email address."
-      exit 1
+      return 1
   fi
 }
 
@@ -371,13 +373,58 @@ function check_prerequisites() {
   echo_info "Checking Prerequisites...Completed"
 }
 
-# Function to configure email and domain
+# Function to configure email and domain with validation and confirmation
 function configure_email_and_domain() {
+  # Function to prompt for confirmation with 30-second timeout
+  function confirm_proceed() {
+    echo_prompt ""
+    echo_prompt "Please review the entered details:"
+    echo_prompt "  Domain: $DOMAIN"
+    echo_prompt "  Email: $EMAIL"
+    echo_prompt ""
+    echo_prompt "Press Enter to confirm and proceed, or wait 30 seconds to auto-proceed."
+    read -t 30 -p "" user_input
+    echo_info "User confirmed or auto-proceeded."
+  }
+
+  # Function to prompt user to re-enter details or change installation type
+  function handle_invalid_input() {
+    while true; do
+      echo_prompt "Do you want to:"
+      echo_prompt "1) Re-enter the details"
+      echo_prompt "2) Change the installation type"
+      echo_prompt "3) Exit"
+      echo_prompt -n "Select an option (1-3): "
+      read option < /dev/tty
+
+      case $option in
+        1)
+          # Re-enter the details
+          configure_email_and_domain
+          ;;
+        2)
+          # Change the installation type
+          choose_install_type
+          configure_email_and_domain
+          ;;
+        3)
+          # Exit the script
+          echo_info "Exiting the script."
+          exit 0
+          ;;
+        *)
+          echo_prompt "Invalid option. Please select 1, 2, or 3."
+          ;;
+      esac
+    done
+  }
+
   # Depending on the installation type, prompt for DOMAIN and EMAIL as needed
   case $INSTALL_TYPE in
     1)
       # Install with HTTPS and Hostname
       if [ "$SILENT_INSTALL" = false ]; then
+        # Prompt for DOMAIN if not provided
         if [ -z "$DOMAIN" ]; then
           while true; do
             echo_prompt -n "Enter your domain for OpenGovernance: "
@@ -386,38 +433,69 @@ function configure_email_and_domain() {
               echo_error "Domain is required for installation type 1."
               continue
             fi
-            validate_domain
-            break
+            if validate_domain; then
+              break
+            else
+              # Handle invalid domain
+              handle_invalid_input
+            fi
           done
+        else
+          # Validate the provided DOMAIN
+          if ! validate_domain; then
+            handle_invalid_input
+          fi
         fi
 
+        # Prompt for EMAIL if not provided
         if [ -z "$EMAIL" ]; then
           while true; do
             echo_prompt -n "Enter your email for Let's Encrypt: "
             read EMAIL < /dev/tty
             if [ -z "$EMAIL" ]; then
               echo_error "Email is required for installation type 1."
-            else
-              validate_email
+              continue
+            fi
+            if validate_email; then
               break
+            else
+              # Handle invalid email
+              handle_invalid_input
             fi
           done
+        else
+          # Validate the provided EMAIL
+          if ! validate_email; then
+            handle_invalid_input
+          fi
         fi
       fi
       ;;
     2)
       # Install without HTTPS
-      if [ "$SILENT_INSTALL" = false ] && [ -z "$DOMAIN" ]; then
-        while true; do
-          echo_prompt -n "Enter your domain for OpenGovernance: "
-          read DOMAIN < /dev/tty
-          if [ -z "$DOMAIN" ]; then
-            echo_error "Domain is required for installation type 2."
-            continue
+      if [ "$SILENT_INSTALL" = false ]; then
+        # Prompt for DOMAIN if not provided
+        if [ -z "$DOMAIN" ]; then
+          while true; do
+            echo_prompt -n "Enter your domain for OpenGovernance: "
+            read DOMAIN < /dev/tty
+            if [ -z "$DOMAIN" ]; then
+              echo_error "Domain is required for installation type 2."
+              continue
+            fi
+            if validate_domain; then
+              break
+            else
+              # Handle invalid domain
+              handle_invalid_input
+            fi
+          done
+        else
+          # Validate the provided DOMAIN
+          if ! validate_domain; then
+            handle_invalid_input
           fi
-          validate_domain
-          break
-        done
+        fi
       fi
       ;;
     3)
@@ -429,6 +507,11 @@ function configure_email_and_domain() {
       usage
       ;;
   esac
+
+  # If in interactive mode and installation type requires DOMAIN and EMAIL, confirm the details
+  if [ "$SILENT_INSTALL" = false ] && [ "$INSTALL_TYPE" -eq 1 ]; then
+    confirm_proceed
+  fi
 }
 
 # Function to install or upgrade OpenGovernance via Helm
@@ -853,7 +936,7 @@ function run_installation_logic() {
     # OpenGovernance is not installed, proceed with installation
     echo_info "OpenGovernance is not installed. Proceeding with installation."
   else
-    # OpenGovernance is installed and healthy, proceed with reconfiguration without prompts
+    # OpenGovernance is installed and healthy, proceed with reconfiguration
     echo_info "Proceeding to reconfigure OpenGovernance."
   fi
 
@@ -863,7 +946,7 @@ function run_installation_logic() {
     choose_install_type
   fi
 
-  # Configure email and domain based on installation type
+  # Configure email and domain with validation and confirmation
   configure_email_and_domain
 
   # If installation type requires Ingress external IP (Minimal Install)
