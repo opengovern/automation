@@ -72,7 +72,7 @@ data "aws_region" "current" {}
 ################################################################################
 
 resource "random_string" "suffix" {
-  length  = 8
+  length  = 3
   special = false
   upper   = false
   numeric = true
@@ -141,7 +141,7 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.11"
 
-  cluster_name                   = "${local.name}-eks-${random_string.suffix.result}"
+  cluster_name                   = "opengovernance-${random_string.suffix.result}"
   cluster_version                = "1.31"
   cluster_endpoint_public_access = true
 
