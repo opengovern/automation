@@ -181,6 +181,24 @@ function parse_args() {
     fi
   else
     # Interactive mode
+
+    # If INSTALL_TYPE is specified, set ENABLE_HTTPS accordingly
+    if [ "$INSTALL_TYPE_SPECIFIED" = true ]; then
+      case $INSTALL_TYPE in
+        1)
+          ENABLE_HTTPS=true
+          ;;
+        2|3)
+          ENABLE_HTTPS=false
+          ;;
+        *)
+          echo_error "Invalid installation type: $INSTALL_TYPE"
+          usage
+          ;;
+      esac
+    fi
+
+    # If INSTALL_TYPE is not specified, default to 1
     INSTALL_TYPE=${INSTALL_TYPE:-1}
 
     # Validate INSTALL_TYPE
@@ -193,34 +211,10 @@ function parse_args() {
     case $INSTALL_TYPE in
       1)
         # Install with HTTPS and Hostname
-        if [ "$SILENT_INSTALL" = true ]; then
-          if [ -z "$DOMAIN" ]; then
-            echo_error "Installation type 1 requires a DOMAIN in silent mode."
-            usage
-          else
-            validate_domain
-          fi
-
-          if [ -z "$EMAIL" ]; then
-            echo_error "Installation type 1 requires an EMAIL in silent mode."
-            usage
-          else
-            validate_email
-          fi
-        fi
         ENABLE_HTTPS=true
         ;;
-      2)
-        # Install without HTTPS
-        if [ "$SILENT_INSTALL" = true ] && [ -z "$DOMAIN" ]; then
-          echo_error "Installation type 2 requires a DOMAIN in silent mode."
-          usage
-        fi
-        ENABLE_HTTPS=false
-        ;;
-      3)
-        # Minimal Install
-        # No DOMAIN or EMAIL required
+      2|3)
+        # Install without HTTPS or Minimal Install
         ENABLE_HTTPS=false
         ;;
       *)
@@ -230,6 +224,7 @@ function parse_args() {
     esac
   fi
 }
+
 # Function to choose installation type in interactive mode with "?" capability
 function choose_install_type() {
   echo_prompt ""
@@ -356,566 +351,7 @@ function check_opengovernance_installation() {
   fi
 }
 
-# Function to check if kubectl is connected to a cluster
-function check_kubectl_connection() {
-  if kubectl cluster-info > /dev/null 2>&1; then
-    echo_info "kubectl is connected to a cluster."
-  else
-    echo_error "kubectl is not connected to a cluster."
-    echo_prompt ""
-    echo_prompt "OpenGovernance needs kubectl to be configured and connected to a Kubernetes cluster."
-    echo_prompt ""
-    echo_prompt "Please ensure you have a Kubernetes cluster available and that kubectl is configured to connect to it."
-    echo_prompt ""
-    exit 1
-  fi
-}
-
-# Function to check prerequisites
-function check_prerequisites() {
-  # Check if kubectl is connected to a cluster
-  check_kubectl_connection
-
-  # Check if Helm is installed
-  if ! command -v helm &> /dev/null; then
-    echo_error "Helm is not installed. Please install Helm and try again."
-    exit 1
-  fi
-
-  echo_info "Checking Prerequisites...Completed"
-}
-
-# Function to configure email and domain
-function configure_email_and_domain() {
-  # Depending on the installation type, prompt for DOMAIN and EMAIL as needed
-  case $INSTALL_TYPE in
-    1)
-      # Install with HTTPS and Hostname
-      if [ "$SILENT_INSTALL" = false ]; then
-        if [ -z "$DOMAIN" ]; then
-          while true; do
-            echo_prompt -n "Enter your domain for OpenGovernance: "
-            read DOMAIN < /dev/tty
-            if [ -z "$DOMAIN" ]; then
-              echo_error "Domain is required for installation type 1."
-              continue
-            fi
-            validate_domain
-            break
-          done
-        fi
-
-        if [ -z "$EMAIL" ]; then
-          while true; do
-            echo_prompt -n "Enter your email for Let's Encrypt: "
-            read EMAIL < /dev/tty
-            if [ -z "$EMAIL" ]; then
-              echo_error "Email is required for installation type 1."
-            else
-              validate_email
-              break
-            fi
-          done
-        fi
-      fi
-      ;;
-    2)
-      # Install without HTTPS
-      if [ "$SILENT_INSTALL" = false ] && [ -z "$DOMAIN" ]; then
-        while true; do
-          echo_prompt -n "Enter your domain for OpenGovernance: "
-          read DOMAIN < /dev/tty
-          if [ -z "$DOMAIN" ]; then
-            echo_error "Domain is required for installation type 2."
-            continue
-          fi
-          validate_domain
-          break
-        done
-      fi
-      ;;
-    3)
-      # Minimal Install
-      # No DOMAIN or EMAIL required
-      ;;
-    *)
-      echo_error "Unsupported installation type: $INSTALL_TYPE"
-      usage
-      ;;
-  esac
-}
-
-# Function to check OpenGovernance readiness
-function check_opengovernance_readiness() {
-  # Check the readiness of all pods in the specified namespace
-  local not_ready_pods
-  not_ready_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $2}' | grep -v '^1/1$' || true)
-
-  if [ -z "$not_ready_pods" ]; then
-    APP_HEALTHY=true
-  else
-    echo_error "Some OpenGovernance pods are not ready."
-    kubectl get pods -n "$KUBE_NAMESPACE"
-    APP_HEALTHY=false
-  fi
-}
-
-# Function to check pods and migrator jobs
-function check_pods_and_jobs() {
-  echo_detail "Waiting for application to be ready..."
-
-  local attempts=0
-  local max_attempts=12  # 12 attempts * 30 seconds = 6 minutes
-  local sleep_time=30
-
-  while [ $attempts -lt $max_attempts ]; do
-    check_opengovernance_readiness
-    if [ "$APP_HEALTHY" = true ]; then
-      return 0
-    fi
-    attempts=$((attempts + 1))
-    echo_detail "Waiting for pods to become ready... ($attempts/$max_attempts)"
-    sleep $sleep_time
-  done
-
-  echo_error "OpenGovernance did not become ready within expected time."
-  exit 1
-}
-
-# Function to install OpenGovernance with HTTPS
-function install_opengovernance_with_https() {
-  echo_primary "Proceeding with OpenGovernance installation with HTTPS. (Expected time: 7-10 minutes)"
-
-  # Add Helm repository and update
-  echo_detail "Adding OpenGovernance Helm repository."
-  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
-  helm_quiet repo update
-
-  # Perform Helm installation with custom configuration
-  echo_detail "Performing installation with custom configuration."
-
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
-    -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: https://${DOMAIN}/dex
-EOF
-
-  echo_detail "OpenGovernance installation with HTTPS completed."
-  echo_detail "Application Installed successfully."
-}
-
-# Function to install OpenGovernance without HTTPS
-function install_opengovernance_with_hostname_only() {
-  echo_primary "Proceeding with OpenGovernance installation without HTTPS. (Expected time: 7-10 minutes)"
-
-  # Add Helm repository and update
-  echo_detail "Adding OpenGovernance Helm repository."
-  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
-  helm_quiet repo update
-
-  # Perform Helm installation with custom configuration
-  echo_detail "Performing installation with custom configuration."
-
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
-    -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: http://${DOMAIN}/dex
-EOF
-
-  echo_detail "OpenGovernance installation without HTTPS completed."
-  echo_detail "Application Installed successfully."
-}
-
-# Function to install OpenGovernance with public IP (Minimal Install)
-function install_opengovernance_with_public_ip() {
-  echo_primary "Proceeding with Minimal Install of OpenGovernance. (Expected time: 7-10 minutes)"
-
-  # a. Install Ingress Controller and wait for external IP
-  setup_ingress_controller
-
-  # b. Perform Helm installation with external IP as domain and issuer
-  echo_detail "Performing installation with external IP as domain and issuer."
-
-  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
-  helm_quiet repo update
-
-  helm_quiet install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=10m --wait \
-    -f - <<EOF
-global:
-  domain: ${INGRESS_EXTERNAL_IP}
-dex:
-  config:
-    issuer: http://${INGRESS_EXTERNAL_IP}/dex
-EOF
-
-  echo_detail "OpenGovernance installation with public IP completed."
-  echo_detail "Application Installed successfully."
-
-  # c. Check if the application is running
-  check_pods_and_jobs
-
-  # d. Deploy Ingress resources without host and TLS
-  deploy_ingress_resources
-
-  # e. Re-check if the application is running
-  check_pods_and_jobs
-
-  # f. Restart Dex and NGINX services by restarting their pods
-  restart_pods
-
-  echo_detail "Minimal Install of OpenGovernance completed."
-}
-
-# Function to set up Ingress Controller
-function setup_ingress_controller() {
-  echo_primary "Setting up Ingress Controller. (Expected time: 2-5 minutes)"
-
-  # Check if the namespace exists, if not, create it
-  if ! kubectl get namespace "$KUBE_NAMESPACE" > /dev/null 2>&1; then
-    kubectl create namespace "$KUBE_NAMESPACE"
-    echo_detail "Created namespace $KUBE_NAMESPACE."
-  fi
-
-  # Handle existing ClusterRole ingress-nginx
-  if kubectl get clusterrole ingress-nginx > /dev/null 2>&1; then
-    # Check the current release namespace annotation
-    CURRENT_RELEASE_NAMESPACE=$(kubectl get clusterrole ingress-nginx -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' 2>/dev/null || true)
-    if [ "$CURRENT_RELEASE_NAMESPACE" != "$KUBE_NAMESPACE" ]; then
-      echo_detail "Deleting conflicting ClusterRole 'ingress-nginx'."
-      kubectl delete clusterrole ingress-nginx
-      kubectl delete clusterrolebinding ingress-nginx
-    fi
-  fi
-
-  # Check if ingress-nginx is already installed in the specified namespace
-  if helm_quiet ls -n "$KUBE_NAMESPACE" | grep -qw ingress-nginx; then
-    echo_detail "Ingress Controller already installed. Skipping installation."
-  else
-    echo_detail "Installing ingress-nginx via Helm."
-    helm_quiet repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
-    helm_quiet repo update
-    helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$KUBE_NAMESPACE" --create-namespace --wait
-    echo_detail "Ingress Controller installed."
-
-    # Wait for ingress-nginx controller to obtain an external IP (up to 6 minutes)
-    wait_for_ingress_ip "$KUBE_NAMESPACE"
-  fi
-}
-
-# Function to wait for ingress-nginx controller to obtain an external IP
-function wait_for_ingress_ip() {
-  local namespace="$1"
-  local timeout=360  # 6 minutes
-  local interval=30
-  local elapsed=0
-
-  echo_primary "Waiting for Ingress Controller to obtain an external IP... (Expected time: 2-5 minutes)"
-
-  while [ $elapsed -lt $timeout ]; do
-    EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n "$namespace" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
-
-    if [ -n "$EXTERNAL_IP" ]; then
-      echo_detail "Ingress Controller external IP obtained: $EXTERNAL_IP"
-      export INGRESS_EXTERNAL_IP="$EXTERNAL_IP"
-      return 0
-    fi
-
-    echo_detail "Ingress Controller not ready yet. Retrying in $interval seconds..."
-    sleep $interval
-    elapsed=$((elapsed + interval))
-  done
-
-  echo_error "Ingress Controller did not obtain an external IP within the expected time."
-  exit 1
-}
-
-# Function to deploy ingress resources
-function deploy_ingress_resources() {
-  case $INSTALL_TYPE in
-    1)
-      # Install with HTTPS and Hostname
-      echo_primary "Deploying Ingress with HTTPS. (Expected time: 1-3 minutes)"
-      ;;
-    2)
-      # Install without HTTPS
-      echo_primary "Deploying Ingress without HTTPS."
-      ;;
-    3)
-      # Minimal Install
-      echo_primary "Deploying Ingress without a custom hostname."
-      ;;
-    *)
-      echo_error "Unsupported installation type: $INSTALL_TYPE"
-      exit 1
-      ;;
-  esac
-
-  # Deploy Ingress based on installation type
-  case $INSTALL_TYPE in
-    1)
-      # Install with HTTPS and Hostname
-      cat <<EOF | kubectl apply -n "$KUBE_NAMESPACE" -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: opengovernance-ingress
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - ${DOMAIN}
-      secretName: opengovernance-tls
-  rules:
-    - host: ${DOMAIN}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: nginx-proxy
-                port:
-                  number: 80
-EOF
-      ;;
-    2)
-      # Install without HTTPS
-      cat <<EOF | kubectl apply -n "$KUBE_NAMESPACE" -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: opengovernance-ingress
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: ${DOMAIN}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: nginx-proxy
-                port:
-                  number: 80
-EOF
-      ;;
-    3)
-      # Minimal Install
-      cat <<EOF | kubectl apply -n "$KUBE_NAMESPACE" -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: opengovernance-ingress
-spec:
-  ingressClassName: nginx
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: nginx-proxy
-                port:
-                  number: 80
-EOF
-      ;;
-  esac
-
-  echo_detail "Ingress resources deployed."
-}
-
-# Function to set up Cert-Manager and Let's Encrypt ClusterIssuer
-function setup_cert_manager_and_issuer() {
-  echo_primary "Setting up Cert-Manager and Let's Encrypt Issuer. (Expected time: 1-2 minutes)"
-
-  # Function to check if Cert-Manager is installed
-  function is_cert_manager_installed() {
-    if helm_quiet list -A | grep -qw "cert-manager"; then
-      return 0
-    fi
-
-    if kubectl get namespace cert-manager > /dev/null 2>&1 && kubectl get deployments -n cert-manager | grep -q "cert-manager"; then
-      return 0
-    fi
-
-    return 1
-  }
-
-  # Function to wait for the ClusterIssuer to be ready
-  function wait_for_clusterissuer_ready() {
-    local max_attempts=10
-    local sleep_time=30
-    local attempts=0
-
-    echo_detail "Waiting for ClusterIssuer 'letsencrypt' to become ready..."
-
-    while [ $attempts -lt $max_attempts ]; do
-      local ready_status
-      ready_status=$(kubectl get clusterissuer letsencrypt -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
-
-      if [ "$ready_status" == "True" ]; then
-        echo_detail "ClusterIssuer 'letsencrypt' is ready."
-        return 0
-      fi
-
-      attempts=$((attempts + 1))
-      echo_detail "ClusterIssuer not ready yet. Retrying in $sleep_time seconds... ($attempts/$max_attempts)"
-      sleep $sleep_time
-    done
-
-    echo_error "ClusterIssuer 'letsencrypt' did not become ready within the expected time."
-    exit 1
-  }
-
-  # Check if Cert-Manager is already installed
-  if is_cert_manager_installed; then
-    echo_detail "Cert-Manager is already installed. Skipping installation."
-  else
-    echo_detail "Installing Cert-Manager via Helm."
-    helm_quiet repo add jetstack https://charts.jetstack.io || true
-    helm_quiet repo update
-    helm_quiet install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
-    echo_detail "Cert-Manager installed."
-  fi
-
-  # Apply ClusterIssuer for Let's Encrypt
-  kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: ${EMAIL}
-    privateKeySecretRef:
-      name: letsencrypt-private-key
-    solvers:
-    - http01:
-        ingress:
-          class: nginx
-EOF
-
-  echo_detail "ClusterIssuer for Let's Encrypt created."
-
-  # Wait for ClusterIssuer to be ready
-  wait_for_clusterissuer_ready
-}
-
-# Function to restart pods
-function restart_pods() {
-  echo_primary "Restarting OpenGovernance Pods to Apply Changes."
-
-  # Restart only the specified deployments
-  kubectl rollout restart deployment nginx-proxy -n "$KUBE_NAMESPACE"
-  kubectl rollout restart deployment opengovernance-dex -n "$KUBE_NAMESPACE"
-
-  echo_detail "Pods restarted successfully."
-}
-
-function helm_upgrade_opengovernance() {
-  echo_primary "Upgrading or installing OpenGovernance via Helm with appropriate parameters."
-
-  # Add Helm repository and update
-  echo_detail "Adding OpenGovernance Helm repository."
-  helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
-  helm_quiet repo update
-
-  # Perform Helm upgrade with custom configuration
-  echo_detail "Performing Helm upgrade with custom configuration."
-
-  case $INSTALL_TYPE in
-    1)
-      # Install with HTTPS and Hostname
-      helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
-        -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: https://${DOMAIN}/dex
-EOF
-      ;;
-    2)
-      # Install without HTTPS
-      helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
-        -f - <<EOF
-global:
-  domain: ${DOMAIN}
-dex:
-  config:
-    issuer: http://${DOMAIN}/dex
-EOF
-      ;;
-    3)
-      # Minimal Install
-      helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
-        -f - <<EOF
-global:
-  domain: ${INGRESS_EXTERNAL_IP}
-dex:
-  config:
-    issuer: http://${INGRESS_EXTERNAL_IP}/dex
-EOF
-      ;;
-    *)
-      echo_error "Unsupported installation type: $INSTALL_TYPE"
-      exit 1
-      ;;
-  esac
-
-  echo_detail "Helm upgrade completed."
-}
-
-# Function to display completion message with protocol, DNS instructions, and default login details
-function display_completion_message() {
-  # Determine the protocol (http or https)
-  local protocol="http"
-  if [ "$ENABLE_HTTPS" = true ]; then
-    protocol="https"
-  fi
-
-  echo_primary "Installation Complete"
-
-  echo_prompt ""
-  echo_prompt "-----------------------------------------------------"
-  echo_prompt "OpenGovernance has been successfully installed and configured."
-  echo_prompt ""
-  if [ "$INSTALL_TYPE" -ne 3 ]; then
-    echo_prompt "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
-  else
-    echo_prompt "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
-  fi
-  echo_prompt ""
-  echo_prompt "To sign in, use the following default credentials:"
-  echo_prompt "  Username: admin@opengovernance.io"
-  echo_prompt "  Password: password"
-  echo_prompt ""
-
-  # DNS A record setup instructions if domain is configured and not minimal
-  if [ -n "$DOMAIN" ] && [ "$INSTALL_TYPE" -ne 3 ]; then
-    echo_prompt "To ensure proper access to your instance, please verify or set up the following DNS A records:"
-    echo_prompt ""
-    echo_prompt "  Domain: ${DOMAIN}"
-    echo_prompt "  Record Type: A"
-    echo_prompt "  Value: ${INGRESS_EXTERNAL_IP}"
-    echo_prompt ""
-    echo_prompt "Note: It may take some time for DNS changes to propagate."
-  fi
-
-  echo_prompt "-----------------------------------------------------"
-}
+# (Include other necessary functions here)
 
 # Function to run installation logic
 function run_installation_logic() {
@@ -928,8 +364,8 @@ function run_installation_logic() {
     echo_info "Proceeding to reconfigure OpenGovernance."
   fi
 
-  # If not in silent mode, prompt for installation type
-  if [ "$SILENT_INSTALL" = false ]; then
+  # If not in silent mode and INSTALL_TYPE was not specified, prompt for installation type
+  if [ "$SILENT_INSTALL" = false ] && [ "$INSTALL_TYPE_SPECIFIED" = false ]; then
     echo_detail "Starting interactive installation type selection..."
     choose_install_type
   fi
@@ -968,6 +404,8 @@ function run_installation_logic() {
   # Display completion message
   display_completion_message
 }
+
+# (Include other necessary functions here)
 
 # -----------------------------
 # Main Execution Flow
