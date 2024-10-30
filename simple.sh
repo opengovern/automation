@@ -189,7 +189,6 @@ is_kubectl_configured() {
 
 # Function to get cluster information
 get_cluster_info() {
-    # (Function body remains unchanged)
     if kubectl config current-context > /dev/null 2>&1; then
         if kubectl cluster-info > /dev/null 2>&1; then
             local control_plane_url
@@ -213,7 +212,6 @@ get_cluster_info() {
 
 # Function to detect Kubernetes provider and set context information
 detect_kubernetes_provider_and_set_context() {
-    # (Function body remains unchanged)
     # Initialize NODE_COUNT to "Unknown"
     NODE_COUNT="Unknown"
 
@@ -273,7 +271,6 @@ detect_kubernetes_provider_and_set_context() {
 
 # Function to display cluster details
 display_cluster_details() {
-    # (Function body remains unchanged)
     echo_primary "Provider Details:"
 
     # AWS
@@ -338,7 +335,6 @@ display_cluster_details() {
 
 # Function to display details for a specific option
 display_option_details() {
-    # (Function body remains unchanged)
     local option="$1"
 
     case "$option" in
@@ -439,7 +435,6 @@ deploy_to_platform() {
 
 # Function to ensure provider CLI is installed and configured
 ensure_cli_installed() {
-    # (Function body remains unchanged)
     local cli_command="$1"
     local cli_name="$2"
 
@@ -479,7 +474,6 @@ ensure_cli_installed() {
 
 # Function to deploy via curl
 deploy_via_curl() {
-    # (Function body remains unchanged)
     local provider="$1"
     local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/${provider}/scripts/simple.sh"
 
@@ -493,7 +487,6 @@ deploy_via_curl() {
 
 # Function to allow user to choose deployment based on available platforms
 choose_deployment() {
-    # (Function body remains unchanged)
     while true; do
         echo_primary "Where would you like to deploy OpenGovernance to?"
 
@@ -580,13 +573,18 @@ choose_deployment() {
             # Display details for Kubernetes Cluster
             display_option_details "Kubernetes Cluster"
 
-            # Wait for 15 seconds to allow the user to return to the main menu
-            echo_prompt "Press 'b' to return to the main menu within 15 seconds, or any other key to proceed."
-            read -t 15 -n 1 -r user_response
-            if [[ "$user_response" == "b" ]]; then
-                echo_primary "Returning to main menu."
-                continue
+            # Check if the current cluster is DigitalOcean
+            if [[ "$CURRENT_PROVIDER" == "DigitalOcean" ]]; then
+                echo_primary "Detected that the current Kubernetes Cluster is hosted on DigitalOcean."
+                echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
+
+                # Fetch and execute the post-install-config.sh script
+                curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
+
+                echo_primary "Post-install configuration for DigitalOcean executed successfully."
+                break
             else
+                # For non-DigitalOcean clusters, proceed with Helm installation
                 install_opengovernance_with_helm
                 break
             fi
@@ -611,8 +609,14 @@ choose_deployment() {
                     echo_primary "Returning to main menu."
                     continue
                 else
-                    deploy_to_platform "$selected_option"
-                    break
+                    if [[ "$selected_option" == "DigitalOcean" ]]; then
+                        # Deploy to DigitalOcean by creating/selecting cluster and executing post-install script
+                        deploy_to_platform "$selected_option"
+                        break
+                    else
+                        deploy_to_platform "$selected_option"
+                        break
+                    fi
                 fi
             else
                 echo_error "Platform '$selected_option' is unavailable. Please select another option."
@@ -692,8 +696,11 @@ create_digitalocean_cluster() {
                 fi
                 # Update the global cluster name variable
                 KUBE_CLUSTER_NAME="$cluster_name"
-                # Proceed to install OpenGovernance with Helm
-                install_opengovernance_with_helm
+
+                # Execute the DigitalOcean post-install configuration script
+                echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
+                curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
+                echo_primary "Post-install configuration for DigitalOcean executed successfully."
                 ;;
             2)
                 # Call function to create a new cluster with a unique name
@@ -731,8 +738,10 @@ create_digitalocean_cluster() {
         # Update the global cluster name variable
         KUBE_CLUSTER_NAME="$cluster_name"
 
-        # Proceed to install OpenGovernance with Helm
-        install_opengovernance_with_helm
+        # Execute the DigitalOcean post-install configuration script
+        echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
+        curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
+        echo_primary "Post-install configuration for DigitalOcean executed successfully."
     fi
 }
 
@@ -762,12 +771,13 @@ create_unique_digitalocean_cluster() {
 
         # Prompt to change the default region
         echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
-        echo_prompt -n "Do you wish to change the region? (yes/[no]): "
-        read -r change_region < /dev/tty
+        echo_prompt -n "Do you wish to change the region? (yes/[no], auto-proceeds in 30 seconds): "
+        read -t 30 -r change_region < /dev/tty || change_region="no"  # Set to "no" if timeout occurs
 
         if [[ -z "$change_region" || "$change_region" =~ ^([nN][oO]?|)$ ]]; then
             change_region="no"
         fi
+
 
         if [[ "$change_region" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             # Retrieve available regions
@@ -828,8 +838,10 @@ create_unique_digitalocean_cluster() {
         # Update the global cluster name variable
         KUBE_CLUSTER_NAME="$new_cluster_name"
 
-        # Proceed to install OpenGovernance with Helm
-        install_opengovernance_with_helm
+        # Execute the DigitalOcean post-install configuration script
+        echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
+        curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
+        echo_primary "Post-install configuration for DigitalOcean executed successfully."
 
         # Exit the loop after successful creation and installation
         break
