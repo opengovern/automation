@@ -45,11 +45,6 @@ data "aws_availability_zones" "available" {
 
 data "aws_region" "current" {}
 
-data "aws_rds_engine_version" "postgresql" {
-  engine             = "postgres"
-  preferred_versions = ["15.5", "15.4", "15.3", "15.2", "15.1"]
-}
-
 # Data source to list all KMS aliases
 data "aws_kms_aliases" "all" {}
 
@@ -61,14 +56,6 @@ resource "random_string" "suffix" {
   length  = 8
   special = false
   upper   = false
-  numeric = true
-  lower   = true
-}
-
-resource "random_password" "rds_password" {
-  length  = 16
-  special = true
-  upper   = true
   numeric = true
   lower   = true
 }
@@ -86,11 +73,7 @@ locals {
   tags = {
     Name        = local.name
     Environment = var.environment
-    Repository  = "https://github.com/terraform-aws-modules/terraform-aws-rds"
   }
-
-  db_username = var.rds_master_username
-  db_password = random_password.rds_password.result
 
   # Check if the KMS alias already exists
   existing_kms_alias = [
@@ -120,18 +103,11 @@ module "vpc" {
   private_subnets = [for k, az in local.azs : cidrsubnet(local.vpc_cidr, 8, k)]
   public_subnets  = [for k, az in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 4)]
 
-  # Conditionally create database subnets based on the environment
-  database_subnets = var.environment != "dev" ? [for k, az in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 8)] : []
-
   enable_nat_gateway = true
   single_nat_gateway = true
 
-  create_database_subnet_group           = var.environment != "dev"  # Only create if not in dev
-  manage_default_network_acl             = false
-  manage_default_route_table             = false
-  create_database_subnet_route_table     = var.environment != "dev"  # Only create if not in dev
-  create_database_internet_gateway_route = false
-  create_database_nat_gateway_route      = false
+  manage_default_network_acl = false
+  manage_default_route_table = false
 
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -142,12 +118,8 @@ module "vpc" {
   }
 
   private_subnet_tags = {
-    "Name"                             = "opengovernance-private-subnet"
-    "kubernetes.io/role/internal-elb"  = 1
-  }
-
-  database_subnet_tags = {
-    "Name" = "opengovernance-database-subnet"
+    "Name"                            = "opengovernance-private-subnet"
+    "kubernetes.io/role/internal-elb" = 1
   }
 
   tags = local.tags
@@ -314,67 +286,6 @@ resource "kubernetes_storage_class_v1" "gp3" {
 }
 
 ################################################################################
-# RDS Resources
-################################################################################
-
-module "rds_security_group" {
-  source  = "terraform-aws-modules/security-group/aws"
-  version = "~> 5.0"
-
-  name        = "${local.name}-rds-sg"
-  description = "Allow database access from VPC"
-  vpc_id      = module.vpc.vpc_id
-
-  ingress_with_cidr_blocks = [
-    {
-      from_port   = 5432
-      to_port     = 5432
-      protocol    = "tcp"
-      cidr_blocks = [module.vpc.vpc_cidr_block]
-      description = "Allow PostgreSQL access from VPC"
-    },
-  ]
-
-  egress_rules = ["all-all"]
-
-  tags = local.tags
-}
-
-resource "aws_db_instance" "postgresql" {
-  count                 = var.environment != "dev" ? 1 : 0  # Only create RDS in non-dev environments
-  identifier            = "${local.name}-postgresql"
-  allocated_storage     = var.rds_allocated_storage
-  max_allocated_storage = 100
-  storage_type          = "gp3"
-  engine                = "postgres"
-  engine_version        = data.aws_rds_engine_version.postgresql.version
-  instance_class        = var.rds_instance_class
-  db_name               = "mydatabase"
-  username              = local.db_username
-  password              = local.db_password
-  port                  = 5432
-
-  publicly_accessible = false
-  multi_az            = false
-  storage_encrypted   = true
-  skip_final_snapshot = true
-  deletion_protection = false
-
-  db_subnet_group_name = module.vpc.database_subnet_group_name
-
-  vpc_security_group_ids = [module.rds_security_group.security_group_id]
-
-  tags = {
-    Name = "PostgreSQL Database"
-  }
-
-  depends_on = [
-    module.vpc,
-    module.rds_security_group
-  ]
-}
-
-################################################################################
 # Outputs
 ################################################################################
 
@@ -386,11 +297,6 @@ output "vpc_id" {
 output "eks_cluster_name" {
   description = "The name of the EKS cluster"
   value       = module.eks.cluster_name
-}
-
-output "rds_endpoint" {
-  description = "The endpoint of the RDS PostgreSQL instance"
-  value       = length(aws_db_instance.postgresql) > 0 ? aws_db_instance.postgresql[0].endpoint : null
 }
 
 output "configure_kubectl" {
