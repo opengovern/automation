@@ -59,9 +59,9 @@ echo_detail() {
     echo_info "${indent}${message}"
 }
 
-# Function to redirect Helm commands to the log only, always with --debug
-helm_quiet() {
-    helm --debug "$@" >&3 2>&1
+# Function to run Helm commands and output to both console and log
+helm_run() {
+    helm --debug "$@" 2>&1 | tee -a "$LOGFILE"
 }
 
 # Function to check if a command exists
@@ -91,6 +91,8 @@ check_dependencies() {
         echo_primary "Please install the missing tools and re-run the script."
         exit 1
     fi
+
+    echo_info "All required tools are installed."
 }
 
 # Cloud provider CLI check function
@@ -149,29 +151,28 @@ is_kubectl_configured() {
 }
 
 # Function to check if OpenGovernance is installed and healthy
-function check_opengovernance_installation() {
-  # Check if OpenGovernance is installed
-  if helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
-    echo_info "OpenGovernance is installed."
+check_opengovernance_installation() {
+    # Check if OpenGovernance is installed
+    if helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
+        echo_info "OpenGovernance is installed."
 
-    # Now check if it's healthy
-    local unhealthy_pods
-    unhealthy_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+        # Now check if it's healthy
+        local unhealthy_pods
+        unhealthy_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
-    if [ -z "$unhealthy_pods" ]; then
-      echo_primary "OpenGovernance is already installed and healthy."
-      echo_info "Proceeding to reconfigure OpenGovernance with the new parameters."
-      return 1  # Return 1 to indicate that installation should proceed
+        if [ -z "$unhealthy_pods" ]; then
+            echo_primary "OpenGovernance is already installed and healthy."
+            echo_info "Proceeding to reconfigure OpenGovernance with the new parameters."
+            return 0
+        else
+            echo_info "OpenGovernance pods are not all healthy. Proceeding to reconfigure."
+            return 0
+        fi
     else
-      echo_info "OpenGovernance pods are not all healthy. Proceeding to reconfigure."
-      return 1  # Return 1 to indicate that installation should proceed
+        echo_info "OpenGovernance is not installed."
+        return 1
     fi
-  else
-    echo_info "OpenGovernance is not installed."
-    return 1  # Return 1 to indicate that installation should proceed
-  fi
 }
-
 
 # Function to get cluster information
 get_cluster_info() {
@@ -201,34 +202,28 @@ get_cluster_info() {
 
 # Function to install OpenGovernance with Helm
 install_opengovernance_with_helm() {
-    if [[ "$OPENGOVERNANCE_INSTALLED" == "true" ]]; then
-        echo_info "OpenGovernance is already installed."
-        return
-    fi
+    echo_primary "Installing OpenGovernance via Helm."
 
     echo_detail "Adding OpenGovernance Helm repository."
-    if ! helm_quiet repo add opengovernance https://opengovern.github.io/charts; then
+    if ! helm_run repo add opengovernance https://opengovern.github.io/charts; then
         echo_error "Failed to add OpenGovernance Helm repository."
         exit 1
     fi
 
     echo_detail "Updating Helm repositories."
-    if ! helm_quiet repo update; then
+    if ! helm_run repo update; then
         echo_error "Failed to update Helm repositories."
         exit 1
     fi
 
     echo_detail "Installing OpenGovernance via Helm in namespace '$KUBE_NAMESPACE' (this may take a few minutes)."
-    save_state  # Save state before starting Helm installation
-    if ! helm_quiet install opengovernance opengovernance/opengovernance \
+    if ! helm_run install opengovernance opengovernance/opengovernance \
         -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait; then
         echo_error "Helm installation failed."
         exit 1
     fi
 
     echo_detail "OpenGovernance installed successfully."
-    OPENGOVERNANCE_INSTALLED="true"
-    save_state  # Save state after Helm installation
 
     check_pods_and_jobs
 
@@ -300,22 +295,17 @@ warn_minikube_kind() {
 
     echo_prompt -n "Do you wish to proceed? (yes/no): "
     read -r proceed < /dev/tty
-    USER_INPUTS+=("$provider proceed: $proceed")
 
     if [[ "$proceed" == "yes" ]]; then
         return 0
     else
-        return 1
+        echo_primary "Deployment aborted by user."
+        exit 0
     fi
 }
 
 # Function to configure DigitalOcean app
 configure_digitalocean_app() {
-    if [[ "$DIGITALOCEAN_APP_CONFIGURED" == "true" ]]; then
-        echo_info "DigitalOcean application is already configured."
-        return
-    fi
-
     echo_primary "How would you like to configure the OpenGovernance application?"
     echo_primary "1) Configure with HTTPS and Hostname"
     echo_primary "2) Configure without HTTPS"
@@ -324,8 +314,6 @@ configure_digitalocean_app() {
     while true; do
         echo_prompt -n "Select an option (1-3): "
         read -r config_choice < /dev/tty
-        USER_INPUTS+=("DigitalOcean configuration choice: $config_choice")
-        save_state  # Save state after user input
 
         case "$config_choice" in
             1)
@@ -350,14 +338,11 @@ configure_digitalocean_app() {
         1|2)
             local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/refs/heads/main/digitalocean/scripts/post-install-config.sh"
             echo_info "Running DigitalOcean post-installation tasks - $INSTALL_TYPE."
-            save_state
 
             if curl --head --silent --fail "$script_url" >/dev/null; then
                 echo_detail "Executing DigitalOcean automation script."
                 curl -sL "$script_url" | bash -s -- --type "$INSTALL_TYPE" --kube-namespace "$KUBE_NAMESPACE"
                 echo_info "DigitalOcean automation script executed successfully."
-                DIGITALOCEAN_APP_CONFIGURED="true"
-                save_state
             else
                 echo_error "DigitalOcean automation script is not accessible at $script_url."
                 exit 1
@@ -390,43 +375,6 @@ setup_port_forwarding() {
         echo_error "Failed to initiate port-forwarding."
         provide_port_forward_instructions
     fi
-}
-
-
-# Function to save state
-save_state() {
-    {
-        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
-        echo "START_TIME=\"$START_TIME\""
-        echo "CURRENT_STEP=$CURRENT_STEP"
-        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
-        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
-        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
-        echo "INFRA_DIR=\"$INFRA_DIR\""
-        echo "INFRA_TOOL=\"$INFRA_TOOL\""
-        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
-        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
-        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
-        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
-        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
-        echo "RESUMING_FROM_STATE=\"$RESUMING_FROM_STATE\""
-        # Include user inputs and selections
-        for key in "${!USER_INPUTS[@]}"; do
-            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
-        done
-    } > "$STATE_FILE"
-}
-
-# Function to load state
-load_state() {
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
-    # Reconstruct USER_INPUTS array
-    USER_INPUTS=()
-    for key in $(compgen -A variable | grep '^USER_INPUT_'); do
-        USER_INPUTS+=("${!key}")
-    done
 }
 
 # Function to detect Kubernetes provider and deploy
@@ -485,101 +433,82 @@ detect_kubernetes_provider_and_deploy() {
             ;;
     esac
 
-    # Save state after detecting provider
-    save_state
-
     # Ask user if they want to deploy to the existing cluster or create a new one
-    if [[ "$RESUMING_FROM_STATE" == "true" && "$CURRENT_STEP" -gt 3 ]]; then
-        echo_info "Resuming deployment to existing cluster."
-        determine_and_deploy_provider "$cluster_info" "true"
-    else
-        echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
-        echo_primary "1. Deploy to existing cluster"
-        echo_primary "2. Create a new cluster"
-        echo_primary "3. Exit"
+    echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
+    echo_primary "1. Deploy to existing cluster"
+    echo_primary "2. Create a new cluster"
+    echo_primary "3. Exit"
 
-        echo_prompt -n "Select an option (1-3): "
-        read -r deploy_choice < /dev/tty
-        USER_INPUTS+=("Deployment choice: $deploy_choice")
-        save_state  # Save state after user input
+    echo_prompt -n "Select an option (1-3): "
+    read -r deploy_choice < /dev/tty
 
-        case "$deploy_choice" in
-            1)
-                # Check if OpenGovernance is already installed
-                if check_opengovernance_installation; then
-                    # If installation exists and user chooses to reconfigure, proceed
-                    determine_and_deploy_provider "$cluster_info" "true"
-                else
-                    # If no installation exists, determine the provider and execute provider-specific scripts
-                    determine_and_deploy_provider "$cluster_info" "false"
-                fi
-                ;;
-            2)
-                # Proceed to provider selection for creating a new cluster
-                check_provider_clis
-                choose_deployment
-                ;;
-            3)
-                echo_primary "Exiting."
-                exit 0
-                ;;
-            *)
-                echo_error "Invalid selection. Exiting."
-                exit 1
-                ;;
-        esac
-    fi
+    case "$deploy_choice" in
+        1)
+            # Check if OpenGovernance is already installed
+            if check_opengovernance_installation; then
+                # If installation exists, proceed to reconfigure or install
+                determine_and_deploy_provider "$cluster_info"
+            else
+                # If no installation exists, determine the provider and execute provider-specific scripts
+                determine_and_deploy_provider "$cluster_info"
+            fi
+            ;;
+        2)
+            # Proceed to provider selection for creating a new cluster
+            check_provider_clis
+            choose_deployment
+            ;;
+        3)
+            echo_primary "Exiting."
+            exit 0
+            ;;
+        *)
+            echo_error "Invalid selection. Exiting."
+            exit 1
+            ;;
+    esac
 }
 
 # Function to determine provider from cluster_info and deploy accordingly
 determine_and_deploy_provider() {
     local cluster_info="$1"
-    local deploy_existing="$2"  # 'true' or 'false'
 
     case "$cluster_info" in
         *".azmk8s.io"*|*"azure"*)
             echo_primary "Deploying OpenGovernance to Azure."
             CURRENT_PROVIDER="Azure"
-            save_state
             deploy_via_curl "azure"
             ;;
         *".eks.amazonaws.com"*|*"amazonaws.com"*)
             echo_primary "Deploying OpenGovernance to AWS."
             CURRENT_PROVIDER="AWS"
-            save_state
             deploy_via_curl "aws"
             ;;
         *".gke.io"*|*"gke"*)
             echo_primary "Deploying OpenGovernance to GCP."
             CURRENT_PROVIDER="GCP"
-            save_state
             deploy_via_curl "gcp"
             ;;
         *".k8s.ondigitalocean.com"*|*"digitalocean"*|*"do-"*)
             echo_primary "Deploying OpenGovernance to DigitalOcean."
             CURRENT_PROVIDER="DigitalOcean"
-            save_state
-            deploy_to_digitalocean "$deploy_existing"
+            deploy_to_digitalocean
             ;;
         *"minikube"*)
             echo_primary "Deploying OpenGovernance to Minikube."
             CURRENT_PROVIDER="Minikube"
-            save_state
             if warn_minikube_kind "Minikube"; then
                 install_opengovernance_with_helm
             else
-                echo_primary "Deployment aborted by user."
                 exit 0
             fi
             ;;
         *"kind"*)
             echo_primary "Deploying OpenGovernance to Kind."
             CURRENT_PROVIDER="Kind"
-            save_state
             if warn_minikube_kind "Kind"; then
                 install_opengovernance_with_helm
             else
-                echo_primary "Deployment aborted by user."
                 exit 1
             fi
             ;;
@@ -613,13 +542,6 @@ deploy_via_curl() {
 
 # Function to allow user to choose deployment based on available platforms
 choose_deployment() {
-    # If resuming and already selected a platform, skip this step
-    if [[ "$RESUMING_FROM_STATE" == "true" && "$CURRENT_STEP" -gt 3 ]]; then
-        echo_info "Resuming deployment to $CURRENT_PROVIDER."
-        determine_and_deploy_provider_from_selection
-        return
-    fi
-
     echo_primary "Where would you like to deploy OpenGovernance to?"
 
     local option=1
@@ -644,8 +566,6 @@ choose_deployment() {
     while true; do
         echo_prompt -n "Select an option (1-$option): "
         read -r platform_choice < /dev/tty
-        USER_INPUTS+=("Platform choice: $platform_choice")
-        save_state  # Save state after user input
 
         # Validate input is a number
         if ! [[ "$platform_choice" =~ ^[0-9]+$ ]]; then
@@ -665,7 +585,6 @@ choose_deployment() {
 
         selected_platform="${opts[platform_choice-1]}"
         CURRENT_PROVIDER="$selected_platform"
-        save_state  # Save selected platform
 
         case "$selected_platform" in
             "AWS")
@@ -682,7 +601,7 @@ choose_deployment() {
                 ;;
             "DigitalOcean")
                 echo_primary "Deploying OpenGovernance to DigitalOcean."
-                deploy_to_digitalocean "false"  # 'false' indicates not deploying to existing cluster
+                deploy_to_digitalocean
                 ;;
             *)
                 echo_error "Unsupported platform: $selected_platform"
@@ -692,90 +611,20 @@ choose_deployment() {
     done
 }
 
-# Function to determine and deploy based on user selection (for resuming)
-determine_and_deploy_provider_from_selection() {
-    case "$CURRENT_PROVIDER" in
-        "AWS")
-            echo_primary "Deploying OpenGovernance to AWS."
-            deploy_via_curl "aws"
-            ;;
-        "Azure")
-            echo_primary "Deploying OpenGovernance to Azure."
-            deploy_via_curl "azure"
-            ;;
-        "GCP")
-            echo_primary "Deploying OpenGovernance to GCP."
-            deploy_via_curl "gcp"
-            ;;
-        "DigitalOcean")
-            echo_primary "Deploying OpenGovernance to DigitalOcean."
-            deploy_to_digitalocean "false"  # 'false' indicates not deploying to existing cluster
-            ;;
-        *)
-            echo_error "Unsupported or unidentified platform: $CURRENT_PROVIDER"
-            ;;
-    esac
-}
-
 # Function to deploy to DigitalOcean
 deploy_to_digitalocean() {
-    local deploy_existing="$1"  # 'true' or 'false'
-
     # Ensure required variables are set
     DIGITALOCEAN_REGION="${DIGITALOCEAN_REGION:-nyc3}"
     KUBE_CLUSTER_NAME="${KUBE_CLUSTER_NAME:-opengovernance}"
 
     # Check if the cluster exists using 'doctl kubernetes cluster get'
     if doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" >/dev/null 2>&1; then
-        if [[ "$deploy_existing" == "true" ]]; then
-            echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
-            # Retrieve kubeconfig for the cluster
-            doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-            # Proceed to install OpenGovernance with Helm
-            install_opengovernance_with_helm
-        else
-            echo_primary "A Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists."
-
-            # Prompt user for choice
-            echo_primary "Choose an option for deploying to DigitalOcean Kubernetes cluster:"
-            echo_primary "1. Use existing cluster '$KUBE_CLUSTER_NAME'"
-            echo_primary "2. Create a new cluster with a different name"
-            echo_primary "3. Exit"
-
-            echo_prompt -n "Select an option (1-3): "
-            read -r do_option < /dev/tty
-            USER_INPUTS+=("DigitalOcean cluster option: $do_option")
-            save_state  # Save state after user input
-
-            case "$do_option" in
-                1)
-                    echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
-                    # Retrieve kubeconfig for the cluster
-                    doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-                    # Proceed to install OpenGovernance with Helm
-                    install_opengovernance_with_helm
-                    ;;
-                2)
-                    # Prompt user for new cluster name with validation
-                    create_unique_digitalocean_cluster
-                    ;;
-                3)
-                    echo_primary "Exiting."
-                    exit 0
-                    ;;
-                *)
-                    echo_error "Invalid selection. Exiting."
-                    exit 1
-                    ;;
-            esac
-        fi
+        echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+        # Retrieve kubeconfig for the cluster
+        doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+        # Proceed to install OpenGovernance with Helm
+        install_opengovernance_with_helm
     else
-        if [[ "$deploy_existing" == "true" ]]; then
-            echo_error "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
-            echo_primary "Cannot deploy to a non-existent cluster."
-            exit 1
-        fi
-
         # Cluster does not exist, prompt user to create or exit
         echo_primary "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
 
@@ -785,8 +634,6 @@ deploy_to_digitalocean() {
 
         echo_prompt -n "Select an option (1-2): "
         read -r do_option < /dev/tty
-        USER_INPUTS+=("DigitalOcean cluster creation option: $do_option")
-        save_state  # Save state after user input
 
         case "$do_option" in
             1)
@@ -813,16 +660,9 @@ deploy_to_digitalocean() {
 
 # Function to create a unique Kubernetes cluster on DigitalOcean
 create_unique_digitalocean_cluster() {
-    # Check if cluster is already created
-    if [[ "$DIGITALOCEAN_CLUSTER_CREATED" == "true" ]]; then
-        echo_info "DigitalOcean cluster '$KUBE_CLUSTER_NAME' already created."
-        return
-    fi
-
     while true; do
         echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
         read -r new_cluster_name < /dev/tty
-        USER_INPUTS+=("New DigitalOcean cluster name: $new_cluster_name")
 
         # Check if the cluster name is empty
         if [[ -z "$new_cluster_name" ]]; then
@@ -830,7 +670,7 @@ create_unique_digitalocean_cluster() {
             continue
         fi
 
-        # Check if the cluster name already exists using 'doctl kubernetes cluster get'
+        # Check if the cluster name already exists
         if doctl kubernetes cluster get "$new_cluster_name" >/dev/null 2>&1; then
             echo_primary "A Kubernetes cluster named '$new_cluster_name' already exists."
             echo_primary "Choose an option:"
@@ -840,8 +680,6 @@ create_unique_digitalocean_cluster() {
 
             echo_prompt -n "Select an option (1-3): "
             read -r existing_option < /dev/tty
-            USER_INPUTS+=("Existing cluster option: $existing_option")
-            save_state  # Save state after user input
 
             case "$existing_option" in
                 1)
@@ -869,7 +707,7 @@ create_unique_digitalocean_cluster() {
             continue  # Loop back to the start
         fi
 
-        # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
+        # Optional: Validate cluster name format
         if [[ ! "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
             echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
             continue
@@ -879,7 +717,6 @@ create_unique_digitalocean_cluster() {
         echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
         echo_prompt -n "Do you wish to change the region? (yes/no): "
         read -r change_region < /dev/tty
-        USER_INPUTS+=("Change region: $change_region")
 
         if [[ "$change_region" =~ ^([yY][eE][sS]|[yY])$ ]]; then
             # Retrieve available regions
@@ -897,7 +734,6 @@ create_unique_digitalocean_cluster() {
             while true; do
                 echo_prompt -n "Enter the desired region from the above list [Default: $DIGITALOCEAN_REGION]: "
                 read -r input_region < /dev/tty
-                USER_INPUTS+=("Selected region: $input_region")
 
                 # Use default if input is empty
                 if [[ -z "$input_region" ]]; then
@@ -922,14 +758,11 @@ create_unique_digitalocean_cluster() {
         # Confirm the details
         echo_primary "Creating DigitalOcean Kubernetes cluster '$new_cluster_name' in region '$DIGITALOCEAN_REGION'..."
         echo_primary "This step may take 3-5 minutes."
-        save_state  # Save state before starting cluster creation
 
         # Create the cluster
         if doctl kubernetes cluster create "$new_cluster_name" --region "$DIGITALOCEAN_REGION" \
             --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait; then
             echo_info "Cluster '$new_cluster_name' created successfully."
-            DIGITALOCEAN_CLUSTER_CREATED="true"
-            save_state  # Save state after cluster creation
         else
             echo_error "Failed to create cluster '$new_cluster_name'. Please try again."
             continue
@@ -946,55 +779,6 @@ create_unique_digitalocean_cluster() {
     done
 }
 
-# The rest of the script remains unchanged, including functions:
-# - install_opengovernance_with_helm
-# - check_pods_and_jobs
-# - provide_port_forward_instructions
-# - check_ready_nodes
-# - warn_minikube_kind
-# - configure_digitalocean_app
-# - setup_port_forwarding
-
-# -----------------------------
-# State Management
-# -----------------------------
-
-# Function to save state
-save_state() {
-    {
-        echo "## State saved at $(date '+%Y-%m-%d %H:%M:%S')"
-        echo "INSTALL_RUN_ID=\"$INSTALL_RUN_ID\""
-        echo "START_TIME=\"$START_TIME\""
-        echo "CURRENT_STEP=$CURRENT_STEP"
-        echo "KUBE_NAMESPACE=\"$KUBE_NAMESPACE\""
-        echo "KUBE_CLUSTER_NAME=\"$KUBE_CLUSTER_NAME\""
-        echo "DIGITALOCEAN_REGION=\"$DIGITALOCEAN_REGION\""
-        echo "INFRA_DIR=\"$INFRA_DIR\""
-        echo "INFRA_TOOL=\"$INFRA_TOOL\""
-        echo "CURRENT_PROVIDER=\"$CURRENT_PROVIDER\""
-        echo "DIGITALOCEAN_CLUSTER_CREATED=\"$DIGITALOCEAN_CLUSTER_CREATED\""
-        echo "OPENGOVERNANCE_INSTALLED=\"$OPENGOVERNANCE_INSTALLED\""
-        echo "DIGITALOCEAN_APP_CONFIGURED=\"$DIGITALOCEAN_APP_CONFIGURED\""
-        echo "KUBECTL_CONFIGURED=\"$KUBECTL_CONFIGURED\""
-        echo "RESUMING_FROM_STATE=\"$RESUMING_FROM_STATE\""
-        # Include user inputs and selections
-        for key in "${!USER_INPUTS[@]}"; do
-            echo "USER_INPUT_$key=\"${USER_INPUTS[$key]}\""
-        done
-    } > "$STATE_FILE"
-}
-
-# Function to load state
-load_state() {
-    # shellcheck disable=SC1090
-    source "$STATE_FILE"
-    # Reconstruct USER_INPUTS array
-    USER_INPUTS=()
-    for key in $(compgen -A variable | grep '^USER_INPUT_'); do
-        USER_INPUTS+=("${!key}")
-    done
-}
-
 # -----------------------------
 # Script Initialization
 # -----------------------------
@@ -1002,7 +786,6 @@ load_state() {
 # Logging Configuration
 DATA_DIR="$HOME/opengovernance_data"
 LOGFILE="$DATA_DIR/opengovernance_install.log"
-STATE_FILE="$DATA_DIR/opengovernance_install.state"
 
 # Ensure the data directory exists
 mkdir -p "$DATA_DIR" || { echo "Failed to create data directory."; exit 1; }
@@ -1019,14 +802,12 @@ AVAILABLE_PLATFORMS=()
 UNAVAILABLE_PLATFORMS=()
 PROVIDER_CONFIGS=()
 PROVIDER_ERRORS=()
-USER_INPUTS=()  # Array to store user inputs and selections
 
 # Initialize variables
 INFRA_DIR="${INFRA_DIR:-$HOME/opengovernance_infrastructure}"  # Default infrastructure directory
 INFRA_TOOL=""  # Will be set to 'terraform' or 'tofu' based on availability
 CURRENT_PROVIDER=""  # Variable to store the detected Kubernetes provider
 KUBECTL_CONFIGURED=false  # Variable to track if kubectl is configured
-RESUMING_FROM_STATE="false"
 
 # Detect Operating System
 OS_TYPE="$(uname -s)"
@@ -1043,89 +824,30 @@ if [[ "$OS" == "UNKNOWN" ]]; then
 fi
 
 # -----------------------------
-# State Management
-# -----------------------------
-
-# Generate or load install-run-id
-if [[ -f "$STATE_FILE" ]]; then
-    echo "State file found. Resuming from last saved state."
-
-    # Prompt user to decide whether to resume
-    echo_prompt -n "Do you want to resume the previous installation? (yes/no): "
-    read -r resume_choice < /dev/tty
-
-    if [[ "$resume_choice" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-        RESUMING_FROM_STATE="true"
-        load_state
-    else
-        echo "Starting a new installation."
-        RESUMING_FROM_STATE="false"
-        CURRENT_STEP=1
-        # Initialize state variables
-        DIGITALOCEAN_CLUSTER_CREATED="false"
-        OPENGOVERNANCE_INSTALLED="false"
-        DIGITALOCEAN_APP_CONFIGURED="false"
-        KUBECTL_CONFIGURED="false"
-        INSTALL_RUN_ID=$(date +%s%N | cut -b1-13)  # 13-digit nanosecond timestamp
-        START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-        # Save initial state
-        save_state
-    fi
-else
-    echo "No state file found. Starting fresh."
-    RESUMING_FROM_STATE="false"
-    CURRENT_STEP=1
-    # Initialize state variables
-    DIGITALOCEAN_CLUSTER_CREATED="false"
-    OPENGOVERNANCE_INSTALLED="false"
-    DIGITALOCEAN_APP_CONFIGURED="false"
-    KUBECTL_CONFIGURED="false"
-    INSTALL_RUN_ID=$(date +%s%N | cut -b1-13)  # 13-digit nanosecond timestamp
-    START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-    # Save initial state
-    save_state
-fi
-
-# -----------------------------
 # Main Execution Flow
 # -----------------------------
 
 echo_info "OpenGovernance installation script started."
 
 # Step 1: Check dependencies
-if [ "$CURRENT_STEP" -le 1 ]; then
-    check_dependencies
-    CURRENT_STEP=2
-    save_state
-fi
+check_dependencies
 
 # Step 2: Check if kubectl is configured
-if [ "$CURRENT_STEP" -le 2 ]; then
-    if is_kubectl_configured; then
-        KUBECTL_CONFIGURED=true
-    else
-        KUBECTL_CONFIGURED=false
-    fi
-    CURRENT_STEP=3
-    save_state
+if is_kubectl_configured; then
+    KUBECTL_CONFIGURED=true
+else
+    KUBECTL_CONFIGURED=false
 fi
 
 # Step 3: Proceed based on kubectl configuration
-if [ "$CURRENT_STEP" -le 3 ]; then
-    if [ "$KUBECTL_CONFIGURED" == "true" ]; then
-        detect_kubernetes_provider_and_deploy
-    else
-        check_provider_clis
-        choose_deployment
-    fi
-    CURRENT_STEP=4
-    save_state
+if [ "$KUBECTL_CONFIGURED" == "true" ]; then
+    detect_kubernetes_provider_and_deploy
+else
+    check_provider_clis
+    choose_deployment
 fi
 
 echo_primary "OpenGovernance installation script completed successfully."
-
-# Cleanup state file after successful completion
-rm -f "$STATE_FILE"
 
 # Exit script successfully
 exit 0
