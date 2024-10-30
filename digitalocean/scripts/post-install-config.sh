@@ -434,20 +434,21 @@ check_opengovernance_installation() {
     # Check if OpenGovernance is installed
     if helm ls -n "$KUBE_NAMESPACE" | grep -qw opengovernance; then
         echo_info "OpenGovernance is already installed."
-        local unhealthy_pods
-        # Exclude pods that have 'Completed' in their status
-        unhealthy_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
-        if [ -z "$unhealthy_pods" ]; then
+        # Check if OpenGovernance-specific pods are healthy
+        # Assuming OpenGovernance pods have 'opengovernance' in their names
+        local not_ready_pods
+        not_ready_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | grep 'opengovernance' | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+        if [ -z "$not_ready_pods" ]; then
             echo_info "OpenGovernance is healthy."
             # Do not display this information to the console, only log it
-            return 1  # Return 1 to indicate that installation should proceed
+            return 1  # Return 1 to indicate that installation should proceed (upgrade)
         else
             echo_info "OpenGovernance pods are not all healthy. Proceeding to reconfigure."
-            return 1  # Return 1 to indicate that installation should proceed
+            return 1  # Return 1 to indicate that installation should proceed (upgrade)
         fi
     else
         echo_info "OpenGovernance is not installed."
-        return 1  # Return 1 to indicate that installation should proceed
+        return 1  # Return 1 to indicate that installation should proceed (install)
     fi
 }
 
@@ -528,16 +529,16 @@ EOF
 
 # Function to check pods and jobs readiness
 check_pods_and_jobs() {
-    echo_detail "Waiting for application pods to be ready..."
+    echo_detail "Waiting for OpenGovernance pods to be ready..."
 
     local attempts=0
     local max_attempts=12  # 12 attempts * 30 seconds = 6 minutes
     local sleep_time=30
 
     while [ $attempts -lt $max_attempts ]; do
-        # Get pods that are not in Running or Completed status
+        # Get OpenGovernance pods that are not in Running or Completed status
         local not_ready_pods
-        not_ready_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+        not_ready_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | grep 'opengovernance' | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
 
         if [ -z "$not_ready_pods" ]; then
             echo_detail "All relevant OpenGovernance pods are ready."
@@ -545,7 +546,7 @@ check_pods_and_jobs() {
         fi
 
         attempts=$((attempts + 1))
-        echo_detail "Waiting for pods to become ready... ($attempts/$max_attempts)"
+        echo_detail "Waiting for OpenGovernance pods to become ready... ($attempts/$max_attempts)"
         sleep $sleep_time
     done
 
@@ -849,7 +850,7 @@ run_installation_logic() {
     # Run Helm upgrade with appropriate parameters
     helm_upgrade_opengovernance
 
-    # Wait for pods to be ready
+    # Wait for OpenGovernance pods to be ready
     check_pods_and_jobs
 
     # Set up Ingress Controller if not Minimal Install
