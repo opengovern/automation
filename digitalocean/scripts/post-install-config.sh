@@ -502,7 +502,7 @@ helm_upgrade_opengovernance() {
     helm_run repo add opengovernance https://opengovern.github.io/charts || true
     helm_run repo update
 
-    echo_detail "Performing Helm upgrade with custom configuration."
+    echo_detail "Performing Helm $INSTALL_ACTION with custom configuration."
 
     case $INSTALL_ACTION in
         install)
@@ -517,10 +517,13 @@ helm_upgrade_opengovernance() {
             ;;
     esac
 
+    # Prepare common Helm parameters
+    HELM_PARAMS=(opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait)
+
     case $INSTALL_TYPE in
         1)
             # Install with HTTPS and Hostname
-            helm_run upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait \
+            helm_run "$INSTALL_ACTION" "${HELM_PARAMS[@]}" \
                 -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -531,7 +534,7 @@ EOF
             ;;
         2)
             # Install without HTTPS
-            helm_run upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait \
+            helm_run "$INSTALL_ACTION" "${HELM_PARAMS[@]}" \
                 -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -542,7 +545,7 @@ EOF
             ;;
         3)
             # Minimal Install
-            helm_run upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait \
+            helm_run "$INSTALL_ACTION" "${HELM_PARAMS[@]}" \
                 -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -557,7 +560,7 @@ EOF
             ;;
     esac
 
-    echo_detail "Helm upgrade/install completed."
+    echo_detail "Helm $INSTALL_ACTION completed."
 }
 
 # Function to check OpenGovernance pods readiness
