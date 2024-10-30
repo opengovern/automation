@@ -789,8 +789,6 @@ create_unique_digitalocean_cluster() {
                 echo_error "Failed to retrieve available regions. Please ensure 'doctl' is authenticated and has the necessary permissions."
                 exit 1
             fi
-        fi
-
 
             echo_primary "Available Regions:"
             echo "$AVAILABLE_REGIONS" | nl -w2 -s'. '
