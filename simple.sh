@@ -348,8 +348,8 @@ configure_digitalocean_app() {
 
     case "$INSTALL_TYPE" in
         1|2)
-            local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/do-automation.sh"
-            echo_info "Running DigitalOcean automation script with installation type $INSTALL_TYPE."
+            local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/refs/heads/main/digitalocean/scripts/post-install-config.sh"
+            echo_info "Running DigitalOcean post-installation tasks - $INSTALL_TYPE."
             save_state
 
             if curl --head --silent --fail "$script_url" >/dev/null; then
