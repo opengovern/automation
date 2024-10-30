@@ -65,9 +65,9 @@ echo_detail() {
     echo_info "${indent}${message}"
 }
 
-# Function to redirect Helm commands to the log only, always with --debug
-helm_quiet() {
-    helm --debug "$@" >&3 2>&1
+# Function to run Helm commands and output to both console and log
+helm_run() {
+    helm --debug "$@" 2>&1 | tee -a "$LOGFILE"
 }
 
 # Function to check if a command exists
@@ -139,6 +139,12 @@ parse_args() {
                 INSTALL_TYPE=1
                 ENABLE_HTTPS=true
                 echo_info "Silent install: INSTALL_TYPE not specified. DOMAIN and EMAIL provided. Defaulting to Install with HTTPS and Hostname."
+            elif [ -n "${DOMAIN:-}" ] && [ -z "${EMAIL:-}" ]; then
+                echo_error "Silent install: INSTALL_TYPE not specified and EMAIL is missing. Please provide both DOMAIN and EMAIL for installation type 1."
+                usage
+            elif [ -z "${DOMAIN:-}" ] && [ -n "${EMAIL:-}" ]; then
+                echo_error "Silent install: INSTALL_TYPE not specified and DOMAIN is missing. Please provide both DOMAIN and EMAIL for installation type 1."
+                usage
             else
                 INSTALL_TYPE=3
                 ENABLE_HTTPS=false
@@ -150,9 +156,23 @@ parse_args() {
             case $INSTALL_TYPE in
                 1)
                     ENABLE_HTTPS=true
+                    # Ensure DOMAIN and EMAIL are provided
+                    if [ -z "${DOMAIN:-}" ] || [ -z "${EMAIL:-}" ]; then
+                        echo_error "Silent install: Installation type 1 requires both DOMAIN and EMAIL."
+                        usage
+                    fi
                     ;;
-                2|3)
+                2)
                     ENABLE_HTTPS=false
+                    # Ensure DOMAIN is provided
+                    if [ -z "${DOMAIN:-}" ]; then
+                        echo_error "Silent install: Installation type 2 requires DOMAIN."
+                        usage
+                    fi
+                    ;;
+                3)
+                    ENABLE_HTTPS=false
+                    # No additional parameters required
                     ;;
                 *)
                     echo_error "Invalid installation type: $INSTALL_TYPE"
@@ -299,15 +319,15 @@ get_inline_install_type_description() {
 
 # Function to configure email and domain with validation and confirmation
 configure_email_and_domain() {
-    # Function to prompt for confirmation with 30-second timeout
+    # Function to prompt for confirmation with 15-second timeout
     confirm_proceed() {
         echo_prompt ""
         echo_prompt "Please review the entered details:"
         echo_prompt "  Domain: $DOMAIN"
         echo_prompt "  Email: $EMAIL"
         echo_prompt ""
-        echo_prompt "Press Enter to confirm and proceed, or wait 30 seconds to auto-proceed."
-        read -t 30 -p "" user_input
+        echo_prompt "Press Enter to confirm and proceed, or wait 15 seconds to auto-proceed."
+        read -t 15 -p "" user_input || true
         echo_info "User confirmed or auto-proceeded."
     }
 
@@ -441,14 +461,14 @@ check_opengovernance_installation() {
         if [ -z "$not_ready_pods" ]; then
             echo_info "OpenGovernance is healthy."
             # Do not display this information to the console, only log it
-            return 1  # Return 1 to indicate that installation should proceed (upgrade)
+            INSTALL_ACTION="upgrade"  # Proceed with upgrade
         else
             echo_info "OpenGovernance pods are not all healthy. Proceeding to reconfigure."
-            return 1  # Return 1 to indicate that installation should proceed (upgrade)
+            INSTALL_ACTION="upgrade"  # Proceed with upgrade
         fi
     else
         echo_info "OpenGovernance is not installed."
-        return 1  # Return 1 to indicate that installation should proceed (install)
+        INSTALL_ACTION="install"  # Proceed with installation
     fi
 }
 
@@ -479,15 +499,28 @@ check_prerequisites() {
 helm_upgrade_opengovernance() {
     echo_primary "Upgrading or installing OpenGovernance via Helm."
     echo_detail "Adding OpenGovernance Helm repository."
-    helm_quiet repo add opengovernance https://opengovern.github.io/charts || true
-    helm_quiet repo update >&3
+    helm_run repo add opengovernance https://opengovern.github.io/charts || true
+    helm_run repo update
 
     echo_detail "Performing Helm upgrade with custom configuration."
+
+    case $INSTALL_ACTION in
+        install)
+            echo_detail "Performing fresh installation of OpenGovernance."
+            ;;
+        upgrade)
+            echo_detail "Performing upgrade of OpenGovernance."
+            ;;
+        *)
+            echo_error "Unknown INSTALL_ACTION: $INSTALL_ACTION"
+            exit 1
+            ;;
+    esac
 
     case $INSTALL_TYPE in
         1)
             # Install with HTTPS and Hostname
-            helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
+            helm_run upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait \
                 -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -498,7 +531,7 @@ EOF
             ;;
         2)
             # Install without HTTPS
-            helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
+            helm_run upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait \
                 -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -509,7 +542,7 @@ EOF
             ;;
         3)
             # Minimal Install
-            helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
+            helm_run upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=15m --wait \
                 -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -524,10 +557,10 @@ EOF
             ;;
     esac
 
-    echo_detail "Helm upgrade completed."
+    echo_detail "Helm upgrade/install completed."
 }
 
-# Function to check pods and jobs readiness
+# Function to check OpenGovernance pods readiness
 check_pods_and_jobs() {
     echo_detail "Waiting for OpenGovernance pods to be ready..."
 
@@ -576,13 +609,13 @@ setup_ingress_controller() {
     fi
 
     # Check if ingress-nginx is already installed in the specified namespace
-    if helm_quiet ls -n "$KUBE_NAMESPACE" | grep -qw ingress-nginx; then
+    if helm_run ls -n "$KUBE_NAMESPACE" | grep -qw ingress-nginx; then
         echo_detail "Ingress Controller already installed. Skipping installation."
     else
         echo_detail "Installing ingress-nginx via Helm."
-        helm_quiet repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
-        helm_quiet repo update >&3
-        helm_quiet install ingress-nginx ingress-nginx/ingress-nginx -n "$KUBE_NAMESPACE" --create-namespace --wait
+        helm_run repo add ingress-nginx https://kubernetes.github.io/ingress-nginx || true
+        helm_run repo update
+        helm_run install ingress-nginx ingress-nginx/ingress-nginx -n "$KUBE_NAMESPACE" --create-namespace --wait
         echo_detail "Ingress Controller installed."
 
         # Wait for ingress-nginx controller to obtain an external IP (up to 6 minutes)
@@ -706,7 +739,7 @@ setup_cert_manager_and_issuer() {
 
     # Function to check if Cert-Manager is installed
     is_cert_manager_installed() {
-        if helm_quiet list -A | grep -qw "cert-manager"; then
+        if helm_run list -A | grep -qw "cert-manager"; then
             return 0
         fi
 
@@ -748,9 +781,9 @@ setup_cert_manager_and_issuer() {
         echo_detail "Cert-Manager is already installed. Skipping installation."
     else
         echo_detail "Installing Cert-Manager via Helm."
-        helm_quiet repo add jetstack https://charts.jetstack.io >&3
-        helm_quiet repo update >&3
-        helm_quiet install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
+        helm_run repo add jetstack https://charts.jetstack.io >&3
+        helm_run repo update
+        helm_run install cert-manager jetstack/cert-manager -n cert-manager --create-namespace --version v1.11.0 --set installCRDs=true --wait
         echo_detail "Cert-Manager installed."
     fi
 
