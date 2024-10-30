@@ -771,15 +771,16 @@ create_unique_digitalocean_cluster() {
 
         # Prompt to change the default region
         echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
-        echo_prompt -n "Do you wish to change the region? (yes/[no], auto-proceeds in 30 seconds): "
-        read -t 30 -r change_region < /dev/tty || change_region="no"  # Set to "no" if timeout occurs
+        echo_prompt -n "Do you wish to change the region? (y/n, auto-proceeds with 'n' in 30 seconds): "
+        read -t 30 -r change_region < /dev/tty || change_region="n"  # Default to "n" if timeout occurs
 
-        if [[ -z "$change_region" || "$change_region" =~ ^([nN][oO]?|)$ ]]; then
-            change_region="no"
+        # Set change_region to "n" if input is empty or explicitly "n"
+        if [[ -z "$change_region" || "$change_region" =~ ^([nN])$ ]]; then
+            change_region="n"
         fi
 
-
-        if [[ "$change_region" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        # If user chooses "y" to change the region, display available regions
+        if [[ "$change_region" =~ ^([yY])$ ]]; then
             # Retrieve available regions
             echo_info "Fetching available DigitalOcean regions..."
             AVAILABLE_REGIONS=$(doctl kubernetes options regions | awk 'NR>1 {print $1}')
@@ -788,6 +789,8 @@ create_unique_digitalocean_cluster() {
                 echo_error "Failed to retrieve available regions. Please ensure 'doctl' is authenticated and has the necessary permissions."
                 exit 1
             fi
+        fi
+
 
             echo_primary "Available Regions:"
             echo "$AVAILABLE_REGIONS" | nl -w2 -s'. '

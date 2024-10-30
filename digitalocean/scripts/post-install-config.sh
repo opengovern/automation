@@ -91,6 +91,7 @@ usage() {
     echo_prompt "                           1) Install with HTTPS and Hostname (DNS records required after installation)"
     echo_prompt "                           2) Install without HTTPS (DNS records required after installation)"
     echo_prompt "                           3) Minimal Install (Access via public IP)"
+    echo_prompt "                           4) Basic Install (No Ingress; requires kubectl port-forwarding)"
     echo_prompt "                           Default: 1"
     echo_prompt "  --kube-namespace        Specify the Kubernetes namespace. Default: $DEFAULT_KUBE_NAMESPACE"
     echo_prompt "  -h, --help              Display this help message."
@@ -173,7 +174,7 @@ parse_args() {
                         usage
                     fi
                     ;;
-                3)
+                3|4)
                     ENABLE_HTTPS=false
                     # No additional parameters required
                     ;;
@@ -192,7 +193,7 @@ parse_args() {
                 1)
                     ENABLE_HTTPS=true
                     ;;
-                2|3)
+                2|3|4)
                     ENABLE_HTTPS=false
                     ;;
                 *)
@@ -206,7 +207,7 @@ parse_args() {
         INSTALL_TYPE=${INSTALL_TYPE:-1}
 
         # Validate INSTALL_TYPE
-        if ! [[ "$INSTALL_TYPE" =~ ^[1-3]$ ]]; then
+        if ! [[ "$INSTALL_TYPE" =~ ^[1-4]$ ]]; then
             echo_error "Invalid installation type: $INSTALL_TYPE"
             usage
         fi
@@ -216,7 +217,7 @@ parse_args() {
             1)
                 ENABLE_HTTPS=true
                 ;;
-            2|3)
+            2|3|4)
                 ENABLE_HTTPS=false
                 ;;
             *)
@@ -239,7 +240,8 @@ choose_install_type() {
     echo_prompt "1) Install with HTTPS and Hostname (DNS records required after installation)"
     echo_prompt "2) Install without HTTPS (DNS records required after installation)"
     echo_prompt "3) Minimal Install (Access via public IP)"
-    echo_prompt "4) Exit"
+    echo_prompt "4) Basic Install (No Ingress; requires kubectl port-forwarding)"
+    echo_prompt "5) Exit"
 
     while true; do
         echo_prompt -n "Enter the number corresponding to your choice [Default: 1] (Press '?' to view descriptions): "
@@ -252,7 +254,8 @@ choose_install_type() {
             echo_prompt "1) Install with HTTPS and Hostname: Sets up OpenGovernance with HTTPS enabled and associates it with a specified hostname. Requires DNS records to point to the cluster."
             echo_prompt "2) Install without HTTPS: Deploys OpenGovernance without SSL/TLS encryption. DNS records are still required."
             echo_prompt "3) Minimal Install: Provides access to OpenGovernance via the cluster's public IP without setting up a hostname or HTTPS."
-            echo_prompt "4) Exit: Terminates the installation script."
+            echo_prompt "4) Basic Install: Installs OpenGovernance without Ingress, requires kubectl port-forwarding to access the application."
+            echo_prompt "5) Exit: Terminates the installation script."
             echo_prompt ""
             continue  # Re-prompt after displaying descriptions
         fi
@@ -260,14 +263,14 @@ choose_install_type() {
         # If no choice is made, default to 1
         choice=${choice:-1}
 
-        # Ensure the choice is within 1-4
-        if ! [[ "$choice" =~ ^[1-4]$ ]]; then
-            echo_prompt "Invalid option. Please enter a number between 1 and 4, or press '?' for descriptions."
+        # Ensure the choice is within 1-5
+        if ! [[ "$choice" =~ ^[1-5]$ ]]; then
+            echo_prompt "Invalid option. Please enter a number between 1 and 5, or press '?' for descriptions."
             continue
         fi
 
         # Handle exit option
-        if [ "$choice" -eq 4 ]; then
+        if [ "$choice" -eq 5 ]; then
             echo_info "Exiting the script."
             exit 0
         fi
@@ -284,6 +287,10 @@ choose_install_type() {
                 ;;
             3)
                 INSTALL_TYPE=3
+                ENABLE_HTTPS=false
+                ;;
+            4)
+                INSTALL_TYPE=4
                 ENABLE_HTTPS=false
                 ;;
             *)
@@ -314,6 +321,9 @@ get_inline_install_type_description() {
         3)
             echo "Minimal Install (Access via public IP)"
             ;;
+        4)
+            echo "Basic Install (No Ingress; requires kubectl port-forwarding)"
+            ;;
         *)
             echo "Unknown"
             ;;
@@ -326,8 +336,12 @@ configure_email_and_domain() {
     confirm_proceed() {
         echo_prompt ""
         echo_prompt "Please review the entered details:"
-        echo_prompt "  Domain: $DOMAIN"
-        echo_prompt "  Email: $EMAIL"
+        if [ -n "${DOMAIN:-}" ]; then
+            echo_prompt "  Domain: $DOMAIN"
+        fi
+        if [ -n "${EMAIL:-}" ]; then
+            echo_prompt "  Email: $EMAIL"
+        fi
         echo_prompt ""
         echo_prompt "Press Enter to confirm and proceed, or wait 15 seconds to auto-proceed."
         read -t 15 -p "" user_input || true
@@ -436,8 +450,8 @@ configure_email_and_domain() {
                 fi
             fi
             ;;
-        3)
-            # Minimal Install
+        3|4)
+            # Minimal Install or Basic Install
             # No DOMAIN or EMAIL required
             ;;
         *)
@@ -498,6 +512,44 @@ check_prerequisites() {
     echo_info "Prerequisites check completed."
 }
 
+# Function to install OpenGovernance via Helm without Ingress (Basic Install)
+install_opengovernance_no_ingress() {
+    echo_primary "Proceeding with Basic Install of OpenGovernance without Network Ingress. (Expected time: 7-10 minutes)"
+
+    # Add Helm repository and update
+    echo_detail "Adding OpenGovernance Helm repository."
+    helm_run repo add opengovernance https://opengovern.github.io/charts || true
+    helm_run repo update
+
+    # Perform Helm installation
+    echo_detail "Installing OpenGovernance via Helm without Ingress."
+
+    helm_run install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --create-namespace --timeout=15m --wait
+
+    echo_detail "OpenGovernance installation without Ingress completed."
+    echo_detail "Application installed successfully."
+
+    # Check if the application is up
+    check_pods_and_jobs
+
+    # Provide port-forwarding instructions
+    provide_port_forward_instructions
+}
+
+# Function to provide port-forwarding instructions
+provide_port_forward_instructions() {
+    echo_primary "To access OpenGovernance, set up port-forwarding using the following command:"
+    echo_prompt ""
+    echo_prompt "kubectl port-forward -n \"$KUBE_NAMESPACE\" service/nginx-proxy 8080:80"
+    echo_prompt ""
+    echo_prompt "Access OpenGovernance at http://localhost:8080"
+    echo_prompt ""
+    echo_prompt "To sign in, use the following default credentials:"
+    echo_prompt "  Username: admin@opengovernance.io"
+    echo_prompt "  Password: password"
+    echo_prompt ""
+}
+
 # Function to install or upgrade OpenGovernance via Helm
 helm_upgrade_opengovernance() {
     echo_primary "Upgrading or installing OpenGovernance via Helm."
@@ -556,6 +608,10 @@ dex:
   config:
     issuer: http://${INGRESS_EXTERNAL_IP}/dex
 EOF
+            ;;
+        4)
+            # Basic Install (No Ingress)
+            helm_run "$INSTALL_ACTION" "${HELM_PARAMS[@]}"
             ;;
         *)
             echo_error "Unsupported installation type: $INSTALL_TYPE"
@@ -734,6 +790,9 @@ spec:
                   number: 80
 EOF
             ;;
+        *)
+            echo_detail "No Ingress resources needed for this installation type."
+            ;;
     esac
 
     echo_detail "Ingress resources deployed."
@@ -842,28 +901,34 @@ display_completion_message() {
     echo_prompt "-----------------------------------------------------"
     echo_prompt "OpenGovernance has been successfully installed and configured."
     echo_prompt ""
-    if [ "$INSTALL_TYPE" -ne 3 ]; then
-        echo_prompt "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+
+    if [ "$INSTALL_TYPE" -eq 4 ]; then
+        provide_port_forward_instructions
     else
-        echo_prompt "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
-    fi
-    echo_prompt ""
-    echo_prompt "To sign in, use the following default credentials:"
-    echo_prompt "  Username: admin@opengovernance.io"
-    echo_prompt "  Password: password"
-    echo_prompt ""
-
-    # DNS A record setup instructions if domain is configured and not minimal
-    if [ -n "${DOMAIN:-}" ] && [ "$INSTALL_TYPE" -ne 3 ]; then
-        echo_prompt "To ensure proper access to your instance, please verify or set up the following DNS A records:"
+        if [ "$INSTALL_TYPE" -ne 3 ]; then
+            echo_prompt "Access your OpenGovernance instance at: ${protocol}://${DOMAIN}"
+        else
+            echo_prompt "Access your OpenGovernance instance using the public IP: ${INGRESS_EXTERNAL_IP}"
+        fi
         echo_prompt ""
-        echo_prompt "  Domain: ${DOMAIN}"
-        echo_prompt "  Record Type: A"
-        echo_prompt "  Value: ${INGRESS_EXTERNAL_IP}"
+        echo_prompt "To sign in, use the following default credentials:"
+        echo_prompt "  Username: admin@opengovernance.io"
+        echo_prompt "  Password: password"
         echo_prompt ""
-        echo_prompt "Note: It may take some time for DNS changes to propagate."
+
+        # DNS A record setup instructions if domain is configured and not minimal
+        if [ -n "${DOMAIN:-}" ] && [ "$INSTALL_TYPE" -ne 3 ]; then
+            echo_prompt "To ensure proper access to your instance, please verify or set up the following DNS A records:"
+            echo_prompt ""
+            echo_prompt "  Domain: ${DOMAIN}"
+            echo_prompt "  Record Type: A"
+            echo_prompt "  Value: ${INGRESS_EXTERNAL_IP}"
+            echo_prompt ""
+            echo_prompt "Note: It may take some time for DNS changes to propagate."
+        fi
     fi
 
+    echo_prompt ""
     echo_prompt "-----------------------------------------------------"
 }
 
@@ -880,6 +945,12 @@ run_installation_logic() {
 
     # Configure email and domain with validation and confirmation
     configure_email_and_domain
+
+    if [ "$INSTALL_TYPE" -eq 4 ]; then
+        # Basic Install without Ingress
+        install_opengovernance_no_ingress
+        return
+    fi
 
     # Set up Ingress Controller if Minimal Install
     if [ "$INSTALL_TYPE" -eq 3 ]; then
