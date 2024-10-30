@@ -67,7 +67,10 @@ echo_detail() {
 
 # Function to run Helm commands and output to both console and log
 helm_run() {
-    helm --debug "$@" 2>&1 | tee -a "$LOGFILE"
+    # Run helm command with --debug
+    # Redirect stderr (debug output) to log file only
+    # Send stdout to both console and log file
+    helm --debug "$@" 2>>"$LOGFILE" | tee -a "$LOGFILE"
 }
 
 # Function to check if a command exists
