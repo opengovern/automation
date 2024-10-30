@@ -359,9 +359,9 @@ setup_port_forwarding() {
     echo_primary "Setting up port-forwarding to access OpenGovernance locally."
     if kubectl port-forward -n "$KUBE_NAMESPACE" service/nginx-proxy 8080:80 >/dev/null 2>&1 & then
         PORT_FORWARD_PID=$!
-    
+
         sleep 5  # Wait briefly to ensure port-forwarding is established
-    
+
         if ps -p "$PORT_FORWARD_PID" > /dev/null 2>&1; then
             echo_detail "Port-forwarding established successfully (PID: $PORT_FORWARD_PID)."
             echo_prompt "OpenGovernance is accessible at http://localhost:8080"
@@ -433,40 +433,102 @@ detect_kubernetes_provider_and_deploy() {
             ;;
     esac
 
-    # Ask user if they want to deploy to the existing cluster or create a new one
-    echo_primary "Do you want to deploy OpenGovernance to the existing Kubernetes cluster or create a new cluster?"
-    echo_primary "1. Deploy to existing cluster"
-    echo_primary "2. Create a new cluster"
-    echo_primary "3. Exit"
+    # Ask user if they want to use the existing cluster or create a new one
+    echo_primary "A Kubernetes cluster is detected."
+    if [[ "$CURRENT_PROVIDER" == "DigitalOcean" ]]; then
+        # Check if kubectl is connected to the DigitalOcean cluster
+        current_cluster_server=$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"$KUBE_CLUSTER_NAME\")].cluster.server}" 2>/dev/null || true)
 
-    echo_prompt -n "Select an option (1-3): "
-    read -r deploy_choice < /dev/tty
+        doctl_cluster_endpoint=$(doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" --format Endpoint --no-header 2>/dev/null || true)
 
-    case "$deploy_choice" in
-        1)
-            # Check if OpenGovernance is already installed
-            if check_opengovernance_installation; then
-                # If installation exists, proceed to reconfigure or install
+        if [[ "$current_cluster_server" == "$doctl_cluster_endpoint" ]]; then
+            # kubectl is connected to the existing cluster
+            echo_primary "You are currently connected to the existing DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME'."
+            echo_primary "Do you wish to:"
+            echo_primary "1. Use the existing cluster '$KUBE_CLUSTER_NAME'"
+            echo_primary "2. Create a new cluster"
+            echo_primary "3. Exit"
+
+            echo_prompt -n "Select an option (1-3): "
+            read -r deploy_choice < /dev/tty
+
+            case "$deploy_choice" in
+                1)
+                    echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+                    install_opengovernance_with_helm
+                    ;;
+                2)
+                    check_provider_clis
+                    choose_deployment
+                    ;;
+                3)
+                    echo_primary "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid selection. Exiting."
+                    exit 1
+                    ;;
+            esac
+        else
+            # kubectl is not connected to the existing cluster
+            echo_primary "A DigitalOcean Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists but is not currently connected."
+            echo_primary "Do you wish to:"
+            echo_primary "1. Use the existing cluster '$KUBE_CLUSTER_NAME'"
+            echo_primary "2. Create a new cluster"
+            echo_primary "3. Exit"
+
+            echo_prompt -n "Select an option (1-3): "
+            read -r deploy_choice < /dev/tty
+
+            case "$deploy_choice" in
+                1)
+                    echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+                    # Retrieve kubeconfig for the cluster
+                    doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+                    install_opengovernance_with_helm
+                    ;;
+                2)
+                    check_provider_clis
+                    choose_deployment
+                    ;;
+                3)
+                    echo_primary "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid selection. Exiting."
+                    exit 1
+                    ;;
+            esac
+        fi
+    else
+        echo_primary "Do you wish to:"
+        echo_primary "1. Use existing cluster"
+        echo_primary "2. Create a new cluster"
+        echo_primary "3. Exit"
+
+        echo_prompt -n "Select an option (1-3): "
+        read -r deploy_choice < /dev/tty
+
+        case "$deploy_choice" in
+            1)
                 determine_and_deploy_provider "$cluster_info"
-            else
-                # If no installation exists, determine the provider and execute provider-specific scripts
-                determine_and_deploy_provider "$cluster_info"
-            fi
-            ;;
-        2)
-            # Proceed to provider selection for creating a new cluster
-            check_provider_clis
-            choose_deployment
-            ;;
-        3)
-            echo_primary "Exiting."
-            exit 0
-            ;;
-        *)
-            echo_error "Invalid selection. Exiting."
-            exit 1
-            ;;
-    esac
+                ;;
+            2)
+                check_provider_clis
+                choose_deployment
+                ;;
+            3)
+                echo_primary "Exiting."
+                exit 0
+                ;;
+            *)
+                echo_error "Invalid selection. Exiting."
+                exit 1
+                ;;
+        esac
+    fi
 }
 
 # Function to determine provider from cluster_info and deploy accordingly
@@ -619,11 +681,72 @@ deploy_to_digitalocean() {
 
     # Check if the cluster exists using 'doctl kubernetes cluster get'
     if doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" >/dev/null 2>&1; then
-        echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
-        # Retrieve kubeconfig for the cluster
-        doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
-        # Proceed to install OpenGovernance with Helm
-        install_opengovernance_with_helm
+        # Cluster exists, determine if kubectl is connected to it
+        current_cluster_server=$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"$KUBE_CLUSTER_NAME\")].cluster.server}" 2>/dev/null || true)
+
+        doctl_cluster_endpoint=$(doctl kubernetes cluster get "$KUBE_CLUSTER_NAME" --format Endpoint --no-header 2>/dev/null || true)
+
+        if [[ "$current_cluster_server" == "$doctl_cluster_endpoint" ]]; then
+            # kubectl is connected to the existing cluster
+            echo_primary "You are currently connected to the existing DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME'."
+            echo_primary "Do you wish to:"
+            echo_primary "1. Use the existing cluster '$KUBE_CLUSTER_NAME'"
+            echo_primary "2. Create a new cluster"
+            echo_primary "3. Exit"
+
+            echo_prompt -n "Select an option (1-3): "
+            read -r do_option < /dev/tty
+
+            case "$do_option" in
+                1)
+                    echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+                    install_opengovernance_with_helm
+                    ;;
+                2)
+                    # Prompt user for new cluster name with validation
+                    create_unique_digitalocean_cluster
+                    ;;
+                3)
+                    echo_primary "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid selection. Exiting."
+                    exit 1
+                    ;;
+            esac
+        else
+            # kubectl is not connected to the existing cluster
+            echo_primary "A DigitalOcean Kubernetes cluster named '$KUBE_CLUSTER_NAME' already exists but is not currently connected."
+            echo_primary "Do you wish to:"
+            echo_primary "1. Use the existing cluster '$KUBE_CLUSTER_NAME'"
+            echo_primary "2. Create a new cluster"
+            echo_primary "3. Exit"
+
+            echo_prompt -n "Select an option (1-3): "
+            read -r do_option < /dev/tty
+
+            case "$do_option" in
+                1)
+                    echo_primary "Using existing cluster '$KUBE_CLUSTER_NAME'."
+                    # Retrieve kubeconfig for the cluster
+                    doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"
+                    install_opengovernance_with_helm
+                    ;;
+                2)
+                    # Prompt user for new cluster name with validation
+                    create_unique_digitalocean_cluster
+                    ;;
+                3)
+                    echo_primary "Exiting."
+                    exit 0
+                    ;;
+                *)
+                    echo_error "Invalid selection. Exiting."
+                    exit 1
+                    ;;
+            esac
+        fi
     else
         # Cluster does not exist, prompt user to create or exit
         echo_primary "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' does not exist."
@@ -707,7 +830,7 @@ create_unique_digitalocean_cluster() {
             continue  # Loop back to the start
         fi
 
-        # Optional: Validate cluster name format
+        # Optional: Validate cluster name format (e.g., only lowercase letters, numbers, and hyphens)
         if [[ ! "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
             echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
             continue
@@ -777,7 +900,7 @@ create_unique_digitalocean_cluster() {
         # Exit the loop after successful creation
         break
     done
-}
+}  # <-- Properly closed the 'while' loop and the function
 
 # -----------------------------
 # Script Initialization
