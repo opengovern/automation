@@ -212,18 +212,15 @@ function parse_args() {
         ;;
       2)
         # Install without HTTPS
-        if [ "$SILENT_INSTALL" = true ]; then
-          if [ -z "$DOMAIN" ]; then
-            echo_error "Installation type 2 requires a DOMAIN in silent mode."
-            usage
-          else
-            validate_domain
-          fi
+        if [ "$SILENT_INSTALL" = true ] && [ -z "$DOMAIN" ]; then
+          echo_error "Installation type 2 requires a DOMAIN in silent mode."
+          usage
         fi
         ENABLE_HTTPS=false
         ;;
       3)
         # Minimal Install
+        # No DOMAIN or EMAIL required
         ENABLE_HTTPS=false
         ;;
       *)
@@ -233,7 +230,6 @@ function parse_args() {
     esac
   fi
 }
-
 # Function to choose installation type in interactive mode with "?" capability
 function choose_install_type() {
   echo_prompt ""
@@ -334,31 +330,29 @@ function check_opengovernance_installation() {
 
     if [ -z "$unhealthy_pods" ]; then
       echo_primary "OpenGovernance is already installed and healthy."
-      exit 0
-    else
-      echo_info "OpenGovernance pods are not all healthy. Waiting up to 3 minutes for them to become ready."
 
-      local attempts=0
-      local max_attempts=6  # 6 attempts * 30 seconds = 3 minutes
-      local sleep_time=30
-
-      while [ $attempts -lt $max_attempts ]; do
-        unhealthy_pods=$(kubectl get pods -n "$KUBE_NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
-        if [ -z "$unhealthy_pods" ]; then
-          echo_primary "OpenGovernance pods are now healthy."
-          return 0
+      # Prompt the user to decide whether to reconfigure
+      if [ "$SILENT_INSTALL" = true ]; then
+        # In silent mode, proceed to reconfigure
+        echo_info "Proceeding to reconfigure OpenGovernance as per provided parameters."
+        return 1  # Return 1 to indicate that installation should proceed
+      else
+        echo_prompt -n "Do you want to reconfigure OpenGovernance with the new parameters? (yes/no): "
+        read RECONFIGURE < /dev/tty
+        if [[ "$RECONFIGURE" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+          return 1  # Return 1 to indicate that installation should proceed
+        else
+          echo_primary "Exiting the script without making changes."
+          exit 0
         fi
-        attempts=$((attempts + 1))
-        echo_detail "Waiting for OpenGovernance pods to become healthy... ($attempts/$max_attempts)"
-        sleep $sleep_time
-      done
-
-      echo_error "OpenGovernance pods are not healthy after waiting for 3 minutes."
-      exit 1
+      fi
+    else
+      echo_info "OpenGovernance pods are not all healthy. Proceeding to reconfigure."
+      return 1  # Return 1 to indicate that installation should proceed
     fi
   else
     echo_info "OpenGovernance is not installed."
-    return 1
+    return 1  # Return 1 to indicate that installation should proceed
   fi
 }
 
@@ -830,9 +824,8 @@ function restart_pods() {
   echo_detail "Pods restarted successfully."
 }
 
-# Function to perform Helm upgrade with appropriate parameters
 function helm_upgrade_opengovernance() {
-  echo_primary "Upgrading OpenGovernance via Helm with appropriate parameters."
+  echo_primary "Upgrading or installing OpenGovernance via Helm with appropriate parameters."
 
   # Add Helm repository and update
   echo_detail "Adding OpenGovernance Helm repository."
@@ -845,7 +838,7 @@ function helm_upgrade_opengovernance() {
   case $INSTALL_TYPE in
     1)
       # Install with HTTPS and Hostname
-      helm_quiet upgrade opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --install --timeout=10m --wait \
+      helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
         -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -856,7 +849,7 @@ EOF
       ;;
     2)
       # Install without HTTPS
-      helm_quiet upgrade opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --install --timeout=10m --wait \
+      helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
         -f - <<EOF
 global:
   domain: ${DOMAIN}
@@ -867,7 +860,7 @@ EOF
       ;;
     3)
       # Minimal Install
-      helm_quiet upgrade opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --install --timeout=10m --wait \
+      helm_quiet upgrade --install opengovernance opengovernance/opengovernance -n "$KUBE_NAMESPACE" --timeout=10m --wait \
         -f - <<EOF
 global:
   domain: ${INGRESS_EXTERNAL_IP}
@@ -927,50 +920,53 @@ function display_completion_message() {
 # Function to run installation logic
 function run_installation_logic() {
   # Check if OpenGovernance is installed
-  if ! check_opengovernance_installation; then
+  if check_opengovernance_installation; then
     # OpenGovernance is not installed, proceed with installation
     echo_info "OpenGovernance is not installed. Proceeding with installation."
-
-    # If not in silent mode, prompt for installation type
-    if [ "$SILENT_INSTALL" = false ]; then
-      echo_detail "Starting interactive installation type selection..."
-      choose_install_type
-    fi
-
-    # Configure email and domain based on installation type
-    configure_email_and_domain
-
-    # If installation type requires Ingress external IP (Minimal Install)
-    if [ "$INSTALL_TYPE" -eq 3 ]; then
-      # Set up Ingress Controller to get the external IP
-      setup_ingress_controller
-    fi
-
-    # Run Helm upgrade with appropriate parameters
-    helm_upgrade_opengovernance
-
-    # Wait for pods to be ready
-    check_pods_and_jobs
-
-    # Set up Ingress Controller (if not already set up)
-    if [ "$INSTALL_TYPE" -ne 3 ]; then
-      setup_ingress_controller
-    fi
-
-    # Deploy Ingress resources
-    deploy_ingress_resources
-
-    # If HTTPS is enabled, set up Cert-Manager and Issuer
-    if [ "$ENABLE_HTTPS" = true ]; then
-      setup_cert_manager_and_issuer
-    fi
-
-    # Restart Pods
-    restart_pods
-
-    # Display completion message
-    display_completion_message
+  else
+    # OpenGovernance is installed, proceed with reconfiguration
+    echo_info "Proceeding to reconfigure OpenGovernance."
   fi
+
+  # If not in silent mode, prompt for installation type
+  if [ "$SILENT_INSTALL" = false ]; then
+    echo_detail "Starting interactive installation type selection..."
+    choose_install_type
+  fi
+
+  # Configure email and domain based on installation type
+  configure_email_and_domain
+
+  # If installation type requires Ingress external IP (Minimal Install)
+  if [ "$INSTALL_TYPE" -eq 3 ]; then
+    # Set up Ingress Controller to get the external IP
+    setup_ingress_controller
+  fi
+
+  # Run Helm upgrade with appropriate parameters
+  helm_upgrade_opengovernance
+
+  # Wait for pods to be ready
+  check_pods_and_jobs
+
+  # Set up Ingress Controller (if not already set up)
+  if [ "$INSTALL_TYPE" -ne 3 ]; then
+    setup_ingress_controller
+  fi
+
+  # Deploy Ingress resources
+  deploy_ingress_resources
+
+  # If HTTPS is enabled, set up Cert-Manager and Issuer
+  if [ "$ENABLE_HTTPS" = true ]; then
+    setup_cert_manager_and_issuer
+  fi
+
+  # Restart Pods
+  restart_pods
+
+  # Display completion message
+  display_completion_message
 }
 
 # -----------------------------
