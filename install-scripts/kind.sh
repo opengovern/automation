@@ -62,7 +62,7 @@ echo_error() {
     printf "%s [ERROR] %s\n" "$timestamp" "$message" >> "$LOGFILE"
 }
 
-# Function to run helm commands with a timeout of 15 minutes in debug mode
+# Function to run helm install commands with a timeout of 15 minutes in debug mode
 helm_install_with_timeout() {
     helm install "$@" --debug --timeout=15m 2>&1 | tee -a "$DEBUG_LOGFILE" >> "$LOGFILE"
 }
@@ -78,23 +78,22 @@ check_command() {
     fi
 }
 
-
 # Function to ensure Helm repository is added and updated
 ensure_helm_repo() {
     REPO_NAME="opengovernance"
     REPO_URL="https://opengovern.github.io/charts/"
 
     if ! helm repo list | grep -q "^$REPO_NAME "; then
-        echo_info "Adding Helm repository '$REPO_NAME'."
-        helm repo add "$REPO_NAME" "$REPO_URL" || { echo_error "Failed to add Helm repository '$REPO_NAME'."; exit 1; }
+        # Suppress output from ensure_helm_repo
+        helm repo add "$REPO_NAME" "$REPO_URL" >/dev/null 2>&1 || { echo_error "Failed to add Helm repository '$REPO_NAME'."; exit 1; }
     else
-        echo_info "Helm repository '$REPO_NAME' already exists."
+        # Suppress output from ensure_helm_repo
+        :
     fi
 
-    echo_info "Updating Helm repositories."
-    helm repo update || { echo_error "Failed to update Helm repositories."; exit 1; }
+    # Suppress output from ensure_helm_repo
+    helm repo update >/dev/null 2>&1 || { echo_error "Failed to update Helm repositories."; exit 1; }
 }
-
 
 # Function to check prerequisites
 check_prerequisites() {
@@ -108,11 +107,146 @@ check_prerequisites() {
         check_command "$cmd"
     done
 
-
     # Ensure Helm repository is added and updated
     ensure_helm_repo
 
     echo_info "Checking Prerequisites...Completed"
+}
+
+# Function to list existing Kind clusters
+list_kind_clusters() {
+    kind get clusters
+}
+
+# Function to check if a Kind cluster exists
+kind_cluster_exists() {
+    kind get clusters | grep -qw "$1"
+}
+
+# Function to create a Kind cluster
+create_kind_cluster() {
+    cluster_name="$1"
+    echo_info "Creating Kind Cluster $cluster_name"
+    kind create cluster --name "$cluster_name" || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
+    kubectl config use-context "kind-$cluster_name" || { echo_error "Failed to set kubectl context to 'kind-$cluster_name'."; exit 1; }
+}
+
+# Function to prompt the user for selecting an existing cluster or creating a new one
+select_kind_cluster() {
+    existing_clusters=$(list_kind_clusters)
+    cluster_count=$(echo "$existing_clusters" | wc -l | tr -d ' ')
+
+    if [ "$cluster_count" -eq 0 ]; then
+        # No existing clusters, create a new one
+        echo_info "No existing Kind clusters found. Creating a new Kind cluster named '$NAMESPACE'."
+        create_kind_cluster "$NAMESPACE"
+    else
+        # Existing clusters found, prompt user
+        echo_prompt "Existing Kind clusters detected:"
+        echo "$existing_clusters" > /dev/tty
+        echo_prompt "Do you want to use an existing Kind cluster? (y/N): "
+
+        read user_input
+
+        case "$user_input" in
+            [Yy]* )
+                # Prompt user to select which cluster to use
+                echo_prompt "Enter the name of the Kind cluster you want to use:"
+                read selected_cluster
+
+                if kind_cluster_exists "$selected_cluster"; then
+                    echo_info "Using existing Kind cluster '$selected_cluster'."
+                    kubectl config use-context "kind-$selected_cluster" || { echo_error "Failed to set kubectl context to 'kind-$selected_cluster'."; exit 1; }
+                else
+                    echo_error "Kind cluster '$selected_cluster' does not exist."
+                    exit 1
+                fi
+                ;;
+            * )
+                # Create a new cluster
+                echo_info "Creating a new Kind cluster named '$NAMESPACE'."
+                create_kind_cluster "$NAMESPACE"
+                ;;
+        esac
+    fi
+}
+
+# -----------------------------
+# Readiness Check Functions
+# -----------------------------
+
+check_opengovernance_readiness() {
+    # Check the readiness of all pods in the specified namespace
+    not_ready_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
+
+    if [ -z "$not_ready_pods" ]; then
+        APP_HEALTHY="true"
+    else
+        echo_error "Some OpenGovernance pods are not healthy."
+        kubectl get pods -n "$NAMESPACE" >> "$LOGFILE" 2>&1
+        APP_HEALTHY="false"
+    fi
+}
+
+# Function to check pods and migrator jobs
+check_pods_and_jobs() {
+    attempts=0
+    max_attempts=24  # 24 attempts * 30 seconds = 12 minutes
+    sleep_time=30
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        check_opengovernance_readiness
+        if [ "${APP_HEALTHY:-false}" = "true" ]; then
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        echo_info "Waiting for pods to become ready... ($attempts/$max_attempts)"
+        sleep "$sleep_time"
+    done
+
+    echo_error "OpenGovernance did not become ready within expected time."
+    exit 1
+}
+
+# -----------------------------
+# Port-Forwarding Function
+# -----------------------------
+
+basic_install_with_port_forwarding() {
+    echo_info "Setting up port-forwarding to access OpenGovernance locally."
+
+    # Start port-forwarding in the background
+    kubectl port-forward -n "$NAMESPACE" service/nginx-proxy 8080:80 >> "$LOGFILE" 2>&1 &
+    PORT_FORWARD_PID=$!
+
+    # Give port-forwarding some time to establish
+    sleep 5
+
+    # Check if port-forwarding is still running
+    if kill -0 "$PORT_FORWARD_PID" >/dev/null 2>&1; then
+        echo_info "Port-forwarding established successfully."
+        echo_prompt "OpenGovernance is accessible at http://localhost:8080"
+        echo_prompt "To sign in, use the following default credentials:"
+        echo_prompt "  Username: admin@opengovernance.io"
+        echo_prompt "  Password: password"
+        echo_prompt "You can terminate port-forwarding by killing the background process (PID: $PORT_FORWARD_PID)."
+    else
+        echo_primary ""
+        echo_primary "========================================="
+        echo_primary "Port-Forwarding Instructions"
+        echo_primary "========================================="
+        echo_primary "OpenGovernance is running but not accessible via Ingress."
+        echo_primary "You can access it using port-forwarding as follows:"
+        echo_primary ""
+        echo_primary "kubectl port-forward -n \"$NAMESPACE\" service/nginx-proxy 8080:80"
+        echo_primary ""
+        echo_primary "Then, access it at http://localhost:8080"
+        echo_primary ""
+        echo_primary "To sign in, use the following default credentials:"
+        echo_primary "  Username: admin@opengovernance.io"
+        echo_primary "  Password: password"
+        echo_primary ""
+    fi
 }
 
 # -----------------------------
@@ -125,25 +259,18 @@ echo_primary "Starting OpenGovernance deployment script."
 # Check prerequisites
 check_prerequisites
 
-# Step 1: Create a Kind cluster named 'opengovernance'
-echo_info "Creating Kind cluster named '$NAMESPACE'."
-kind create cluster --name "$NAMESPACE" || { echo_error "Failed to create Kind cluster '$NAMESPACE'."; exit 1; }
+# Handle Kind clusters
+select_kind_cluster
 
-# Step 2: Tell kubectl to use the 'opengovernance' context
-CONTEXT_NAME="kind-$NAMESPACE"
-echo_info "Setting kubectl context to '$CONTEXT_NAME'."
-kubectl config use-context "$CONTEXT_NAME" || { echo_error "Failed to set kubectl context to '$CONTEXT_NAME'."; exit 1; }
-
-# Step 3: Add the Helm repository and update
-echo_info "Adding Helm repository 'opengovernance'."
-helm repo add opengovernance https://opengovern.github.io/charts/ || { echo_error "Failed to add Helm repository 'opengovernance'."; exit 1; }
-
-echo_info "Updating Helm repositories."
-helm repo update || { echo_error "Failed to update Helm repositories."; exit 1; }
-
-# Step 4: Install the 'opengovernance' chart into the specified namespace
-echo_info "Installing 'opengovernance' Helm chart into namespace '$NAMESPACE'."
+# Step 1: Install the 'opengovernance' chart into the specified namespace
+echo_primary "Installing 'opengovernance' Helm chart into namespace '$NAMESPACE'."
 helm_install_with_timeout -n "$NAMESPACE" opengovernance opengovernance/opengovernance --create-namespace || { echo_error "Helm installation failed."; exit 1; }
+
+# Step 2: Check if the application is ready
+check_pods_and_jobs
+
+# Step 3: Set up port-forwarding after successful Helm install and readiness
+basic_install_with_port_forwarding
 
 # Completion message
 echo_primary "OpenGovernance deployment completed successfully."
