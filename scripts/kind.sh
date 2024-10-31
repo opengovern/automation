@@ -112,15 +112,13 @@ create_kind_cluster() {
     cluster_name="$1"
     echo_info "Creating a new Kind Cluster '$cluster_name' with 8GB memory limit"
 
-    # Define the Kind configuration with memory limits
+    # Define the Kind configuration without extraResources
     kind_config_file="$HOME/kind-config.yaml"
     cat <<EOF > "$kind_config_file"
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
-    extraResources:
-      - memory: "8Gi"
 EOF
 
     # Create the cluster using the configuration file
