@@ -403,6 +403,8 @@ display_option_details() {
     esac
 }
 
+
+
 # Function to deploy to a specific platform
 deploy_to_platform() {
     local platform="$1"
@@ -410,7 +412,7 @@ deploy_to_platform() {
         "AWS")
             echo_primary "Deploying OpenGovernance to AWS."
             ensure_cli_installed "aws" "AWS CLI"
-            deploy_via_curl "aws"
+            execute_aws_deployment
             ;;
         "Azure")
             echo_primary "Deploying OpenGovernance to Azure."
@@ -582,6 +584,15 @@ choose_deployment() {
                 curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
 
                 echo_primary "Post-install configuration for DigitalOcean executed successfully."
+                break
+            elif [[ "$CURRENT_PROVIDER" == "AWS" ]]; then
+                echo_primary "Detected that the current Kubernetes Cluster is hosted on AWS (EKS)."
+                echo_primary "Fetching and executing the AWS post-install configuration script."
+
+                # Fetch and execute the aws.sh script
+                curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/aws/scripts/aws.sh | bash
+
+                echo_primary "AWS post-install configuration executed successfully."
                 break
             else
                 # For non-DigitalOcean clusters, proceed with Helm installation
