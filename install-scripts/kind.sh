@@ -97,8 +97,8 @@ ensure_helm_repo() {
 
 # Function to check prerequisites
 check_prerequisites() {
-    # List of required commands
-    REQUIRED_COMMANDS="kind kubectl helm yq"
+    # List of required commands (removed 'yq')
+    REQUIRED_COMMANDS="kind kubectl helm"
 
     echo_info "Checking for required tools..."
 
@@ -139,7 +139,7 @@ select_kind_cluster() {
     if [ "$cluster_count" -eq 0 ]; then
         # No existing clusters, create a new one
         echo_info "No existing Kind clusters found. Creating a new Kind cluster named '$NAMESPACE'."
-        create_kind_cluster "$NAMESPACE"
+        run_with_timer create_kind_cluster "$NAMESPACE"
     else
         # Existing clusters found, prompt user
         echo_prompt "Existing Kind clusters detected:"
@@ -165,7 +165,7 @@ select_kind_cluster() {
             * )
                 # Create a new cluster
                 echo_info "Creating a new Kind cluster named '$NAMESPACE'."
-                create_kind_cluster "$NAMESPACE"
+                run_with_timer create_kind_cluster "$NAMESPACE"
                 ;;
         esac
     fi
@@ -206,6 +206,26 @@ check_pods_and_jobs() {
 
     echo_error "OpenGovernance did not become ready within expected time."
     exit 1
+}
+
+# -----------------------------
+# Timer Function
+# -----------------------------
+
+run_with_timer() {
+    start_time=$(date +%s)  # Start time in seconds
+
+    # Execute the command passed as arguments
+    "$@"
+
+    end_time=$(date +%s)  # End time in seconds
+    elapsed_time=$((end_time - start_time))  # Calculate elapsed time in seconds
+
+    # Convert elapsed time to minutes and seconds
+    mins=$((elapsed_time / 60))
+    secs=$((elapsed_time % 60))
+
+    echo "Completed in ${mins} mins ${secs} secs"
 }
 
 # -----------------------------
@@ -262,9 +282,9 @@ check_prerequisites
 # Handle Kind clusters
 select_kind_cluster
 
-# Step 1: Install the 'opengovernance' chart into the specified namespace
+# Step 1: Install the 'opengovernance' chart into the specified namespace with timing
 echo_primary "Installing 'opengovernance' Helm chart into namespace '$NAMESPACE'."
-helm_install_with_timeout -n "$NAMESPACE" opengovernance opengovernance/opengovernance --create-namespace || { echo_error "Helm installation failed."; exit 1; }
+run_with_timer helm_install_with_timeout -n "$NAMESPACE" opengovernance opengovernance/opengovernance --create-namespace || { echo_error "Helm installation failed."; exit 1; }
 
 # Step 2: Check if the application is ready
 check_pods_and_jobs
