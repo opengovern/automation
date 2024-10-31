@@ -108,15 +108,6 @@ ensure_helm_repo() {
     helm repo update || { echo_error "Failed to update Helm repositories."; exit 1; }
 }
 
-# Function to check if kubectl is connected to a cluster
-check_kubectl_connection() {
-    if ! kubectl cluster-info >/dev/null 2>&1; then
-        echo_error "kubectl is not connected to a Kubernetes cluster."
-        exit 1
-    else
-        echo_info "kubectl is connected to the Kubernetes cluster."
-    fi
-}
 
 # Function to check prerequisites
 check_prerequisites() {
@@ -138,9 +129,6 @@ check_prerequisites() {
 
     # Ensure Helm repository is added and updated
     ensure_helm_repo
-
-    # Check if kubectl is connected to a cluster
-    check_kubectl_connection
 
     echo_info "Checking Prerequisites...Completed"
 }
