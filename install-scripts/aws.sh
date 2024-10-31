@@ -6,7 +6,6 @@ set -eu
 # -----------------------------
 # Configuration Variables
 # -----------------------------
-
 # Repository URLs and Directories
 REPO_URL="https://github.com/opengovern/deploy-opengovernance.git"
 REPO_DIR="$HOME/.opengovernance/deploy-terraform"
@@ -24,15 +23,16 @@ NAMESPACE="opengovernance"  # Default namespace
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-DEBUG_MODE=false  # Set to true to enable debug mode
+DEBUG_MODE=true  # Helm operates in debug mode
 LOGFILE="$HOME/.opengovernance/install.log"
+DEBUG_LOGFILE="$HOME/.opengovernance/helm_debug.log"
 
-# Create the log directory if it doesn't exist
+# Create the log directories and files if they don't exist
 LOGDIR="$(dirname "$LOGFILE")"
+DEBUG_LOGDIR="$(dirname "$DEBUG_LOGFILE")"
 mkdir -p "$LOGDIR" || { echo "Failed to create log directory at $LOGDIR."; exit 1; }
-
-# Initialize the log file
-touch "$LOGFILE" || { echo "Failed to create log file at $LOGFILE."; exit 1; }
+mkdir -p "$DEBUG_LOGDIR" || { echo "Failed to create debug log directory at $DEBUG_LOGDIR."; exit 1; }
+touch "$LOGFILE" "$DEBUG_LOGFILE" || { echo "Failed to create log files."; exit 1; }
 
 # -----------------------------
 # Trap for Unexpected Exits
@@ -90,9 +90,9 @@ usage() {
     exit 1
 }
 
-# Function to run helm commands with a timeout of 15 minutes
+# Function to run helm commands with a timeout of 15 minutes in debug mode
 helm_install_with_timeout() {
-    helm install "$@" --timeout=15m >> "$LOGFILE" 2>&1
+    helm install "$@" --debug --timeout=15m 2>&1 | tee -a "$DEBUG_LOGFILE" >> "$LOGFILE"
 }
 
 # Function to check if a command exists
@@ -189,7 +189,7 @@ is_cluster_suitable() {
             return 1
         fi
 
-        if helm list -n "$NAMESPACE" | grep -q "^opengovernance\b"; then
+        if helm list -n "$NAMESPACE" | grep -q "^$HELM_RELEASE\b"; then
             echo_info "OpenGovernance is already installed in namespace '$NAMESPACE'."
             CLUSTER_SUITABLE="false"
             return 1
@@ -225,7 +225,7 @@ check_prerequisites() {
 
     # Ensure Helm repository is added and updated
     ensure_helm_repo
-    
+
     # Check if kubectl is connected to a cluster
     if is_kubectl_active; then
         # Determine if there is a suitable cluster
@@ -247,7 +247,7 @@ check_prerequisites() {
     echo_info "Checking Prerequisites...Completed"
 }
 
-# Function to ensure the Helm repository is added and updated
+# Function to ensure the Helm repository is added and updated in debug mode
 ensure_helm_repo() {
     # Check if Helm is installed
     if command -v helm >/dev/null 2>&1; then
@@ -257,14 +257,14 @@ ensure_helm_repo() {
         if helm repo list | awk '{print $1}' | grep -q "^$REPO_NAME$"; then
             echo_info "Helm repository '$REPO_NAME' already exists."
         else
-            # Add the repository
-            echo_info "Adding Helm repository '$REPO_NAME'."
-            helm repo add "$REPO_NAME" "$HELM_REPO_URL" >> "$LOGFILE" 2>&1 || { echo_error "Failed to add Helm repository '$REPO_NAME'."; exit 1; }
+            # Add the repository with debug
+            echo_info "Adding Helm repository '$REPO_NAME' in debug mode."
+            helm repo add "$REPO_NAME" "$HELM_REPO_URL" --debug 2>&1 | tee -a "$DEBUG_LOGFILE" >> "$LOGFILE" || { echo_error "Failed to add Helm repository '$REPO_NAME'."; exit 1; }
         fi
 
-        # Update the Helm repositories
-        echo_info "Updating Helm repositories."
-        helm repo update >> "$LOGFILE" 2>&1 || { echo_error "Failed to update Helm repositories."; exit 1; }
+        # Update the Helm repositories with debug
+        echo_info "Updating Helm repositories in debug mode."
+        helm repo update --debug 2>&1 | tee -a "$DEBUG_LOGFILE" >> "$LOGFILE" || { echo_error "Failed to update Helm repositories."; exit 1; }
     else
         echo_error "Helm is not installed."
         exit 1
@@ -299,6 +299,7 @@ display_cluster_metadata() {
     echo_primary "-----------------"
 }
 
+# Function to deploy infrastructure
 deploy_infrastructure() {
     # Construct the deployment message with REGION if it's set
     if [ -n "$REGION" ]; then
@@ -448,10 +449,6 @@ deploy_infrastructure() {
     fi
     echo_info "kubectl configured successfully."
 }
-
-
-
-
 
 # -----------------------------
 # Application Installation
@@ -660,6 +657,115 @@ basic_install_with_port_forwarding() {
 }
 
 # -----------------------------
+# AWS Post-Deployment Function
+# -----------------------------
+
+# Function to execute AWS-specific post-deployment script
+execute_aws_post_deployment() {
+    echo_primary "Fetching and executing the AWS post-deployment configuration script."
+    curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/aws/scripts/aws.sh | bash
+    if [[ $? -eq 0 ]]; then
+        echo_primary "AWS post-deployment configuration executed successfully."
+    else
+        echo_error "Failed to execute AWS post-deployment configuration."
+        exit 1
+    fi
+}
+
+# -----------------------------
+# Function to deploy to a specific platform
+# -----------------------------
+
+deploy_to_platform() {
+    local platform="$1"
+    case "$platform" in
+        "AWS")
+            echo_primary "Deploying OpenGovernance to AWS."
+            check_command "aws"  # Ensure AWS CLI is installed
+            deploy_infrastructure
+            install_application
+            execute_aws_post_deployment
+            ;;
+        "DigitalOcean")
+            echo_primary "Deploying OpenGovernance to DigitalOcean."
+            # Implement DigitalOcean deployment steps here
+            # For example:
+            # deploy_to_digitalocean
+            echo_error "DigitalOcean deployment not implemented in this script."
+            exit 1
+            ;;
+        # Add cases for other platforms like Azure, GCP as needed
+        *)
+            echo_error "Unsupported platform: $platform"
+            exit 1
+            ;;
+    esac
+}
+
+# -----------------------------
+# Read User Input for Deployment Platform
+# -----------------------------
+
+choose_deployment() {
+    while true; do
+        echo_primary "Where would you like to deploy OpenGovernance to?"
+
+        # Initialize options array
+        OPTIONS=()
+        option_number=1
+
+        # AWS
+        echo_primary "$option_number. AWS (EKS)"
+        OPTIONS[$option_number]="AWS"
+        ((option_number++))
+
+        # DigitalOcean
+        echo_primary "$option_number. DigitalOcean"
+        OPTIONS[$option_number]="DigitalOcean"
+        ((option_number++))
+
+        # Add more platforms as needed
+
+        # Exit
+        echo_primary "$option_number. Exit"
+        OPTIONS[$option_number]="Exit"
+        ((option_number++))
+
+        echo_primary "Press 's' to view cluster and provider details"
+
+        echo_prompt -n "Select an option (1-$((option_number-1))) or press 's' to view details: "
+
+        read -r user_input < /dev/tty
+
+        if [[ "$user_input" =~ ^[sS]$ ]]; then
+            display_cluster_metadata
+            continue
+        fi
+
+        if ! [[ "$user_input" =~ ^[0-9]+$ ]]; then
+            echo_error "Invalid input. Please enter a number between 1 and $((option_number-1))."
+            continue
+        fi
+
+        if (( user_input < 1 || user_input >= option_number )); then
+            echo_error "Invalid choice. Please select a number between 1 and $((option_number-1))."
+            continue
+        fi
+
+        selected_option="${OPTIONS[$user_input]}"
+
+        if [[ "$selected_option" == "Exit" ]]; then
+            echo_primary "Exiting."
+            exit 0
+        else
+            # Deploy to the selected platform
+            deploy_to_platform "$selected_option"
+            break
+        fi
+    done
+}
+
+# -----------------------------
 # Main Execution Flow
 # -----------------------------
 
@@ -723,10 +829,6 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
-
-# [Continue with the rest of the script...]
-
-
 
 # Step 1: Check for required tools and prerequisites
 echo_info "Checking for required tools and prerequisites..."
@@ -921,4 +1023,8 @@ elif [ "$INSTALL_TYPE" = "2" ]; then
     echo_primary ""
 fi
 
+# Step 8: Choose Deployment Platform
+choose_deployment
+
+echo_primary "OpenGovernance deployment script completed successfully."
 exit 0
