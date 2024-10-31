@@ -84,6 +84,7 @@ usage() {
     echo_primary "                            Types:"
     echo_primary "                              1 - Install with HTTPS (requires a domain name)"
     echo_primary "                              2 - Basic Install (No Ingress, use port-forwarding)"
+    echo_primary "  -r, --region <region>    Specify the AWS region to deploy the infrastructure (e.g., us-west-2)."
     echo_primary "  --debug                  Enable debug mode for detailed output."
     echo_primary "  -h, --help               Display this help message."
     exit 1
@@ -298,17 +299,31 @@ display_cluster_metadata() {
     echo_primary "-----------------"
 }
 
-# -----------------------------
-# Infrastructure Setup
-# -----------------------------
-
 deploy_infrastructure() {
-    echo_info "Deploying infrastructure. This step may take 10-15 minutes..."
+    # Construct the deployment message with REGION if it's set
+    if [ -n "$REGION" ]; then
+        echo_primary "Deploying infrastructure in region '$REGION'. This step may take 10-15 minutes..."
+        export AWS_REGION="$REGION"
+    else
+        echo_primary "Deploying infrastructure. This step may take 10-15 minutes..."
+    fi
+
     echo_info "Ensuring infrastructure directory exists: $INFRA_DIR"
     mkdir -p "$INFRA_DIR" || { echo_error "Failed to create infrastructure directory at $INFRA_DIR."; exit 1; }
 
     echo_info "Navigating to infrastructure directory: $INFRA_DIR"
     cd "$INFRA_DIR" || { echo_error "Failed to navigate to $INFRA_DIR"; exit 1; }
+
+    # Set variables for plan and apply
+    TF_VAR_REGION_OPTION=""
+    
+    # Conditionally add the region variable if REGION is set
+    if [ -n "$REGION" ]; then
+        TF_VAR_REGION_OPTION="-var 'region=$REGION'"
+    fi
+
+    # Combine variable options
+    TF_VARS_OPTIONS="$TF_VAR_REGION_OPTION"
 
     # Check for existing infrastructure
     if $INFRA_BINARY state list >> "$LOGFILE" 2>&1; then
@@ -319,7 +334,8 @@ deploy_infrastructure() {
             case "$USER_CHOICE" in
                 c|C)
                     echo_info "Destroying existing infrastructure..."
-                    $INFRA_BINARY destroy -auto-approve >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY destroy failed."; exit 1; }
+                    # Update destroy command to include variable options
+                    eval "$INFRA_BINARY destroy $TF_VARS_OPTIONS -auto-approve" >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY destroy failed."; exit 1; }
                     ;;
                 u|U)
                     echo_info "Using existing infrastructure. Configuring kubectl..."
@@ -341,21 +357,22 @@ deploy_infrastructure() {
     $INFRA_BINARY init >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY init failed."; exit 1; }
 
     echo_info "Planning $INFRA_BINARY deployment..."
-    $INFRA_BINARY plan -out=plan.tfplan >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY plan failed."; exit 1; }
+    # Use eval to properly handle variables with quotes
+    eval "$INFRA_BINARY plan $TF_VARS_OPTIONS -out=plan.tfplan" >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY plan failed."; exit 1; }
 
     echo_info "Generating JSON representation of the plan..."
     $INFRA_BINARY show -json plan.tfplan > plan.json || { echo_error "$INFRA_BINARY show failed."; exit 1; }
 
     # Start the apply process in the background
     echo_info "Applying $INFRA_BINARY deployment..."
-    $INFRA_BINARY apply plan.tfplan >> "$LOGFILE" 2>&1 &
+    eval "$INFRA_BINARY apply $TF_VARS_OPTIONS plan.tfplan" >> "$LOGFILE" 2>&1 &
     APPLY_PID=$!
 
     # Progress monitoring variables
-    CHECK_INTERVAL=60  # in seconds
+    CHECK_INTERVAL=10  # in seconds
     total_actions=`jq '.resource_changes | length' plan.json`
     if [ "$total_actions" -eq 0 ]; then
-        echo_info "No resources to add, change, or destroy."
+        echo_primary "No resources to add, change, or destroy."
         wait "$APPLY_PID"
     else
         # Extract planned resource addresses
@@ -364,37 +381,52 @@ deploy_infrastructure() {
 
         echo_info "Monitoring progress..."
         while kill -0 "$APPLY_PID" 2>/dev/null; do
-            # Count completed resources
-            current_state_resources=`$INFRA_BINARY state list || true`
-            # Save current state resources to a file
-            current_state_file="current_state.txt"
-            echo "$current_state_resources" > "$current_state_file"
-
-            # Compare current state with planned addresses
-            num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
-            if [ "$total_actions" -eq 0 ]; then
-                percent_complete=100
-            else
-                percent_complete=`expr $num_completed \* 100 / $total_actions`
+            # Check if parent process is still running
+            if ! kill -0 "$PPID" 2>/dev/null; then
+                echo_error "Parent process $PPID has died. Exiting."
+                exit 1
             fi
-            echo_info "Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
+
+            # Try to get current state resources
+            current_state_resources=`$INFRA_BINARY state list 2>/dev/null || true`
+
+            if [ -n "$current_state_resources" ]; then
+                # Save current state resources to a file
+                current_state_file="current_state.txt"
+                echo "$current_state_resources" > "$current_state_file"
+
+                # Compare current state with planned addresses
+                num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
+                percent_complete=`expr $num_completed \* 100 / $total_actions`
+
+                # Use echo_primary to display progress
+                echo_primary "Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
+            else
+                echo_primary "No resources applied yet. Retrying in $CHECK_INTERVAL seconds..."
+            fi
 
             sleep "$CHECK_INTERVAL"
         done
 
         # Final progress check after apply completes
-        current_state_resources=`$INFRA_BINARY state list || true`
-        echo "$current_state_resources" > "$current_state_file"
-        num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
-        if [ "$total_actions" -eq 0 ]; then
-            percent_complete=100
-        else
+        current_state_resources=`$INFRA_BINARY state list 2>/dev/null || true`
+
+        if [ -n "$current_state_resources" ]; then
+            current_state_file="current_state.txt"
+            echo "$current_state_resources" > "$current_state_file"
+
+            num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
             percent_complete=`expr $num_completed \* 100 / $total_actions`
+            echo_primary "Final Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
+        else
+            echo_primary "Final Progress: No resources were applied."
         fi
-        echo_info "Final Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
 
         # Clean up temporary files
-        rm -f "$planned_addresses_file" "$current_state_file"
+        rm -f "$planned_addresses_file"
+        if [ -n "${current_state_file:-}" ]; then
+            rm -f "$current_state_file"
+        fi
     fi
 
     # Wait for the apply process to finish
@@ -416,6 +448,9 @@ deploy_infrastructure() {
     fi
     echo_info "kubectl configured successfully."
 }
+
+
+
 
 
 # -----------------------------
@@ -644,6 +679,7 @@ CLUSTER_SUITABLE="false"          # Will be set in is_cluster_suitable
 CURRENT_PROVIDER="NONE"           # Will be set in confirm_provider_is_eks
 USE_HTTPS="false"                 # Will be set during domain confirmation
 PROTOCOL="http"                   # Default protocol
+REGION=""                         # New variable for AWS region
 
 # Parse command-line arguments
 while [ "$#" -gt 0 ]; do
@@ -665,6 +701,14 @@ while [ "$#" -gt 0 ]; do
             INSTALL_TYPE_SPECIFIED="true"
             shift 2
             ;;
+        -r|--region)
+            if [ "$#" -lt 2 ]; then
+                echo_error "Option '$1' requires an argument."
+                usage
+            fi
+            REGION="$2"
+            shift 2
+            ;;
         --debug)
             DEBUG_MODE="true"
             echo_info "Debug mode enabled."
@@ -679,6 +723,10 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+
+# [Continue with the rest of the script...]
+
+
 
 # Step 1: Check for required tools and prerequisites
 echo_info "Checking for required tools and prerequisites..."

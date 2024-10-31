@@ -8,10 +8,10 @@ variable "region" {
   default     = "us-east-2"  # You can change the default region here
 }
 
-variable "environment" {
-  description = "The environment for deployment (e.g., dev, prod)."
-  type        = string
-  default     = "dev"
+variable "high_availability" {
+  description = "Enable high availability for production-like environments."
+  type        = bool
+  default     = true
 }
 
 variable "eks_instance_types" {
@@ -86,12 +86,12 @@ resource "random_string" "suffix" {
 locals {
   name = "opengovernance"
 
-  vpc_cidr = "10.0.0.0/16"
-  azs      = var.environment == "dev" ? slice(data.aws_availability_zones.available.names, 0, 2) : slice(data.aws_availability_zones.available.names, 0, 3)
+  # Derive settings based on high_availability flag
+  azs = var.high_availability ? slice(data.aws_availability_zones.available.names, 0, 3) : slice(data.aws_availability_zones.available.names, 0, 2)
 
   tags = {
-    Name        = local.name
-    Environment = var.environment
+    Name             = local.name
+    HighAvailability = var.high_availability
   }
 }
 
@@ -104,18 +104,18 @@ module "vpc" {
   version = "~> 5.13"
 
   name = "${local.name}-vpc-${random_string.suffix.result}"
-  cidr = local.vpc_cidr
+  cidr = "10.0.0.0/16"
 
   azs = local.azs
 
-  private_subnets = [for k, az in local.azs : cidrsubnet(local.vpc_cidr, 8, k)]
-  public_subnets  = [for k, az in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 4)]
+  private_subnets = [for k, az in local.azs : cidrsubnet("10.0.0.0/16", 8, k)]
+  public_subnets  = [for k, az in local.azs : cidrsubnet("10.0.0.0/16", 8, k + 4)]
 
-  enable_nat_gateway = true
-  single_nat_gateway = true
+  enable_nat_gateway = var.high_availability
+  single_nat_gateway = !var.high_availability  # Use single NAT gateway in non-HA
 
-  manage_default_network_acl   = false
-  manage_default_route_table   = false
+  manage_default_network_acl = false
+  manage_default_route_table = false
 
   enable_dns_hostnames = true
   enable_dns_support   = true
@@ -160,9 +160,9 @@ module "eks" {
   eks_managed_node_groups = {
     opengovernance-main = {
       instance_types = var.eks_instance_types
-      min_size       = 1
-      max_size       = 5
-      desired_size   = 3
+      min_size       = var.high_availability ? 3 : 1
+      max_size       = var.high_availability ? 9 : 5
+      desired_size   = var.high_availability ? 5 : 3
 
       block_device_mappings = {
         xvda = {
