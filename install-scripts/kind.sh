@@ -11,7 +11,8 @@ NAMESPACE="opengovernance"  # Default namespace
 # -----------------------------
 # Logging Configuration
 # -----------------------------
-DEBUG_MODE=true  # Helm operates in debug mode
+# Set DEBUG_MODE based on environment variable; default to false
+DEBUG_MODE="${DEBUG_MODE:-false}"  # Helm operates in debug mode
 LOGFILE="$HOME/.opengovernance/install.log"
 DEBUG_LOGFILE="$HOME/.opengovernance/helm_debug.log"
 
