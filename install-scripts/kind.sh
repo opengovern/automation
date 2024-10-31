@@ -78,19 +78,6 @@ check_command() {
     fi
 }
 
-# Placeholder Function: Check for Terraform or OpenTofu
-check_terraform_or_opentofu() {
-    # Implement the actual check as per your environment
-    # For now, we'll assume Terraform is not required
-    echo_info "Skipping Terraform/OpenTofu check."
-}
-
-# Placeholder Function: Check AWS CLI Authentication
-check_aws_auth() {
-    # Implement the actual AWS CLI authentication check as per your environment
-    # For now, we'll assume AWS CLI is not required
-    echo_info "Skipping AWS CLI authentication check."
-}
 
 # Function to ensure Helm repository is added and updated
 ensure_helm_repo() {
@@ -121,11 +108,6 @@ check_prerequisites() {
         check_command "$cmd"
     done
 
-    # Check for Terraform or OpenTofu
-    check_terraform_or_opentofu
-
-    # Check AWS CLI authentication
-    check_aws_auth
 
     # Ensure Helm repository is added and updated
     ensure_helm_repo
