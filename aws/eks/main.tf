@@ -11,7 +11,7 @@ variable "region" {
 variable "high_availability" {
   description = "Enable high availability for production-like environments."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "eks_instance_types" {
