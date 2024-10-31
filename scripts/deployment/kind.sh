@@ -85,20 +85,13 @@ ensure_helm_repo() {
     REPO_URL="https://opengovern.github.io/charts/"
 
     if ! helm repo list | grep -q "^$REPO_NAME "; then
-        # Suppress output from ensure_helm_repo
         helm repo add "$REPO_NAME" "$REPO_URL" >/dev/null 2>&1 || { echo_error "Failed to add Helm repository '$REPO_NAME'."; exit 1; }
-    else
-        # Suppress output from ensure_helm_repo
-        :
     fi
-
-    # Suppress output from ensure_helm_repo
     helm repo update >/dev/null 2>&1 || { echo_error "Failed to update Helm repositories."; exit 1; }
 }
 
 # Function to check prerequisites
 check_prerequisites() {
-    # List of required commands (removed 'yq')
     REQUIRED_COMMANDS="kind kubectl helm"
 
     echo_info "Checking for required tools..."
@@ -114,99 +107,64 @@ check_prerequisites() {
     echo_info "Checking Prerequisites...Completed"
 }
 
-# Function to list existing Kind clusters
-list_kind_clusters() {
-    kind get clusters
-}
-
-# Function to check if a Kind cluster exists
-kind_cluster_exists() {
-    kind get clusters | grep -qw "$1"
-}
-
-# Function to create a Kind cluster
+# Function to create a new Kind cluster with 8GB memory limit
 create_kind_cluster() {
     cluster_name="$1"
-    echo_info "Creating Kind Cluster $cluster_name"
-    kind create cluster --name "$cluster_name" || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
-    kubectl config use-context "kind-$cluster_name" || { echo_error "Failed to set kubectl context to 'kind-$cluster_name'."; exit 1; }
+    echo_info "Creating a new Kind Cluster '$cluster_name' with 8GB memory limit"
+
+    # Define the Kind configuration with memory limits
+    kind_config_file="$HOME/kind-config.yaml"
+    cat <<EOF > "$kind_config_file"
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraResources:
+      - memory: "8Gi"
+EOF
+
+    # Create the cluster using the configuration file
+    kind create cluster --name "$cluster_name" --config "$kind_config_file" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
+
+    kubectl config use-context "kind-$cluster_name" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to set kubectl context to 'kind-$cluster_name'."; exit 1; }
+
+    echo_info "Set kubectl context to 'kind-$cluster_name'"
+
+    # Validate memory allocation
+    validate_memory_allocation "$cluster_name"
 }
 
-# Function to prompt the user for selecting an existing cluster or creating a new one
-select_kind_cluster() {
-    existing_clusters=$(list_kind_clusters)
-    cluster_count=$(echo "$existing_clusters" | wc -l | tr -d ' ')
+# Function to validate memory allocation using docker inspect
+validate_memory_allocation() {
+    cluster_name="$1"
+    # Get the node name using kind
+    node_name=$(kind get nodes --name "$cluster_name")
+    container_name="$node_name"
 
-    if [ "$cluster_count" -eq 0 ]; then
-        # No existing clusters, create a new one
-        echo_info "No existing Kind clusters found. Creating a new Kind cluster named '$NAMESPACE'."
-        run_with_timer create_kind_cluster "$NAMESPACE"
-    else
-        # Existing clusters found, prompt user
-        echo_prompt "Existing Kind clusters detected:"
-        echo "$existing_clusters" > /dev/tty
-        echo_prompt "Do you want to use an existing Kind cluster? (y/N): "
+    echo_info "Validating memory allocation for Kind cluster '$cluster_name'"
 
-        read user_input
+    # Get memory limit from docker inspect (in bytes)
+    mem_limit_bytes=$(docker inspect "$container_name" --format='{{.HostConfig.Memory}}')
 
-        case "$user_input" in
-            [Yy]* )
-                # Prompt user to select which cluster to use
-                echo_prompt "Enter the name of the Kind cluster you want to use:"
-                read selected_cluster
-
-                if kind_cluster_exists "$selected_cluster"; then
-                    echo_info "Using existing Kind cluster '$selected_cluster'."
-                    kubectl config use-context "kind-$selected_cluster" || { echo_error "Failed to set kubectl context to 'kind-$selected_cluster'."; exit 1; }
-                else
-                    echo_error "Kind cluster '$selected_cluster' does not exist."
-                    exit 1
-                fi
-                ;;
-            * )
-                # Create a new cluster
-                echo_info "Creating a new Kind cluster named '$NAMESPACE'."
-                run_with_timer create_kind_cluster "$NAMESPACE"
-                ;;
-        esac
+    # If Memory is 0, it means no limit is set
+    if [ "$mem_limit_bytes" -eq 0 ]; then
+        echo_error "No memory limit set for Kind cluster '$cluster_name'. Expected at least 7.44GiB (93% of 8GiB)."
+        exit 1
     fi
-}
 
-# -----------------------------
-# Readiness Check Functions
-# -----------------------------
+    # Define the minimum required memory in bytes (93% of 8GiB)
+    min_mem_bytes=7999255104  # 7.44 * 1024^3 ≈ 7.44GiB in bytes
 
-check_opengovernance_readiness() {
-    # Check the readiness of all pods in the specified namespace
-    not_ready_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers | awk '{print $3}' | grep -v -E 'Running|Completed' || true)
-
-    if [ -z "$not_ready_pods" ]; then
-        APP_HEALTHY="true"
+    if [ "$mem_limit_bytes" -lt "$min_mem_bytes" ]; then
+        # Convert bytes to GiB for logging
+        mem_limit_gib=$(awk "BEGIN {printf \"%.2f\", $mem_limit_bytes/1024/1024/1024}")
+        echo_error "Kind cluster '$cluster_name' has insufficient memory allocated: ${mem_limit_gib}GiB (< 7.44GiB)."
+        exit 1
     else
-        echo_error "Some OpenGovernance pods are not healthy."
-        kubectl get pods -n "$NAMESPACE" >> "$LOGFILE" 2>&1
-        APP_HEALTHY="false"
+        # Convert bytes to GiB for logging
+        mem_limit_gib=$(awk "BEGIN {printf \"%.2f\", $mem_limit_bytes/1024/1024/1024}")
+        echo_info "Kind cluster '$cluster_name' has sufficient memory allocated: ${mem_limit_gib}GiB."
     fi
-}
-
-# Function to check pods and migrator jobs
-check_pods_and_jobs() {
-    attempts=0
-    max_attempts=24  # 24 attempts * 30 seconds = 12 minutes
-    sleep_time=30
-
-    while [ "$attempts" -lt "$max_attempts" ]; do
-        check_opengovernance_readiness
-        if [ "${APP_HEALTHY:-false}" = "true" ]; then
-            return 0
-        fi
-        attempts=$((attempts + 1))
-        echo_info "Waiting for pods to become ready... ($attempts/$max_attempts)"
-        sleep "$sleep_time"
-    done
-
-    echo_error "OpenGovernance did not become ready within expected time."
-    exit 1
 }
 
 # -----------------------------
@@ -237,7 +195,7 @@ basic_install_with_port_forwarding() {
     echo_info "Setting up port-forwarding to access OpenGovernance locally."
 
     # Start port-forwarding in the background
-    kubectl port-forward -n "$NAMESPACE" service/nginx-proxy 8080:80 >> "$LOGFILE" 2>&1 &
+    kubectl port-forward -n "$NAMESPACE" service/nginx-proxy 8080:80 >> "$DEBUG_LOGFILE" 2>&1 &
     PORT_FORWARD_PID=$!
 
     # Give port-forwarding some time to establish
@@ -280,17 +238,14 @@ echo_primary "Starting OpenGovernance deployment script."
 # Check prerequisites
 check_prerequisites
 
-# Handle Kind clusters
-select_kind_cluster
+# Always create a new Kind cluster with an 8GB memory limit
+create_kind_cluster "$NAMESPACE"
 
-# Step 1: Install the 'opengovernance' chart into the specified namespace with timing
+# Install the 'opengovernance' Helm chart into the specified namespace
 echo_primary "Installing 'opengovernance' Helm chart into namespace '$NAMESPACE'."
 run_with_timer helm_install_with_timeout -n "$NAMESPACE" opengovernance opengovernance/opengovernance --create-namespace || { echo_error "Helm installation failed."; exit 1; }
 
-# Step 2: Check if the application is ready
-check_pods_and_jobs
-
-# Step 3: Set up port-forwarding after successful Helm install and readiness
+# Set up port-forwarding after successful Helm install
 basic_install_with_port_forwarding
 
 # Completion message
