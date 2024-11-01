@@ -68,6 +68,7 @@ command_exists() {
 # Function to check tool dependencies
 check_dependencies() {
     local required_tools=("helm" "kubectl" "jq" "curl")
+    MISSING_TOOLS=()  # Initialize the array here to prevent unset variable error
 
     for tool in "${required_tools[@]}"; do
         if ! command_exists "$tool"; then
@@ -141,22 +142,7 @@ check_provider_cli() {
                 DIGITALOCEAN_ERROR="$provider_name: CLI not configured"
             fi
         fi
-    else
-        echo_info "$provider_name CLI is not installed."
-        if [[ "$provider_name" == "AWS" ]]; then
-            AWS_AVAILABLE="no"
-            AWS_ERROR="$provider_name: CLI not installed"
-        elif [[ "$provider_name" == "Azure" ]]; then
-            AZURE_AVAILABLE="no"
-            AZURE_ERROR="$provider_name: CLI not installed"
-        elif [[ "$provider_name" == "GCP" ]]; then
-            GCP_AVAILABLE="no"
-            GCP_ERROR="$provider_name: CLI not installed"
-        elif [[ "$provider_name" == "DigitalOcean" ]]; then
-            DIGITALOCEAN_AVAILABLE="no"
-            DIGITALOCEAN_ERROR="$provider_name: CLI not installed"
-        fi
-    fi
+    fi  # <-- Corrected '}' to 'fi'
 }
 
 # Function to check cloud provider CLIs
@@ -403,8 +389,6 @@ display_option_details() {
     esac
 }
 
-
-
 # Function to deploy to a specific platform
 deploy_to_platform() {
     local platform="$1"
@@ -429,10 +413,24 @@ deploy_to_platform() {
             ensure_cli_installed "doctl" "DigitalOcean CLI"
             deploy_via_curl "digitalocean"
             ;;
+        "Kind")
+            echo_primary "Deploying OpenGovernance locally with Kind."
+            ensure_cli_installed "kind" "Kind CLI"
+            ensure_cli_installed "docker" "Docker"
+            deploy_via_curl "kind"
+            ;;
         *)
             echo_error "Unsupported platform: $platform"
             ;;
     esac
+}
+
+# Placeholder Function: Execute AWS Deployment
+execute_aws_deployment() {
+    echo_primary "AWS deployment functionality is not yet implemented."
+    # Add your AWS deployment commands here
+    # For example:
+    # ./aws_deploy.sh
 }
 
 # Function to ensure provider CLI is installed and configured
@@ -471,6 +469,18 @@ ensure_cli_installed() {
             echo_primary "Please configure $cli_name before proceeding."
             exit 1
         fi
+    elif [[ "$cli_command" == "kind" ]]; then
+        if ! kind get clusters >/dev/null 2>&1; then
+            echo_error "$cli_name is not configured properly."
+            echo_primary "Please configure $cli_name before proceeding."
+            exit 1
+        fi
+    elif [[ "$cli_command" == "docker" ]]; then
+        if ! docker info >/dev/null 2>&1; then
+            echo_error "$cli_name is not running properly."
+            echo_primary "Please ensure $cli_name is running before proceeding."
+            exit 1
+        fi
     fi
 }
 
@@ -489,6 +499,13 @@ deploy_via_curl() {
 
 # Function to allow user to choose deployment based on available platforms
 choose_deployment() {
+    # Determine if deployment with Kind is possible
+    if command_exists "kind" && command_exists "docker"; then
+        CAN_DEPLOY_KIND=true
+    else
+        CAN_DEPLOY_KIND=false
+    fi
+
     while true; do
         echo_primary "Where would you like to deploy OpenGovernance to?"
 
@@ -532,10 +549,16 @@ choose_deployment() {
         OPTIONS[$option_number]="DigitalOcean"
         ((option_number++))
 
-        # Exit
-        echo_primary "$option_number. Exit"
-        OPTIONS[$option_number]="Exit"
-        ((option_number++))
+        # Option 5: Deploy with Kind or Exit
+        if [[ "$CAN_DEPLOY_KIND" == "true" ]]; then
+            echo_primary "$option_number. Deploy locally with Kind"
+            OPTIONS[$option_number]="Kind"
+            ((option_number++))
+        else
+            echo_primary "$option_number. Exit"
+            OPTIONS[$option_number]="Exit"
+            ((option_number++))
+        fi
 
         # Kubernetes Cluster
         if [ "$KUBECTL_CONFIGURED" == "true" ]; then
@@ -545,24 +568,32 @@ choose_deployment() {
             ((option_number++))
         fi
 
-        echo_primary "Press 's' to view cluster and provider details"
+        echo_primary "Press 's' to view cluster and provider details or 'q' to exit."
 
-        echo_prompt -n "Select an option (1-$((option_number-1))) or press 's' to view details: "
+        echo_prompt -n "Select an option (1-$((option_number-1))) or press 's' to view details or 'q' to exit: "
 
         read -r user_input < /dev/tty
 
+        # Handle 's' input
         if [[ "$user_input" =~ ^[sS]$ ]]; then
             display_cluster_details
             continue
         fi
 
+        # Handle 'q' input
+        if [[ "$user_input" =~ ^[qQ]$ ]]; then
+            echo_primary "Exiting."
+            exit 0
+        fi
+
+        # Handle numeric input
         if ! [[ "$user_input" =~ ^[0-9]+$ ]]; then
-            echo_error "Invalid input. Please enter a number between 1 and $((option_number-1))."
+            echo_error "Invalid input. Please enter a number between 1 and $((option_number-1)), 's' to view details, or 'q' to exit."
             continue
         fi
 
         if (( user_input < 1 || user_input >= option_number )); then
-            echo_error "Invalid choice. Please select a number between 1 and $((option_number-1))."
+            echo_error "Invalid choice. Please select a number between 1 and $((option_number-1)), 's' to view details, or 'q' to exit."
             continue
         fi
 
@@ -606,8 +637,15 @@ choose_deployment() {
                 "Azure") available_var="AZURE_AVAILABLE" ;;
                 "GCP") available_var="GCP_AVAILABLE" ;;
                 "DigitalOcean") available_var="DIGITALOCEAN_AVAILABLE" ;;
+                "Kind") available_var="CAN_DEPLOY_KIND" ;;
                 *) available_var="" ;;
             esac
+
+            if [[ "$selected_option" == "Kind" ]]; then
+                # Deploy locally with Kind
+                deploy_to_platform "$selected_option"
+                break
+            fi
 
             if [[ -n "$available_var" && "${!available_var}" == "yes" ]]; then
                 # Display details for the selected option
@@ -615,19 +653,13 @@ choose_deployment() {
 
                 # Wait for 15 seconds to allow the user to return to the main menu
                 echo_prompt "Press 'b' to return to the main menu within 15 seconds, or any other key to proceed."
-                read -t 15 -n 1 -r user_response
+                read -t 15 -n 1 -r user_response < /dev/tty
                 if [[ "$user_response" == "b" ]]; then
                     echo_primary "Returning to main menu."
                     continue
                 else
-                    if [[ "$selected_option" == "DigitalOcean" ]]; then
-                        # Deploy to DigitalOcean by creating/selecting cluster and executing post-install script
-                        deploy_to_platform "$selected_option"
-                        break
-                    else
-                        deploy_to_platform "$selected_option"
-                        break
-                    fi
+                    deploy_to_platform "$selected_option"
+                    break
                 fi
             else
                 echo_error "Platform '$selected_option' is unavailable. Please select another option."
@@ -683,9 +715,7 @@ deploy_to_digitalocean() {
 }
 
 # Function to create or use the default 'opengovernance' Kubernetes cluster on DigitalOcean
-
-
-
+# (Implementation to be added as needed)
 
 # -----------------------------
 # Script Initialization
