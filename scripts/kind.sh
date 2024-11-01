@@ -111,18 +111,8 @@ check_prerequisites() {
 create_kind_cluster() {
     cluster_name="$1"
     echo_info "Creating a new Kind Cluster '$cluster_name' with 8GB memory limit"
-
-    # Define the Kind configuration without extraResources
-    kind_config_file="$HOME/kind-config.yaml"
-    cat <<EOF > "$kind_config_file"
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-EOF
-
     # Create the cluster using the configuration file
-    kind create cluster --name "$cluster_name" --config "$kind_config_file" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
+    kind create cluster --name "$cluster_name" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
 
     kubectl config use-context "kind-$cluster_name" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to set kubectl context to 'kind-$cluster_name'."; exit 1; }
 
