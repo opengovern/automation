@@ -35,7 +35,7 @@ jobs:
 
       - name: Upload scripts to Cloudflare R2
         env:
-          BUCKET_URL: ${{ vars.PROD_CLOUDFLARE_INSTALLER_BUCKET }} # e.g., https://<account_id>.r2.cloudflarestorage.com/<bucket_name>
+          BUCKET_URL: s3://opengovernance # Use S3 URI format
           SOURCE_DIR: scripts/
           TARGET_DIR: scripts/ # Adjust if you want a different target directory in R2
         run: |
