@@ -110,7 +110,7 @@ check_prerequisites() {
 # Function to create a new Kind cluster with 8GB memory limit
 create_kind_cluster() {
     cluster_name="$1"
-    echo_info "Creating a new Kind Cluster '$cluster_name' with 8GB memory limit"
+    echo_primary "Creating a new Kind Cluster '$cluster_name' with 8GB memory limit"
     # Create the cluster using the configuration file
     kind create cluster --name "$cluster_name" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
 
