@@ -30,14 +30,16 @@ jobs:
           aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
           aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
           aws configure set default.region us-east-1
+          # Set the Cloudflare R2 endpoint (replace with your actual endpoint if different)
+          aws configure set default.s3.endpoint_url https://${{ vars.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
-      - name: Upload installer file to Cloudflare R2
+      - name: Upload scripts to Cloudflare R2
         env:
-          BUCKET_URL: ${{ vars.PROD_CLOUDFLARE_INSTALLER_BUCKET }}
-          SOURCE_FILE: ${{ vars.OG_INSTALLER_MAIN_INSTALLER_FILE }}
-          TARGET_FILE: ${{ vars.OG_INSTALLER_ON_CLOUDFLARE_MAIN_INSTALLER_FILE }}
+          BUCKET_URL: ${{ vars.PROD_CLOUDFLARE_INSTALLER_BUCKET }} # e.g., https://<account_id>.r2.cloudflarestorage.com/<bucket_name>
+          SOURCE_DIR: scripts/
+          TARGET_DIR: scripts/ # Adjust if you want a different target directory in R2
         run: |
-          aws --endpoint-url $BUCKET_URL s3 cp "$SOURCE_FILE" "s3://scripts/$TARGET_FILE"
+          aws s3 sync "$SOURCE_DIR" "$BUCKET_URL/$TARGET_DIR" --acl public-read
 
       - name: Bump Version and Create Tag
         if: ${{ success() }}

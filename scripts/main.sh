@@ -741,19 +741,6 @@ CURRENT_CONTEXT=""  # Current kubectl context
 CURRENT_CLUSTER_NAME=""  # Current cluster name
 NODE_COUNT="Unknown"  # Initialize NODE_COUNT with default value
 
-# Detect Operating System
-OS_TYPE="$(uname -s)"
-case "$OS_TYPE" in
-    Linux*)     OS=Linux;;
-    Darwin*)    OS=Darwin;;
-    FreeBSD*)   OS=FreeBSD;;
-    *)          OS="UNKNOWN"
-esac
-
-if [[ "$OS" == "UNKNOWN" ]]; then
-    echo_error "Unsupported Operating System: $OS_TYPE"
-    exit 1
-fi
 
 # -----------------------------
 # Main Execution Flow
