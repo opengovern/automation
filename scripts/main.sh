@@ -244,10 +244,6 @@ detect_kubernetes_provider_and_set_context() {
             echo_info "Detected Minikube cluster."
             CURRENT_PROVIDER="Minikube"
             ;;
-        *"kind"*)
-            echo_info "Detected Kind cluster."
-            CURRENT_PROVIDER="Kind"
-            ;;
         *)
             echo_info "Unable to identify Kubernetes provider."
             CURRENT_PROVIDER="Unknown"

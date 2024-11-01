@@ -19,9 +19,9 @@ DEBUG_LOGFILE="$HOME/.opengovernance/helm_debug.log"
 # Create the log directories and files if they don't exist
 LOGDIR="$(dirname "$LOGFILE")"
 DEBUG_LOGDIR="$(dirname "$DEBUG_LOGFILE")"
-mkdir -p "$LOGDIR" || { echo "Failed to create log directory at $LOGDIR."; exit 1; }
-mkdir -p "$DEBUG_LOGDIR" || { echo "Failed to create debug log directory at $DEBUG_LOGDIR."; exit 1; }
-touch "$LOGFILE" "$DEBUG_LOGFILE" || { echo "Failed to create log files."; exit 1; }
+mkdir -p "$LOGDIR" || { printf "Failed to create log directory at %s.\n" "$LOGDIR"; exit 1; }
+mkdir -p "$DEBUG_LOGDIR" || { printf "Failed to create debug log directory at %s.\n" "$DEBUG_LOGDIR"; exit 1; }
+touch "$LOGFILE" "$DEBUG_LOGFILE" || { printf "Failed to create log files.\n"; exit 1; }
 
 # -----------------------------
 # Trap for Unexpected Exits
@@ -84,15 +84,20 @@ ensure_helm_repo() {
     REPO_NAME="opengovernance"
     REPO_URL="https://opengovern.github.io/charts/"
 
-    if ! helm repo list | grep -q "^$REPO_NAME "; then
+    if ! helm repo list | grep -w "^$REPO_NAME" >/dev/null 2>&1; then
         helm repo add "$REPO_NAME" "$REPO_URL" >/dev/null 2>&1 || { echo_error "Failed to add Helm repository '$REPO_NAME'."; exit 1; }
+        echo_info "Helm repository '$REPO_NAME' added."
+    else
+        echo_info "Helm repository '$REPO_NAME' already exists."
     fi
+
     helm repo update >/dev/null 2>&1 || { echo_error "Failed to update Helm repositories."; exit 1; }
+    echo_info "Helm repositories updated successfully."
 }
 
 # Function to check prerequisites
 check_prerequisites() {
-    REQUIRED_COMMANDS="kind kubectl helm"
+    REQUIRED_COMMANDS="kind kubectl helm docker bc awk"
 
     echo_info "Checking for required tools..."
 
@@ -107,52 +112,180 @@ check_prerequisites() {
     echo_info "Checking Prerequisites...Completed"
 }
 
+# Function to convert bytes to GiB with two decimal places
+bytes_to_gib() {
+    bytes="$1"
+    awk "BEGIN { printf \"%.2f\", $bytes / (1024 * 1024 * 1024) }"
+}
+
+# Function to convert memory units to bytes
+convert_to_bytes() {
+    value="$1"
+    unit=$(printf "%s" "$value" | grep -o '[A-Za-z]*')
+    number=$(printf "%s" "$value" | grep -o '[0-9.]*')
+
+    case "$unit" in
+        B)
+            multiplier=1
+            ;;
+        KiB)
+            multiplier=1024
+            ;;
+        MiB)
+            multiplier=1048576  # 1024^2
+            ;;
+        GiB)
+            multiplier=1073741824  # 1024^3
+            ;;
+        TiB)
+            multiplier=1099511627776  # 1024^4
+            ;;
+        *)
+            multiplier=0
+            ;;
+    esac
+
+    # Calculate bytes using bc for floating point multiplication
+    if [ "$multiplier" -eq 0 ]; then
+        printf "0"
+    else
+        echo "$number * $multiplier" | bc | awk '{printf "%d", $0}'
+    fi
+}
+
+# Function to get total system memory in bytes
+get_total_memory_bytes() {
+    if command -v free >/dev/null 2>&1; then
+        # Linux
+        total_mem=$(free -b | awk '/^Mem:/ {print $2}')
+    elif command -v sysctl >/dev/null 2>&1; then
+        # macOS
+        total_mem=$(sysctl -n hw.memsize)
+    else
+        # Unable to determine
+        printf "0"
+        return
+    fi
+    printf "%s" "$total_mem"
+}
+
+# Function to validate memory allocation using docker stats --no-stream
+validate_memory_allocation() {
+    cluster_name="$1"
+    # Get the node name using kind
+    node_name=$(kind get nodes --name "$cluster_name" | head -n 1)
+    container_name="$node_name"
+
+    echo_info "Validating memory allocation for Kind cluster '$cluster_name'"
+
+    # Get memory usage and limit using docker stats --no-stream
+    docker_stats_output=$(docker stats --no-stream --format "{{.Name}} {{.MemUsage}} {{.MemPerc}}" "$container_name" 2>/dev/null)
+
+    if [ -z "$docker_stats_output" ]; then
+        echo_error "Failed to retrieve memory stats for container '$container_name'. Ensure the container is running."
+        exit 1
+    fi
+
+    # Example output:
+    # opengovernance-control-plane 741.8MiB / 7.752GiB 9.34%
+
+    # Extract MEM LIMIT (e.g., "7.752GiB")
+    mem_limit=$(printf "%s" "$docker_stats_output" | awk '{print $4}')
+
+    # Convert mem_limit to bytes
+    mem_limit_bytes=$(convert_to_bytes "$mem_limit")
+
+    # Define the minimum required memory in bytes (93% of 8GiB)
+    MIN_MEM_BYTES=7999255104  # 7.44 * 1024^3 ≈ 7.44GiB in bytes
+
+    # Validate that mem_limit_bytes is set and is a valid integer
+    if [ -z "$mem_limit_bytes" ]; then
+        echo_error "Memory limit not retrieved for Kind cluster '$cluster_name'."
+        exit 1
+    fi
+
+    case "$mem_limit_bytes" in
+        ''|*[!0-9]*)
+            echo_error "Invalid memory limit '$mem_limit_bytes' for Kind cluster '$cluster_name'. Expected a numeric value."
+            exit 1
+            ;;
+    esac
+
+    if [ "$mem_limit_bytes" -eq 0 ]; then
+        echo_error "No memory limit set for Kind cluster '$cluster_name'. Expected at least 7.44GiB (93% of 8GiB)."
+        exit 1
+    fi
+
+    if [ "$mem_limit_bytes" -lt "$MIN_MEM_BYTES" ]; then
+        # Convert bytes to GiB for logging
+        mem_limit_gib=$(bytes_to_gib "$mem_limit_bytes")
+        echo_error "Kind cluster '$cluster_name' has insufficient memory allocated: ${mem_limit_gib}GiB (< 7.44GiB)."
+        exit 1
+    else
+        # Convert bytes to GiB for logging
+        mem_limit_gib=$(bytes_to_gib "$mem_limit_bytes")
+        echo_info "Kind cluster '$cluster_name' has sufficient memory allocated: ${mem_limit_gib}GiB."
+    fi
+}
+
 # Function to create a new Kind cluster with 8GB memory limit
 create_kind_cluster() {
-    cluster_name="$1"
-    echo_primary "Creating a new Kind Cluster '$cluster_name' with 8GB memory limit"
-    # Create the cluster using the configuration file
+    initial_cluster_name="$1"
+    cluster_name="$initial_cluster_name"
+
+    # Check if the cluster already exists
+    while kind get clusters | grep -w "^$cluster_name$" >/dev/null 2>&1; do
+        echo_error "Kind cluster '$cluster_name' already exists."
+
+        # Prompt the user for a new cluster name
+        echo_prompt "Please enter a new cluster name (or type 'exit' to cancel):"
+        read -r cluster_name
+
+        # Check if the user wants to exit
+        if [ "$cluster_name" = "exit" ]; then
+            echo_info "Exiting cluster creation as per user request."
+            exit 0
+        fi
+
+        # Ensure the new cluster name is not empty
+        if [ -z "$cluster_name" ]; then
+            echo_error "Cluster name cannot be empty. Please try again."
+        fi
+    done
+
+    # Inform the user about the RAM requirement
+    echo_primary "---------------------------------------------------------"
+    echo_primary "  IMPORTANT: OpenGovernance requires a minimum 8 GB RAM"
+    echo_primary "---------------------------------------------------------"
+    echo_primary ""
+
+    # Check if the system has at least 8 GB of RAM
+    required_mem_bytes=8589934592  # 8 * 1024^3 = 8,589,934,592 bytes
+    total_mem_bytes=$(get_total_memory_bytes)
+
+    if [ "$total_mem_bytes" -lt "$required_mem_bytes" ]; then
+        echo_error "Insufficient system memory. This script requires at least 8 GB of RAM."
+        exit 1
+    else
+        # Convert bytes to GiB for logging
+        total_mem_gib=$(bytes_to_gib "$total_mem_bytes")
+        echo_info "System memory check passed: Available memory is ${total_mem_gib} GiB."
+    fi
+
+    echo_primary "Creating a new Kind Cluster '$cluster_name'"
+
+    # Define Kind cluster configuration with 8GB memory limit
+
+    # Create the cluster using the configuration
     kind create cluster --name "$cluster_name" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to create Kind cluster '$cluster_name'."; exit 1; }
 
+    # Set kubectl context to the new cluster
     kubectl config use-context "kind-$cluster_name" >> "$DEBUG_LOGFILE" 2>&1 || { echo_error "Failed to set kubectl context to 'kind-$cluster_name'."; exit 1; }
 
     echo_info "Set kubectl context to 'kind-$cluster_name'"
 
     # Validate memory allocation
     validate_memory_allocation "$cluster_name"
-}
-
-# Function to validate memory allocation using docker inspect
-validate_memory_allocation() {
-    cluster_name="$1"
-    # Get the node name using kind
-    node_name=$(kind get nodes --name "$cluster_name")
-    container_name="$node_name"
-
-    echo_info "Validating memory allocation for Kind cluster '$cluster_name'"
-
-    # Get memory limit from docker inspect (in bytes)
-    mem_limit_bytes=$(docker inspect "$container_name" --format='{{.HostConfig.Memory}}')
-
-    # If Memory is 0, it means no limit is set
-    if [ "$mem_limit_bytes" -eq 0 ]; then
-        echo_error "No memory limit set for Kind cluster '$cluster_name'. Expected at least 7.44GiB (93% of 8GiB)."
-        #exit 1
-    fi
-
-    # Define the minimum required memory in bytes (93% of 8GiB)
-    min_mem_bytes=7999255104  # 7.44 * 1024^3 ≈ 7.44GiB in bytes
-
-    if [ "$mem_limit_bytes" -lt "$min_mem_bytes" ]; then
-        # Convert bytes to GiB for logging
-        mem_limit_gib=$(awk "BEGIN {printf \"%.2f\", $mem_limit_bytes/1024/1024/1024}")
-        echo_error "Kind cluster '$cluster_name' has insufficient memory allocated: ${mem_limit_gib}GiB (< 7.44GiB)."
-        exit 1
-    else
-        # Convert bytes to GiB for logging
-        mem_limit_gib=$(awk "BEGIN {printf \"%.2f\", $mem_limit_bytes/1024/1024/1024}")
-        echo_info "Kind cluster '$cluster_name' has sufficient memory allocated: ${mem_limit_gib}GiB."
-    fi
 }
 
 # -----------------------------
@@ -172,7 +305,7 @@ run_with_timer() {
     mins=$((elapsed_time / 60))
     secs=$((elapsed_time % 60))
 
-    echo "Completed in ${mins} mins ${secs} secs"
+    echo_info "Completed in ${mins} mins ${secs} secs"
 }
 
 # -----------------------------
