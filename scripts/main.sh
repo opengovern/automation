@@ -427,7 +427,7 @@ deploy_to_platform() {
         "DigitalOcean")
             echo_primary "Deploying OpenGovernance to DigitalOcean."
             ensure_cli_installed "doctl" "DigitalOcean CLI"
-            deploy_to_digitalocean
+            deploy_via_curl "digitalocean"
             ;;
         *)
             echo_error "Unsupported platform: $platform"
@@ -477,7 +477,7 @@ ensure_cli_installed() {
 # Function to deploy via curl
 deploy_via_curl() {
     local provider="$1"
-    local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/${provider}/scripts/simple.sh"
+    local script_url="https://raw.githubusercontent.com/opengovern/deploy-opengovernance/refs/heads/main/scripts/${provider}.sh"
 
     if curl --head --silent --fail "$script_url" >/dev/null; then
         curl -sL "$script_url" | bash -s -- "$KUBE_NAMESPACE"
@@ -679,186 +679,13 @@ deploy_to_digitalocean() {
     ensure_cli_installed "doctl" "DigitalOcean CLI"
 
     # Create or select a Kubernetes cluster on DigitalOcean
-    create_digitalocean_cluster
+    #create_digitalocean_cluster
 }
 
 # Function to create or use the default 'opengovernance' Kubernetes cluster on DigitalOcean
-create_digitalocean_cluster() {
-    local cluster_name="opengovernance"
 
-    # Check if the cluster 'opengovernance' already exists
-    if doctl kubernetes cluster get "$cluster_name" >/dev/null 2>&1; then
-        echo_primary "A Kubernetes cluster named '$cluster_name' already exists."
-        echo_primary "Choose an option:"
-        echo_primary "1. Use existing cluster '$cluster_name'"
-        echo_primary "2. Create a new cluster"
-        echo_primary "3. Exit"
 
-        echo_prompt -n "Select an option (1-3): "
-        read -r existing_option < /dev/tty
 
-        case "$existing_option" in
-            1)
-                echo_primary "Using existing cluster '$cluster_name'."
-                # Retrieve kubeconfig for the cluster
-                if ! doctl kubernetes cluster kubeconfig save "$cluster_name"; then
-                    echo_error "Failed to retrieve kubeconfig for cluster '$cluster_name'."
-                    exit 1
-                fi
-                # Update the global cluster name variable
-                KUBE_CLUSTER_NAME="$cluster_name"
-
-                # Execute the DigitalOcean post-install configuration script
-                echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
-                curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
-                echo_primary "Post-install configuration for DigitalOcean executed successfully."
-                ;;
-            2)
-                # Call function to create a new cluster with a unique name
-                create_unique_digitalocean_cluster
-                ;;
-            3)
-                echo_primary "Exiting."
-                exit 0
-                ;;
-            *)
-                echo_error "Invalid selection. Please choose between 1 and 3."
-                create_digitalocean_cluster  # Retry
-                ;;
-        esac
-    else
-        # Cluster does not exist, create it automatically
-        echo_primary "Creating DigitalOcean Kubernetes cluster '$cluster_name' in region '$DIGITALOCEAN_REGION'..."
-        echo_primary "This step may take 3-5 minutes."
-
-        # Create the cluster
-        if doctl kubernetes cluster create "$cluster_name" --region "$DIGITALOCEAN_REGION" \
-            --node-pool "name=main-pool;size=s-4vcpu-8gb;count=3" --wait; then
-            echo_info "Cluster '$cluster_name' created successfully."
-        else
-            echo_error "Failed to create cluster '$cluster_name'. Please try again."
-            exit 1
-        fi
-
-        # Save kubeconfig for the cluster
-        if ! doctl kubernetes cluster kubeconfig save "$cluster_name"; then
-            echo_error "Failed to retrieve kubeconfig for cluster '$cluster_name'."
-            exit 1
-        fi
-
-        # Update the global cluster name variable
-        KUBE_CLUSTER_NAME="$cluster_name"
-
-        # Execute the DigitalOcean post-install configuration script
-        echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
-        curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
-        echo_primary "Post-install configuration for DigitalOcean executed successfully."
-    fi
-}
-
-# Function to create a unique Kubernetes cluster on DigitalOcean
-create_unique_digitalocean_cluster() {
-    while true; do
-        echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
-        read -r new_cluster_name < /dev/tty
-
-        # Check if the cluster name is empty
-        if [[ -z "$new_cluster_name" ]]; then
-            echo_error "Cluster name cannot be empty. Please enter a valid name."
-            continue
-        fi
-
-        # Check if the cluster name already exists
-        if doctl kubernetes cluster get "$new_cluster_name" >/dev/null 2>&1; then
-            echo_error "A Kubernetes cluster named '$new_cluster_name' already exists. Please choose a different name."
-            continue
-        fi
-
-        # Optional: Validate cluster name format
-        if [[ ! "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
-            echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
-            continue
-        fi
-
-        # Prompt to change the default region
-        echo_primary "Current default region is '$DIGITALOCEAN_REGION'."
-        echo_prompt -n "Do you wish to change the region? (y/n, auto-proceeds with 'n' in 30 seconds): "
-        read -t 30 -r change_region < /dev/tty || change_region="n"  # Default to "n" if timeout occurs
-
-        # Set change_region to "n" if input is empty or explicitly "n"
-        if [[ -z "$change_region" || "$change_region" =~ ^([nN])$ ]]; then
-            change_region="n"
-        fi
-
-        # If user chooses "y" to change the region, display available regions
-        if [[ "$change_region" =~ ^([yY])$ ]]; then
-            # Retrieve available regions
-            echo_info "Fetching available DigitalOcean regions..."
-            AVAILABLE_REGIONS=$(doctl kubernetes options regions | awk 'NR>1 {print $1}')
-
-            if [[ -z "$AVAILABLE_REGIONS" ]]; then
-                echo_error "Failed to retrieve available regions. Please ensure 'doctl' is authenticated and has the necessary permissions."
-                exit 1
-            fi
-
-            echo_primary "Available Regions:"
-            echo "$AVAILABLE_REGIONS" | nl -w2 -s'. '
-
-            while true; do
-                echo_prompt -n "Enter the desired region from the above list [Default: $DIGITALOCEAN_REGION]: "
-                read -r input_region < /dev/tty
-
-                # Use default if input is empty
-                if [[ -z "$input_region" ]]; then
-                    selected_region="$DIGITALOCEAN_REGION"
-                else
-                    selected_region="$input_region"
-                fi
-
-                # Validate the selected region
-                if echo "$AVAILABLE_REGIONS" | grep -qw "$selected_region"; then
-                    DIGITALOCEAN_REGION="$selected_region"
-                    echo_info "Region set to '$DIGITALOCEAN_REGION'."
-                    break
-                else
-                    echo_error "Invalid region selection. Please choose a region from the available list."
-                fi
-            done
-        else
-            echo_info "Using default region '$DIGITALOCEAN_REGION'."
-        fi
-
-        # Confirm the details
-        echo_primary "Creating DigitalOcean Kubernetes cluster '$new_cluster_name' in region '$DIGITALOCEAN_REGION'..."
-        echo_primary "This step may take 3-5 minutes."
-
-        # Create the cluster
-        if doctl kubernetes cluster create "$new_cluster_name" --region "$DIGITALOCEAN_REGION" \
-            --node-pool "name=main-pool;size=s-4vcpu-8gb;count=3" --wait; then
-            echo_info "Cluster '$new_cluster_name' created successfully."
-        else
-            echo_error "Failed to create cluster '$new_cluster_name'. Please try again."
-            continue
-        fi
-
-        # Save kubeconfig for the cluster
-        if ! doctl kubernetes cluster kubeconfig save "$new_cluster_name"; then
-            echo_error "Failed to retrieve kubeconfig for cluster '$new_cluster_name'."
-            exit 1
-        fi
-
-        # Update the global cluster name variable
-        KUBE_CLUSTER_NAME="$new_cluster_name"
-
-        # Execute the DigitalOcean post-install configuration script
-        echo_primary "Fetching and executing the post-install configuration script for DigitalOcean."
-        curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/digitalocean/scripts/post-install-config.sh | bash
-        echo_primary "Post-install configuration for DigitalOcean executed successfully."
-
-        # Exit the loop after successful creation and installation
-        break
-    done
-}
 
 # -----------------------------
 # Script Initialization

@@ -18,10 +18,13 @@ trap 'echo_error "Script terminated unexpectedly."; exit 1' INT TERM HUP
 KUBE_NAMESPACE="opengovernance"
 
 # Default Kubernetes cluster name for OpenGovernance
-KUBE_CLUSTER_NAME="opengovernance"
+DEFAULT_CLUSTER_NAME="opengovernance"
 
 # Default DigitalOcean Kubernetes cluster region for OpenGovernance
-DIGITALOCEAN_REGION="nyc3"
+DEFAULT_REGION="nyc3"
+
+# Initialize DIGITALOCEAN_REGION with DEFAULT_REGION to prevent unbound variable error
+DIGITALOCEAN_REGION="$DEFAULT_REGION"
 
 # -----------------------------
 # Logging Configuration
@@ -45,7 +48,21 @@ touch "$LOGFILE" "$DEBUG_LOGFILE" || { echo "Failed to create log files."; exit 
 
 # Function to display messages directly to the user
 echo_prompt() {
-    printf "%s\n" "$*" > /dev/tty
+    local no_newline=false
+
+    # Check if the first argument is '-n'
+    if [[ "$1" == "-n" ]]; then
+        no_newline=true
+        shift  # Remove '-n' from the arguments
+    fi
+
+    if $no_newline; then
+        # Print without a newline
+        printf "%s" "$*" > /dev/tty
+    else
+        # Print with a newline
+        printf "%s\n" "$*" > /dev/tty
+    fi
 }
 
 # Function to display informational messages to the log with timestamp
@@ -105,8 +122,8 @@ check_command() {
 
 # Function to ensure Helm repository is added and updated
 ensure_helm_repo() {
-    REPO_NAME="opengovernance"
-    REPO_URL="https://opengovern.github.io/charts/"
+    local REPO_NAME="$1"
+    local REPO_URL="$2"
 
     if ! helm repo list | grep -q "^$REPO_NAME[[:space:]]"; then
         echo_detail "Adding Helm repository '$REPO_NAME'."
@@ -127,39 +144,10 @@ ensure_helm_repo() {
 # Function to ensure additional Helm repositories (ingress-nginx and jetstack) are added and updated
 ensure_additional_helm_repos() {
     # Adding ingress-nginx Helm repository
-    REPO_NAME="ingress-nginx"
-    REPO_URL="https://kubernetes.github.io/ingress-nginx"
-
-    if ! helm repo list | grep -q "^$REPO_NAME[[:space:]]"; then
-        echo_detail "Adding Helm repository '$REPO_NAME'."
-        helm repo add "$REPO_NAME" "$REPO_URL" >/dev/null 2>&1 || {
-            echo_error "Failed to add Helm repository '$REPO_NAME'."
-            exit 1
-        }
-    else
-        echo_detail "Helm repository '$REPO_NAME' already exists. Skipping addition."
-    fi
+    ensure_helm_repo "ingress-nginx" "https://kubernetes.github.io/ingress-nginx"
 
     # Adding jetstack Helm repository
-    REPO_NAME="jetstack"
-    REPO_URL="https://charts.jetstack.io"
-
-    if ! helm repo list | grep -q "^$REPO_NAME[[:space:]]"; then
-        echo_detail "Adding Helm repository '$REPO_NAME'."
-        helm repo add "$REPO_NAME" "$REPO_URL" >/dev/null 2>&1 || {
-            echo_error "Failed to add Helm repository '$REPO_NAME'."
-            exit 1
-        }
-    else
-        echo_detail "Helm repository '$REPO_NAME' already exists. Skipping addition."
-    fi
-
-    # Update Helm repositories
-    echo_detail "Updating Helm repositories."
-    helm repo update >/dev/null 2>&1 || {
-        echo_error "Failed to update Helm repositories."
-        exit 1
-    }
+    ensure_helm_repo "jetstack" "https://charts.jetstack.io"
 }
 
 # Function to check prerequisites
@@ -175,8 +163,8 @@ check_prerequisites() {
 
     echo_info "All required tools are installed."
 
-    # Ensure Helm repository is added and updated
-    ensure_helm_repo
+    # Ensure Helm repositories are added and updated
+    ensure_helm_repo "opengovernance" "https://opengovern.github.io/charts/"
     ensure_additional_helm_repos
 
     echo_info "Checking Prerequisites...Completed"
@@ -188,7 +176,7 @@ check_prerequisites() {
 
 # Function to validate the domain
 validate_domain() {
-    local domain="$DOMAIN"
+    local domain="$1"
     # Simple regex for domain validation
     if [[ "$domain" =~ ^(([a-zA-Z0-9](-*[a-zA-Z0-9])*)\.)+[a-zA-Z]{2,}$ ]]; then
         echo_info "Domain '$domain' is valid."
@@ -200,7 +188,7 @@ validate_domain() {
 
 # Function to validate the email
 validate_email() {
-    local email="$EMAIL"
+    local email="$1"
     # Simple regex for email validation
     if [[ "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
         echo_info "Email '$email' is valid."
@@ -308,20 +296,20 @@ prompt_domain_and_email() {
             echo_error "Domain is required for installation types 1 and 2."
             continue
         fi
-        validate_domain
+        validate_domain "$DOMAIN"
         break
     done
 
     # Prompt for email only if HTTPS is enabled
     if [ "$ENABLE_HTTPS" = true ]; then
         while true; do
-            echo_prompt -n "Enter your email for Let's Encrypt: "
+            echo_prompt -n "Enter your email. This email will be used to generate a signed certificate with Let's Encrypt: "
             read -r EMAIL < /dev/tty
             if [ -z "$EMAIL" ]; then
                 echo_error "Email is required for HTTPS installation."
                 continue
             fi
-            validate_email
+            validate_email "$EMAIL"
             break
         done
     fi
@@ -346,18 +334,21 @@ detect_kubernetes_provider_and_set_context() {
     fi
 }
 
+# -----------------------------
 # Function to create a DigitalOcean Kubernetes cluster
+# -----------------------------
 create_digitalocean_cluster() {
-    # Inform the user that a new cluster will be created
-    echo_prompt "We will now create a new DigitalOcean Kubernetes cluster."
+    local TIMEOUT=15
 
-    # Attempt to use 'opengovernance' as the default cluster name
-    DEFAULT_CLUSTER_NAME="opengovernance"
-    echo_info "Checking availability of the default cluster name: '$DEFAULT_CLUSTER_NAME'."
+    # Display initial messages
+    echo_primary "We will now create a new DigitalOcean Kubernetes cluster."
 
     # Check if the default cluster name is available
+    echo_info "Checking availability of the default cluster name: '$DEFAULT_CLUSTER_NAME'."
     if doctl kubernetes cluster get "$DEFAULT_CLUSTER_NAME" >/dev/null 2>&1; then
-        echo_info "The cluster name '$DEFAULT_CLUSTER_NAME' is already in use."
+        echo_error "The cluster name '$DEFAULT_CLUSTER_NAME' is already in use."
+        echo_primary "Please enter a different cluster name."
+
         # Prompt the user to enter a different cluster name
         while true; do
             echo_prompt -n "Enter the name for the new DigitalOcean Kubernetes cluster: "
@@ -375,8 +366,8 @@ create_digitalocean_cluster() {
                 continue
             fi
 
-            # Optional: Validate cluster name format
-            if ! echo "$new_cluster_name" | grep -Eq '^[a-z0-9-]+$'; then
+            # Validate cluster name format
+            if ! [[ "$new_cluster_name" =~ ^[a-z0-9-]+$ ]]; then
                 echo_error "Invalid cluster name format. Use only lowercase letters, numbers, and hyphens."
                 continue
             fi
@@ -386,114 +377,99 @@ create_digitalocean_cluster() {
             break
         done
     else
-        # Default cluster name 'opengovernance' is available; use it
+        # Default cluster name is available
         echo_info "The default cluster name '$DEFAULT_CLUSTER_NAME' is available."
         KUBE_CLUSTER_NAME="$DEFAULT_CLUSTER_NAME"
     fi
 
-    # Prompt to change the default region with a 15-second timeout, showing the current region
-    echo_prompt -n "Do you wish to change the region [Current: $DIGITALOCEAN_REGION]? (y/n, auto-proceeds with 'n' in 15 seconds): "
-    if read -t 15 -r change_region < /dev/tty; then
-        :
+    # Display default region
+    echo_primary "Default Region: '$DEFAULT_REGION'"
+
+    # Prompt to change the default region with a 15-second timeout
+    echo_prompt -n "Do you wish to change the region [Current: $DEFAULT_REGION]? (y/n, auto-proceeds with 'n' in $TIMEOUT seconds): "
+    if read -t "$TIMEOUT" -r change_region < /dev/tty; then
+        case "$change_region" in
+            [yY]|[yY][eE][sS])
+                # Retrieve available regions
+                echo_info "Fetching available DigitalOcean regions..."
+                AVAILABLE_REGIONS=$(doctl kubernetes options regions | awk 'NR>1 {print $1}')
+
+                if [ -z "$AVAILABLE_REGIONS" ]; then
+                    echo_error "Failed to retrieve available regions. Please ensure 'doctl' is authenticated and has the necessary permissions."
+                    exit 1
+                fi
+
+                echo_primary "Available Regions:"
+                echo "$AVAILABLE_REGIONS" | nl -w2 -s'. '
+
+                # Prompt for region selection
+                while true; do
+                    echo_prompt -n "Select a region [Default: $DEFAULT_REGION]: "
+                    read -r selected_region < /dev/tty
+                    selected_region="${selected_region:-$DEFAULT_REGION}"
+
+                    if echo "$AVAILABLE_REGIONS" | grep -qw "$selected_region"; then
+                        DIGITALOCEAN_REGION="$selected_region"
+                        echo_info "Region set to '$DIGITALOCEAN_REGION'."
+                        break
+                    else
+                        echo_error "Invalid region selection. Please choose a region from the available list."
+                    fi
+                done
+                ;;
+            [nN]|[nN][oO])
+                echo_info "Using default region '$DEFAULT_REGION'."
+                DIGITALOCEAN_REGION="$DEFAULT_REGION"
+                ;;
+            *)
+                echo_info "Invalid input received. Proceeding with default choice 'n'."
+                echo_info "Using default region '$DEFAULT_REGION'."
+                DIGITALOCEAN_REGION="$DEFAULT_REGION"
+                ;;
+        esac
     else
-        echo_info "No input received within 15 seconds. Proceeding with default choice 'n'."
-        change_region="n"
+        echo_info "No input received within $TIMEOUT seconds. Proceeding with default choice 'n'."
+        DIGITALOCEAN_REGION="$DEFAULT_REGION"
     fi
-
-    # Handle region selection based on user input
-    case "$change_region" in
-        [yY]|[yY][eE][sS])
-            # Retrieve available regions
-            echo_info "Fetching available DigitalOcean regions..."
-            AVAILABLE_REGIONS=$(doctl kubernetes options regions | awk 'NR>1 {print $1}')
-
-            if [ -z "$AVAILABLE_REGIONS" ]; then
-                echo_error "Failed to retrieve available regions. Please ensure 'doctl' is authenticated and has the necessary permissions."
-                exit 1
-            fi
-
-            echo_primary "Available Regions:"
-            echo "$AVAILABLE_REGIONS" | nl -w2 -s'. '
-
-            while true; do
-                echo_prompt -n "Enter the desired region from the above list [Default: $DIGITALOCEAN_REGION]: "
-                read -r input_region < /dev/tty
-
-                # Use default if input is empty
-                if [ -z "$input_region" ]; then
-                    selected_region="$DIGITALOCEAN_REGION"
-                else
-                    selected_region="$input_region"
-                fi
-
-                # Validate the selected region
-                if echo "$AVAILABLE_REGIONS" | grep -qw "$selected_region"; then
-                    DIGITALOCEAN_REGION="$selected_region"
-                    echo_info "Region set to '$DIGITALOCEAN_REGION'."
-                    break
-                else
-                    echo_error "Invalid region selection. Please choose a region from the available list."
-                fi
-            done
-            ;;
-        [nN]|[nN][oO])
-            echo_info "Using default region '$DIGITALOCEAN_REGION'."
-            ;;
-        *)
-            echo_info "Invalid input received. Proceeding with default choice 'n'."
-            echo_info "Using default region '$DIGITALOCEAN_REGION'."
-            ;;
-    esac
 
     # Final confirmation with cluster name and region, with a 15-second timeout
-    echo_prompt ""
-    echo_prompt "You are about to create a DigitalOcean Kubernetes cluster with the following details:"
-    echo_prompt "  - Cluster Name: $KUBE_CLUSTER_NAME"
-    echo_prompt "  - Region: $DIGITALOCEAN_REGION"
-    echo_prompt ""
-
-    echo_prompt -n "Do you want to proceed? (y/n): "
-    if read -t 15 -r final_confirm < /dev/tty; then
-        :
+    echo_primary "Creating Kubernetes cluster with the following details in $TIMEOUT seconds. "
+    echo_primary "  - Cluster Name: $KUBE_CLUSTER_NAME"
+    echo_primary "  - Region: $DIGITALOCEAN_REGION"
+    echo_prompt -n "Press 'n' to change; press 'y' or ENTER to start immediately"
+    if read -t "$TIMEOUT" -r confirm < /dev/tty; then
+        case "$confirm" in
+            [nN][oO]|[nN])
+                echo_info "Cluster creation aborted."
+                exit 0
+                ;;
+            *)
+                echo_info "Proceeding with cluster creation."
+                ;;
+        esac
     else
-        echo_info "No input received within 15 seconds. Proceeding with default choice 'y'."
-        final_confirm="y"
+        echo_info "No input received within $TIMEOUT seconds. Proceeding with cluster creation."
     fi
 
-    case "$final_confirm" in
-        [yY]|[yY][eE][sS])
-            echo_info "Proceeding with cluster creation."
-            ;;
-        [nN]|[nN][oO])
-            echo_prompt "Cluster creation aborted by the user. Exiting the script."
-            exit 0
-            ;;
-        *)
-            echo_info "Invalid input received. Proceeding with default choice 'y'."
-            ;;
-    esac
-
-    # Inform the user about the cluster creation process
-    echo_primary "Creating DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' in region '$DIGITALOCEAN_REGION'..."
-    echo_primary "This step may take 3-5 minutes."
-
     # Create the cluster
+    echo_primary "Creating cluster '$KUBE_CLUSTER_NAME' in region '$DIGITALOCEAN_REGION'..."
     if doctl kubernetes cluster create "$KUBE_CLUSTER_NAME" --region "$DIGITALOCEAN_REGION" \
         --node-pool "name=main-pool;size=g-4vcpu-16gb-intel;count=3" --wait; then
         echo_info "Cluster '$KUBE_CLUSTER_NAME' created successfully."
     else
-        echo_error "Failed to create cluster '$KUBE_CLUSTER_NAME'. Please try again."
+        echo_error "Failed to create cluster '$KUBE_CLUSTER_NAME'."
         exit 1
     fi
 
-    # Save kubeconfig for the cluster
-    if ! doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"; then
-        echo_error "Failed to retrieve kubeconfig for cluster '$KUBE_CLUSTER_NAME'."
+    # Save kubeconfig
+    if doctl kubernetes cluster kubeconfig save "$KUBE_CLUSTER_NAME"; then
+        echo_info "Kubeconfig for '$KUBE_CLUSTER_NAME' saved successfully."
+    else
+        echo_error "Failed to save kubeconfig for '$KUBE_CLUSTER_NAME'."
         exit 1
     fi
 
-    # Exit the function after successful creation and installation
-    echo_info "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' is set up and kubeconfig is saved."
+    echo_info "DigitalOcean Kubernetes cluster '$KUBE_CLUSTER_NAME' is set up and ready to use."
 }
 
 # -----------------------------
@@ -520,12 +496,12 @@ install_opengovernance() {
     esac
 
     if [ "$use_https" = true ]; then
-        echo_primary "Proceeding with OpenGovernance installation with HTTPS and Hostname. (Expected time: 7-10 minutes)"
+        echo_primary "Proceeding with OpenGovernance installation with HTTPS and Hostname. (Expected time: 7-12 minutes)"
     else
         if [ "$install_type" -eq 3 ]; then
-            echo_primary "Proceeding with OpenGovernance Basic Install (No Ingress). (Expected time: 7-10 minutes)"
+            echo_primary "Proceeding with OpenGovernance Basic Install (No Ingress). (Expected time: 7-12 minutes)"
         else
-            echo_primary "Proceeding with OpenGovernance installation with HTTP and Hostname. (Expected time: 7-10 minutes)"
+            echo_primary "Proceeding with OpenGovernance installation with HTTP and Hostname. (Expected time: 7-12 minutes)"
         fi
     fi
 
@@ -573,8 +549,6 @@ EOF
 # -----------------------------
 
 setup_cert_manager_ingress_controller() {
-    echo_primary "Setting up Cert-Manager and Ingress Controller. (Expected time: 3-7 minutes)"
-
     # Setup Cert-Manager and Issuer
     setup_cert_manager_and_issuer
 
@@ -584,7 +558,7 @@ setup_cert_manager_ingress_controller() {
 
 # Function to setup Cert-Manager and Issuer
 setup_cert_manager_and_issuer() {
-    echo_primary "Setting up Cert-Manager and Let's Encrypt Issuer. (Expected time: 1-2 minutes)"
+    echo_primary "Setting up Cert-Manager (Expected time: 1-2 minutes)"
 
     # Function to check if Cert-Manager is installed
     is_cert_manager_installed() {
@@ -684,7 +658,7 @@ setup_ingress_controller_with_ip_wait() {
     if helm list -n "$KUBE_NAMESPACE" | grep -qw ingress-nginx; then
         echo_detail "Ingress Controller already installed. Skipping installation."
     else
-        echo_detail "Installing ingress-nginx via Helm."
+        echo_detail "Starting Install of Ingress Controller ingress-nginx via Helm. (Expected time: 1-2 minutes)"
         helm_install_with_timeout ingress-nginx ingress-nginx/ingress-nginx -n "$KUBE_NAMESPACE" --create-namespace --wait || {
             echo_error "Failed to install ingress-nginx."
             return 1
@@ -925,9 +899,6 @@ detect_kubernetes_provider_and_set_context
 
 # Create DigitalOcean Kubernetes cluster
 create_digitalocean_cluster
-
-# Check if nodes are ready
-check_ready_nodes
 
 # Run installation logic
 run_installation_logic
