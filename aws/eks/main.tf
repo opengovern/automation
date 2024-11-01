@@ -17,7 +17,7 @@ variable "high_availability" {
 variable "eks_instance_types" {
   description = "List of EC2 instance types for the EKS node groups."
   type        = list(string)
-  default     = ["m5.large"]  # Modify as per your requirements
+  default     = ["m6i.xlarge"]  # Modify as per your requirements
 }
 
 ################################################################################

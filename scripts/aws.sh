@@ -129,80 +129,111 @@ check_aws_auth() {
     echo_info "AWS CLI is authenticated."
 }
 
-# Function to check if kubectl is connected to a cluster
-is_kubectl_active() {
-    if ! kubectl cluster-info >/dev/null 2>&1; then
-        echo_info "kubectl is not connected to any cluster."
-        KUBECTL_ACTIVE="false"
-        return 1
+# Function to detect Kubernetes provider and unset context
+detect_kubernetes_and_unset_context() {
+    # Retrieve the current Kubernetes context, suppressing any errors
+    CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || true)
+
+    if [ -n "$CURRENT_CONTEXT" ]; then
+        echo_info "Current kubectl context: $CURRENT_CONTEXT"
+
+        # Unset the current Kubernetes context
+        if kubectl config unset current-context >/dev/null 2>&1; then
+            echo_info "Successfully unset the current kubectl context."
+        else
+            echo_error "Failed to unset the current kubectl context."
+        fi
     else
-        echo_info "kubectl is connected to a cluster."
-        KUBECTL_ACTIVE="true"
-        return 0
+        echo_info "No kubectl context found."
     fi
 }
 
-# Function to confirm the Kubernetes provider is AWS (EKS)
-confirm_provider_is_eks() {
-    CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null || true)
-    if [ -n "$CURRENT_CONTEXT" ]; then
-        CURRENT_CLUSTER_NAME=$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"$CURRENT_CONTEXT\")].context.cluster}")
-        cluster_server=$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"$CURRENT_CLUSTER_NAME\")].cluster.server}")
-        case "$cluster_server" in
-            *".eks.amazonaws.com"*|*"amazonaws.com"*)
-                echo_info "Detected EKS (AWS) cluster."
-                CURRENT_PROVIDER="AWS"
-                return 0
+# Function to confirm Deployment Settings
+confirm_deployment_settings() {
+    echo_primary "======================================="
+    echo_primary "Confirm Deployment Settings"
+    echo_primary "======================================="
+    echo_info "EKS Cluster Name: ${EKS_CLUSTER_NAME:-opengovernance-cluster}"
+    echo_info "AWS Region: ${REGION:-$(aws configure get region)}"
+    echo_info "Installation Type: ${INSTALL_TYPE:-Not Set}"
+    echo_info "Protocol: ${PROTOCOL:-Not Set}"
+    echo_primary ""
+
+    while :; do
+        echo_prompt "Do you want to use these settings? (Y/n): "
+        read -r USER_CONFIRM
+
+        case "$USER_CONFIRM" in
+            [Yy]|"" )
+                break
                 ;;
-            *)
-                echo_info "Detected non-EKS cluster."
-                CURRENT_PROVIDER="OTHER"
-                return 1
+            [Nn] )
+                modify_deployment_settings
+                ;;
+            * )
+                echo_error "Invalid input. Please enter Y or N."
                 ;;
         esac
+    done
+}
+
+# Function to modify Deployment Settings
+modify_deployment_settings() {
+    # Prompt user to change EKS Cluster Name
+    echo_prompt "Enter new EKS Cluster Name (leave blank to keep current [${EKS_CLUSTER_NAME:-opengovernance-cluster}]): "
+    read -r NEW_CLUSTER_NAME
+    if [ -n "$NEW_CLUSTER_NAME" ]; then
+        EKS_CLUSTER_NAME="$NEW_CLUSTER_NAME"
+        echo_info "EKS Cluster Name updated to: $EKS_CLUSTER_NAME"
     else
-        echo_info "kubectl is not configured to any cluster."
-        CURRENT_PROVIDER="NONE"
+        echo_info "EKS Cluster Name remains as: ${EKS_CLUSTER_NAME:-opengovernance-cluster}"
+    fi
+
+    # Prompt user to change AWS Region with list of available regions
+    echo_prompt "Would you like to see the list of available AWS Regions? (Y/n): "
+    read -r SHOW_REGIONS
+
+    if echo "$SHOW_REGIONS" | grep -iq "^y"; then
+        display_available_regions
+    fi
+
+    echo_prompt "Enter new AWS Region (leave blank to keep current [${REGION:-$(aws configure get region)}]): "
+    read -r NEW_REGION
+    if [ -n "$NEW_REGION" ]; then
+        if validate_aws_region "$NEW_REGION"; then
+            REGION="$NEW_REGION"
+            echo_info "AWS Region updated to: $REGION"
+        else
+            echo_error "Invalid AWS Region: $NEW_REGION"
+            REGION=""
+        fi
+    else
+        echo_info "AWS Region remains as: ${REGION:-$(aws configure get region)}"
+    fi
+}
+
+# Function to validate AWS Region
+validate_aws_region() {
+    INPUT_REGION="$1"
+    AVAILABLE_REGIONS=$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text 2>/dev/null || true)
+
+    if echo "$AVAILABLE_REGIONS" | grep -qw "$INPUT_REGION"; then
+        return 0
+    else
         return 1
     fi
 }
 
-# Function to check if there are at least three ready nodes
-check_ready_nodes() {
-    ready_nodes=$(kubectl get nodes --no-headers | grep -c ' Ready ')
-    if [ "$ready_nodes" -lt 3 ]; then
-        echo_error "At least three Kubernetes nodes must be ready. Currently, $ready_nodes node(s) are ready."
-        return 1
-    else
-        echo_info "There are $ready_nodes ready nodes."
-        return 0
-    fi
+# Function to get available AWS regions
+get_available_regions() {
+    aws ec2 describe-regions --query 'Regions[].RegionName' --output text 2>/dev/null || true
 }
 
-# Function to determine if the current Kubernetes cluster is suitable for installation
-is_cluster_suitable() {
-    confirm_provider_is_eks
-    if [ "$CURRENT_PROVIDER" = "AWS" ]; then
-        if ! check_ready_nodes; then
-            echo_error "Cluster does not have the required number of ready nodes."
-            CLUSTER_SUITABLE="false"
-            return 1
-        fi
-
-        if helm list -n "$NAMESPACE" | grep -q "^$HELM_RELEASE\b"; then
-            echo_info "OpenGovernance is already installed in namespace '$NAMESPACE'."
-            CLUSTER_SUITABLE="false"
-            return 1
-        fi
-
-        echo_info "Cluster is suitable for OpenGovernance installation."
-        CLUSTER_SUITABLE="true"
-        return 0
-    else
-        echo_info "Current Kubernetes cluster is not an EKS cluster."
-        CLUSTER_SUITABLE="false"
-        return 1
-    fi
+# Function to display available AWS regions
+display_available_regions() {
+    echo_primary "Available AWS Regions:"
+    AVAILABLE_REGIONS=$(get_available_regions)
+    echo_primary "$AVAILABLE_REGIONS" | tr '\t' '\n' | nl -w2 -s'. '
 }
 
 # Function to check prerequisites
@@ -225,24 +256,6 @@ check_prerequisites() {
 
     # Ensure Helm repository is added and updated
     ensure_helm_repo
-
-    # Check if kubectl is connected to a cluster
-    if is_kubectl_active; then
-        # Determine if there is a suitable cluster
-        if is_cluster_suitable; then
-            echo_info "Cluster is suitable for installation."
-        else
-            echo_info "Cluster is not suitable for installation. Unsetting current kubectl context."
-            kubectl config unset current-context || { 
-                echo_error "Failed to unset the current kubectl context."
-                exit 1
-            }
-            echo_error "Cluster is not suitable for installation. Exiting."
-            exit 1
-        fi
-    else
-        echo_info "kubectl is not connected to any cluster. Proceeding without cluster suitability checks."
-    fi
 
     echo_info "Checking Prerequisites...Completed"
 }
@@ -271,42 +284,14 @@ ensure_helm_repo() {
     fi
 }
 
-# Function to display cluster metadata to the user
-display_cluster_metadata() {
-    echo_primary ""
-    echo_primary "Cluster Metadata:"
-    echo_primary "-----------------"
-
-    # Get AWS Account ID
-    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
-    if [ -n "$ACCOUNT_ID" ]; then
-        echo_primary "AWS Account ID: $ACCOUNT_ID"
-    else
-        echo_primary "AWS Account ID: Unable to retrieve"
-    fi
-
-    # Get current context and cluster name
-    CURRENT_CONTEXT=$(kubectl config current-context 2>/dev/null)
-    if [ -n "$CURRENT_CONTEXT" ]; then
-        CURRENT_CLUSTER_NAME=$(kubectl config view -o jsonpath="{.contexts[?(@.name==\"$CURRENT_CONTEXT\")].context.cluster}")
-        # Extract the cluster name (last part of the cluster ARN)
-        CLUSTER_NAME="${CURRENT_CLUSTER_NAME##*/}"
-        echo_primary "Cluster Name: $CLUSTER_NAME"
-    else
-        echo_primary "Unable to determine current kubectl context."
-    fi
-
-    echo_primary "-----------------"
-}
-
 # Function to deploy infrastructure
 deploy_infrastructure() {
     # Construct the deployment message with REGION if it's set
     if [ -n "$REGION" ]; then
-        echo_primary "Deploying infrastructure in region '$REGION'. This step may take 10-15 minutes..."
+        echo_primary "Deploying Infrastructure with terraform (this will take 10-5 mins)"
         export AWS_REGION="$REGION"
     else
-        echo_primary "Deploying infrastructure. This step may take 10-15 minutes..."
+        echo_primary "Deploying Infrastructure with terraform (this will take 10-5 mins)"
     fi
 
     echo_info "Ensuring infrastructure directory exists: $INFRA_DIR"
@@ -317,43 +302,21 @@ deploy_infrastructure() {
 
     # Set variables for plan and apply
     TF_VAR_REGION_OPTION=""
-    
+    TF_VAR_CLUSTER_NAME_OPTION=""
+
     # Conditionally add the region variable if REGION is set
     if [ -n "$REGION" ]; then
         TF_VAR_REGION_OPTION="-var 'region=$REGION'"
     fi
 
-    # Combine variable options
-    TF_VARS_OPTIONS="$TF_VAR_REGION_OPTION"
-
-    # Check for existing infrastructure
-    if $INFRA_BINARY state list >> "$LOGFILE" 2>&1; then
-        STATE_COUNT=`$INFRA_BINARY state list | wc -l | tr -d ' '`
-        if [ "$STATE_COUNT" -gt 0 ]; then
-            echo_prompt "Existing infrastructure detected. Do you want to (c)lean up existing infra or (u)se it? [c/u]: "
-            read USER_CHOICE
-            case "$USER_CHOICE" in
-                c|C)
-                    echo_info "Destroying existing infrastructure..."
-                    # Update destroy command to include variable options
-                    eval "$INFRA_BINARY destroy $TF_VARS_OPTIONS -auto-approve" >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY destroy failed."; exit 1; }
-                    ;;
-                u|U)
-                    echo_info "Using existing infrastructure. Configuring kubectl..."
-                    KUBECTL_CMD=`$INFRA_BINARY output -raw configure_kubectl`
-                    echo_info "Executing kubectl configuration command."
-                    sh -c "$KUBECTL_CMD" >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY output failed."; exit 1; }
-                    return 0  # Skip deployment since we're using existing infra
-                    ;;
-                *)
-                    echo_error "Invalid choice. Exiting."
-                    exit 1
-                    ;;
-            esac
-        fi
+    # Conditionally add the cluster name variable if EKS_CLUSTER_NAME is set
+    if [ -n "${EKS_CLUSTER_NAME:-}" ]; then
+        TF_VAR_CLUSTER_NAME_OPTION="-var 'cluster_name=$EKS_CLUSTER_NAME'"
     fi
 
-    # Proceed to deploy only if cleanup was chosen or infra does not exist
+    # Combine variable options
+    TF_VARS_OPTIONS="$TF_VAR_REGION_OPTION $TF_VAR_CLUSTER_NAME_OPTION"
+
     echo_info "Initializing $INFRA_BINARY..."
     $INFRA_BINARY init >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY init failed."; exit 1; }
 
@@ -364,80 +327,18 @@ deploy_infrastructure() {
     echo_info "Generating JSON representation of the plan..."
     $INFRA_BINARY show -json plan.tfplan > plan.json || { echo_error "$INFRA_BINARY show failed."; exit 1; }
 
-    # Start the apply process in the background
+    # ------------------------------
+    # ISSUE 2 FIX: Run apply in foreground
+    # ------------------------------
     echo_info "Applying $INFRA_BINARY deployment..."
-    eval "$INFRA_BINARY apply $TF_VARS_OPTIONS plan.tfplan" >> "$LOGFILE" 2>&1 &
-    APPLY_PID=$!
-
-    # Progress monitoring variables
-    CHECK_INTERVAL=10  # in seconds
-    total_actions=`jq '.resource_changes | length' plan.json`
-    if [ "$total_actions" -eq 0 ]; then
-        echo_primary "No resources to add, change, or destroy."
-        wait "$APPLY_PID"
-    else
-        # Extract planned resource addresses
-        planned_addresses_file="planned_addresses.txt"
-        jq -r '.resource_changes[].address' plan.json > "$planned_addresses_file"
-
-        echo_info "Monitoring progress..."
-        while kill -0 "$APPLY_PID" 2>/dev/null; do
-            # Check if parent process is still running
-            if ! kill -0 "$PPID" 2>/dev/null; then
-                echo_error "Parent process $PPID has died. Exiting."
-                exit 1
-            fi
-
-            # Try to get current state resources
-            current_state_resources=`$INFRA_BINARY state list 2>/dev/null || true`
-
-            if [ -n "$current_state_resources" ]; then
-                # Save current state resources to a file
-                current_state_file="current_state.txt"
-                echo "$current_state_resources" > "$current_state_file"
-
-                # Compare current state with planned addresses
-                num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
-                percent_complete=`expr $num_completed \* 100 / $total_actions`
-
-                # Use echo_primary to display progress
-                echo_primary "Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
-            else
-                echo_primary "No resources applied yet. Retrying in $CHECK_INTERVAL seconds..."
-            fi
-
-            sleep "$CHECK_INTERVAL"
-        done
-
-        # Final progress check after apply completes
-        current_state_resources=`$INFRA_BINARY state list 2>/dev/null || true`
-
-        if [ -n "$current_state_resources" ]; then
-            current_state_file="current_state.txt"
-            echo "$current_state_resources" > "$current_state_file"
-
-            num_completed=`grep -Fxf "$current_state_file" "$planned_addresses_file" | wc -l | tr -d ' '`
-            percent_complete=`expr $num_completed \* 100 / $total_actions`
-            echo_primary "Final Progress: $num_completed out of $total_actions resources completed ($percent_complete%)"
-        else
-            echo_primary "Final Progress: No resources were applied."
-        fi
-
-        # Clean up temporary files
-        rm -f "$planned_addresses_file"
-        if [ -n "${current_state_file:-}" ]; then
-            rm -f "$current_state_file"
-        fi
-    fi
-
-    # Wait for the apply process to finish
-    wait "$APPLY_PID" || { echo_error "$INFRA_BINARY apply failed."; exit 1; }
+    # Run apply in foreground without backgrounding
+    eval "$INFRA_BINARY apply plan.tfplan" >> "$LOGFILE" 2>&1 || { echo_error "$INFRA_BINARY apply failed."; exit 1; }
 
     # Clean up plan files
     rm -f plan.tfplan plan.json
 
     echo_info "Connecting to the Kubernetes cluster..."
-    KUBECTL_CMD=`$INFRA_BINARY output -raw configure_kubectl`
+    KUBECTL_CMD=$($INFRA_BINARY output -raw configure_kubectl)
 
     echo_info "Executing kubectl configuration command."
     sh -c "$KUBECTL_CMD" >> "$LOGFILE" 2>&1 || { echo_error "Failed to configure kubectl."; exit 1; }
@@ -595,11 +496,13 @@ lookup_acm_certificate() {
     echo_info "Looking up ACM Certificate ARN for domain '$DOMAIN_TO_LOOKUP'."
 
     # List certificates with status 'ISSUED'
-    CERT_LIST=$(aws acm list-certificates --query 'CertificateSummaryList[?DomainName==`'"$DOMAIN_TO_LOOKUP"'` && Status==`ISSUED`].CertificateArn' --output text 2>/dev/null || true)
+    CERT_LIST=$(aws acm list-certificates --query "CertificateSummaryList[?DomainName==\`$DOMAIN_TO_LOOKUP\` && Status==\`ISSUED\`].CertificateArn" --output text 2>/dev/null || true)
 
     if [ -z "$CERT_LIST" ]; then
         echo_error "No active ACM certificate found for domain '$DOMAIN_TO_LOOKUP'."
         CERTIFICATE_ARN=""
+        USE_HTTPS="false"
+        PROTOCOL="http"
         return 1
     fi
 
@@ -608,10 +511,14 @@ lookup_acm_certificate() {
 
     if [ -z "$CERTIFICATE_ARN" ]; then
         echo_error "Failed to retrieve ACM Certificate ARN for domain '$DOMAIN_TO_LOOKUP'."
+        USE_HTTPS="false"
+        PROTOCOL="http"
         return 1
     fi
 
     echo_info "Found ACM Certificate ARN: $CERTIFICATE_ARN"
+    USE_HTTPS="true"
+    PROTOCOL="https"
     return 0
 }
 
@@ -645,7 +552,7 @@ basic_install_with_port_forwarding() {
         echo_primary "OpenGovernance is running but not accessible via Ingress."
         echo_primary "You can access it using port-forwarding as follows:"
         echo_primary ""
-        echo_primary "kubectl port-forward -n \"$NAMESPACE\" service/nginx-proxy 8080:80"
+        echo_primary "kubectl port-forward -n '$NAMESPACE' service/nginx-proxy 8080:80"
         echo_primary ""
         echo_primary "Then, access it at http://localhost:8080"
         echo_primary ""
@@ -654,115 +561,6 @@ basic_install_with_port_forwarding() {
         echo_primary "  Password: password"
         echo_primary ""
     fi
-}
-
-# -----------------------------
-# AWS Post-Deployment Function
-# -----------------------------
-
-# Function to execute AWS-specific post-deployment script
-execute_aws_post_deployment() {
-    echo_primary "Fetching and executing the AWS post-deployment configuration script."
-    curl -sL https://raw.githubusercontent.com/opengovern/deploy-opengovernance/main/aws/scripts/aws.sh | bash
-    if [[ $? -eq 0 ]]; then
-        echo_primary "AWS post-deployment configuration executed successfully."
-    else
-        echo_error "Failed to execute AWS post-deployment configuration."
-        exit 1
-    fi
-}
-
-# -----------------------------
-# Function to deploy to a specific platform
-# -----------------------------
-
-deploy_to_platform() {
-    local platform="$1"
-    case "$platform" in
-        "AWS")
-            echo_primary "Deploying OpenGovernance to AWS."
-            check_command "aws"  # Ensure AWS CLI is installed
-            deploy_infrastructure
-            install_application
-            execute_aws_post_deployment
-            ;;
-        "DigitalOcean")
-            echo_primary "Deploying OpenGovernance to DigitalOcean."
-            # Implement DigitalOcean deployment steps here
-            # For example:
-            # deploy_to_digitalocean
-            echo_error "DigitalOcean deployment not implemented in this script."
-            exit 1
-            ;;
-        # Add cases for other platforms like Azure, GCP as needed
-        *)
-            echo_error "Unsupported platform: $platform"
-            exit 1
-            ;;
-    esac
-}
-
-# -----------------------------
-# Read User Input for Deployment Platform
-# -----------------------------
-
-choose_deployment() {
-    while true; do
-        echo_primary "Where would you like to deploy OpenGovernance to?"
-
-        # Initialize options array
-        OPTIONS=()
-        option_number=1
-
-        # AWS
-        echo_primary "$option_number. AWS (EKS)"
-        OPTIONS[$option_number]="AWS"
-        ((option_number++))
-
-        # DigitalOcean
-        echo_primary "$option_number. DigitalOcean"
-        OPTIONS[$option_number]="DigitalOcean"
-        ((option_number++))
-
-        # Add more platforms as needed
-
-        # Exit
-        echo_primary "$option_number. Exit"
-        OPTIONS[$option_number]="Exit"
-        ((option_number++))
-
-        echo_primary "Press 's' to view cluster and provider details"
-
-        echo_prompt -n "Select an option (1-$((option_number-1))) or press 's' to view details: "
-
-        read -r user_input < /dev/tty
-
-        if [[ "$user_input" =~ ^[sS]$ ]]; then
-            display_cluster_metadata
-            continue
-        fi
-
-        if ! [[ "$user_input" =~ ^[0-9]+$ ]]; then
-            echo_error "Invalid input. Please enter a number between 1 and $((option_number-1))."
-            continue
-        fi
-
-        if (( user_input < 1 || user_input >= option_number )); then
-            echo_error "Invalid choice. Please select a number between 1 and $((option_number-1))."
-            continue
-        fi
-
-        selected_option="${OPTIONS[$user_input]}"
-
-        if [[ "$selected_option" == "Exit" ]]; then
-            echo_primary "Exiting."
-            exit 0
-        else
-            # Deploy to the selected platform
-            deploy_to_platform "$selected_option"
-            break
-        fi
-    done
 }
 
 # -----------------------------
@@ -777,15 +575,12 @@ echo_primary "======================================="
 DOMAIN=""
 INSTALL_TYPE=""
 INSTALL_TYPE_SPECIFIED="false"
-SKIP_INFRA="false"
 CERTIFICATE_ARN=""                # Will be set during domain confirmation
 INFRA_BINARY=""                   # Will be determined later
-KUBECTL_ACTIVE="false"            # Will be set in is_kubectl_active
-CLUSTER_SUITABLE="false"          # Will be set in is_cluster_suitable
-CURRENT_PROVIDER="NONE"           # Will be set in confirm_provider_is_eks
 USE_HTTPS="false"                 # Will be set during domain confirmation
 PROTOCOL="http"                   # Default protocol
 REGION=""                         # New variable for AWS region
+EKS_CLUSTER_NAME=""               # Initialize EKS Cluster Name
 
 # Parse command-line arguments
 while [ "$#" -gt 0 ]; do
@@ -834,31 +629,33 @@ done
 echo_info "Checking for required tools and prerequisites..."
 check_prerequisites
 
-# Step 2: Determine Installation Type Based on Parameters
+# Step 2: Detect Kubernetes provider and unset context
+detect_kubernetes_and_unset_context
+
+# Step 3: Determine Installation Type Based on Parameters
 if [ -n "$DOMAIN" ]; then
     # Domain is specified, set installation type to 1
     echo_info "Domain specified: $DOMAIN. Setting installation type to 1."
     INSTALL_TYPE="1"
-else
-    # Domain is not specified, use install type parameter or prompt
+fi
+
+if [ -z "$INSTALL_TYPE" ]; then
+    # Installation type not specified via parameter or domain
     if [ "$INSTALL_TYPE_SPECIFIED" = "false" ]; then
-        # Prompt user for installation type with a 30-second timeout
+        # Prompt user for installation type
         echo_primary ""
         echo_primary "======================================="
         echo_primary "Select Installation Type:"
         echo_primary "======================================="
         echo_primary "1) Install with HTTPS (requires a domain name)"
         echo_primary "2) Basic Install (No Ingress, use port-forwarding)"
-        echo_primary "Default: 2 (if no input within 30 seconds)"
+        echo_primary "Default: 2"
         echo_prompt "Enter your choice (1/2): "
 
-        # Read user input with a 30-second timeout
-        if ! read -t 30 USER_INSTALL_TYPE; then
-            USER_INSTALL_TYPE=""
-        fi
+        read -r USER_INSTALL_TYPE
 
         if [ -z "$USER_INSTALL_TYPE" ]; then
-            echo_primary "No input received within 30 seconds. Proceeding with Basic Install (No Ingress, use port-forwarding)."
+            echo_primary "No input received. Proceeding with Basic Install (No Ingress, use port-forwarding)."
             INSTALL_TYPE="2"
         else
             # Validate user input
@@ -885,121 +682,66 @@ else
     fi
 fi
 
-# Step 2.1: If user selected Install with HTTPS, ensure domain is provided
+# Step 4: If user selected Install with HTTPS, ensure domain is provided and lookup ACM certificate
 if [ "$INSTALL_TYPE" = "1" ]; then
     if [ -z "$DOMAIN" ]; then
-        total_time=0
-        DOMAIN_INPUT=""
-        while [ "$total_time" -lt 90 ]; do
-            remaining_time=$((90 - total_time))
-            echo_prompt "Please enter your fully qualified domain name (e.g., some.example.com). You have $remaining_time seconds left: "
-            if ! read -t 15 DOMAIN_INPUT; then
-                DOMAIN_INPUT=""
-            fi
+        echo_prompt "Please enter your fully qualified domain name (e.g., some.example.com): "
+        read -r DOMAIN_INPUT
 
-            if [ -z "$DOMAIN_INPUT" ]; then
-                total_time=$((total_time + 15))
-                echo_info "No domain entered. Please try again."
-                if [ "$total_time" -ge 90 ]; then
-                    echo_primary "No domain provided after 90 seconds. Proceeding with Basic Install (No Ingress, use port-forwarding)."
-                    INSTALL_TYPE="2"
-                    break
-                fi
-            else
-                # Confirm the domain
-                echo_prompt "You entered domain: $DOMAIN_INPUT. Press Enter to confirm or type a new domain within 15 seconds."
-                if ! read -t 15 DOMAIN_CONFIRM; then
-                    DOMAIN_CONFIRM=""
-                fi
-
-                if [ -z "$DOMAIN_CONFIRM" ]; then
-                    # Domain confirmed
-                    DOMAIN="$DOMAIN_INPUT"
-                    break
-                else
-                    # User provided a new domain, update DOMAIN_INPUT and loop again
-                    DOMAIN_INPUT="$DOMAIN_CONFIRM"
-                fi
-            fi
-        done
-
-        if [ "$INSTALL_TYPE" = "2" ]; then
+        if [ -z "$DOMAIN_INPUT" ]; then
+            echo_primary "No domain provided. Proceeding with Basic Install (No Ingress, use port-forwarding)."
+            INSTALL_TYPE="2"
             echo_info "Proceeding with Basic Install (No Ingress, use port-forwarding)."
+        else
+            DOMAIN="$DOMAIN_INPUT"
         fi
     fi
 
     # After domain is confirmed, lookup ACM certificate
     if [ -n "$DOMAIN" ]; then
-        # Use an if-statement to handle the function's exit status without causing the script to exit
         if lookup_acm_certificate "$DOMAIN"; then
-            USE_HTTPS="true"
-            PROTOCOL="https"
             echo_info "ACM certificate found. Proceeding with HTTPS."
         else
-            USE_HTTPS="false"
-            PROTOCOL="http"
             echo_primary "No ACM certificate found for domain '$DOMAIN'. Proceeding with HTTP only."
         fi
     fi
 fi
 
-# Step 3: Determine Installation Behavior Based on Cluster Configuration
+# Step 5: Confirm Deployment Settings (EKS Cluster Name, Region, Install Type, Protocol)
+confirm_deployment_settings
 
-if [ "$KUBECTL_ACTIVE" = "true" ] && [ "$CLUSTER_SUITABLE" = "true" ]; then
-    # Display cluster metadata before prompting
-    display_cluster_metadata
+# ------------------------------
+# ISSUE 1 FIX: Prevent Redundant Confirmation
+# ------------------------------
+# The confirmation loop in 'confirm_deployment_settings' now ensures that once the user accepts the settings (Y), the loop breaks, and the script proceeds without re-prompting.
 
-    echo_prompt "A suitable EKS cluster is detected. Do you wish to use it and skip infrastructure setup? (y/n): "
-    read USE_EXISTING_CLUSTER
+# Step 6: Clone repository and deploy infrastructure
+clone_repository() {
+    if [ -d "$REPO_DIR" ]; then
+        echo_info "Directory '$REPO_DIR' already exists. Deleting it before cloning..."
+        rm -rf "$REPO_DIR" >> "$LOGFILE" 2>&1 || { echo_error "Failed to delete existing directory '$REPO_DIR'."; exit 1; }
+    fi
+    echo_info "Cloning repository from $REPO_URL to $REPO_DIR..."
+    git clone "$REPO_URL" "$REPO_DIR" >> "$LOGFILE" 2>&1 || { echo_error "Failed to clone repository."; exit 1; }
+}
 
-    case "$USE_EXISTING_CLUSTER" in
-        y|Y)
-            SKIP_INFRA="true"
-            echo_info "Skipping infrastructure creation. Proceeding with installation using existing cluster."
-            ;;
-        n|N)
-            SKIP_INFRA="false"
-            ;;
-        *)
-            echo_error "Invalid choice. Exiting."
-            exit 1
-            ;;
-    esac
-else
-    SKIP_INFRA="false"
-fi
+clone_repository
+deploy_infrastructure
 
-# Step 4: Clone repository and deploy infrastructure if not skipping
-if [ "$SKIP_INFRA" = "false" ]; then
-    clone_repository() {
-        if [ -d "$REPO_DIR" ]; then
-            echo_info "Directory '$REPO_DIR' already exists. Deleting it before cloning..."
-            rm -rf "$REPO_DIR" >> "$LOGFILE" 2>&1 || { echo_error "Failed to delete existing directory '$REPO_DIR'."; exit 1; }
-        fi
-        echo_info "Cloning repository from $REPO_URL to $REPO_DIR..."
-        git clone "$REPO_URL" "$REPO_DIR" >> "$LOGFILE" 2>&1 || { echo_error "Failed to clone repository."; exit 1; }
-    }
-
-    clone_repository
-    deploy_infrastructure
-else
-    echo_info "Skipping infrastructure deployment as per user request."
-fi
-
-# Step 5: Install OpenGovernance via Helm
+# Step 7: Install OpenGovernance via Helm
 install_application
 
-# Step 6: Wait for application readiness
+# Step 8: Wait for application readiness
 check_pods_and_jobs
 
-# Step 7: Configure Ingress or Port-Forwarding based on installation type
+# Step 9: Configure Ingress or Port-Forwarding based on installation type
 if [ "$INSTALL_TYPE" = "1" ]; then
     configure_ingress
 elif [ "$INSTALL_TYPE" = "2" ]; then
     basic_install_with_port_forwarding
 fi
 
-# Add the new direction messages
+# Step 10: Final Directions
 if [ "$INSTALL_TYPE" = "1" ]; then
     echo_primary "OpenGovernance has been successfully installed and configured."
     echo_primary ""
@@ -1022,9 +764,6 @@ elif [ "$INSTALL_TYPE" = "2" ]; then
     echo_primary "  Password: password"
     echo_primary ""
 fi
-
-# Step 8: Choose Deployment Platform
-choose_deployment
 
 echo_primary "OpenGovernance deployment script completed successfully."
 exit 0
