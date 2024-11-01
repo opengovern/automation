@@ -17,7 +17,7 @@ jobs:
 
       - name: Install AWS CLI
         run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" 
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip -o awscliv2.zip
           sudo ./aws/install --update
           aws --version
@@ -30,16 +30,18 @@ jobs:
           aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
           aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
           aws configure set default.region us-east-1
-          # Set the Cloudflare R2 endpoint (replace with your actual endpoint if different)
-          aws configure set default.s3.endpoint_url https://${{ vars.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          # No endpoint configuration here
 
       - name: Upload scripts to Cloudflare R2
         env:
-          BUCKET_URL: s3://opengovernance # Use S3 URI format
+          BUCKET_NAME: opengovernance
+          ENDPOINT_URL: https://2d6651d596663cce624bd513238102e7.r2.cloudflarestorage.com
           SOURCE_DIR: scripts/
-          TARGET_DIR: scripts/ # Adjust if you want a different target directory in R2
+          TARGET_DIR: scripts/
         run: |
-          aws s3 sync "$SOURCE_DIR" "$BUCKET_URL/$TARGET_DIR" --acl public-read
+          aws s3 sync "$SOURCE_DIR" "s3://$BUCKET_NAME/$TARGET_DIR" \
+            --endpoint-url "$ENDPOINT_URL" \
+            --acl public-read
 
       - name: Bump Version and Create Tag
         if: ${{ success() }}
