@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploys OpenGovernance Platform to Organization Member AWS Accounts
+Parameters:
+  IAMUsernameInOrganizationAccount:
+    Type: String
+    Default: OpenGovernanceIAMUser
+    Description: IAM User to create
+  IAMGroupnameInOrganizationAccount:
+    Type: String
+    Default: OpenGovernanceIAMGroup
+    Description: IAM User to create
+  RoleNameInAccount:
+    Type: String
+    Default: OpenGovernanceReadOnly
+    Description: The name of the role that will be assumed in each member account.
+
+
+
+Resources:
+  OrganizationRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Ref RoleNameInAccount
+      Description: Allows the platform to gather inventory of the organization and member accounts
+      Policies:
+        - PolicyName: OpenGovernanceRoleAssumption
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action:
+                  - 'organizations:List*'
+                  - 'sts:AssumeRole'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub '${AWS::AccountId}' 
+            Action:
+              - 'sts:AssumeRole'
+              - 'sts:TagSession'
+      ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/SecurityAudit
+          - arn:aws:iam::aws:policy/ReadOnlyAccess
+          - arn:aws:iam::aws:policy/AWSOrganizationsReadOnlyAccess
+          - arn:aws:iam::aws:policy/AWSBillingReadOnlyAccess
+          - arn:aws:iam::aws:policy/AWSSSODirectoryReadOnly
+          - arn:aws:iam::aws:policy/AWSSSOReadOnly
+          - arn:aws:iam::aws:policy/IAMAccessAdvisorReadOnly
+          - arn:aws:iam::aws:policy/IAMAccessAnalyzerReadOnlyAccess
+  IAMUserInOrganizationAccount:
+   Type: 'AWS::IAM::User'
+   Properties:
+    UserName: !Ref IAMUsernameInOrganizationAccount
+  IAMGroupInOrganizationAccount:
+   Type: 'AWS::IAM::Group'
+   Properties:
+     GroupName: !Ref IAMGroupnameInOrganizationAccount
+  AddOrganizationUserToOrganizationGroup:
+    Type: 'AWS::IAM::UserToGroupAddition'
+    Properties:
+     Users:
+      - !Ref IAMUserInOrganizationAccount
+     GroupName: !Ref IAMGroupInOrganizationAccount
+  AttachRoleToOrganizationGroup:
+      Type: 'AWS::IAM::GroupPolicy'
+      Properties:
+        PolicyName: OpenGovernanceAllowRoleAssumption
+        GroupName: !Ref IAMGroupInOrganizationAccount
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sts:AssumeRole'
+              Resource: !GetAtt OrganizationRole.Arn
+  
+
+
+Outputs:
+  CFNOrganizationRoleArn:
+    Description: Organization Role.
+    Value: !GetAtt OrganizationRole.Arn
+    
