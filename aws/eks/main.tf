@@ -84,7 +84,7 @@ resource "random_string" "suffix" {
 ################################################################################
 
 locals {
-  name = "opengovernance"
+  name = "opencomply"
 
   # Derive settings based on high_availability flag
   azs = var.high_availability ? slice(data.aws_availability_zones.available.names, 0, 3) : slice(data.aws_availability_zones.available.names, 0, 2)
@@ -121,12 +121,12 @@ module "vpc" {
   enable_dns_support   = true
 
   public_subnet_tags = {
-    "Name"                   = "opengovernance-public-subnet"
+    "Name"                   = "opencomply-public-subnet"
     "kubernetes.io/role/elb" = 1
   }
 
   private_subnet_tags = {
-    "Name"                            = "opengovernance-private-subnet"
+    "Name"                            = "opencomply-private-subnet"
     "kubernetes.io/role/internal-elb" = 1
   }
 
@@ -141,7 +141,7 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.11"
 
-  cluster_name                   = "opengovernance-${random_string.suffix.result}"
+  cluster_name                   = "opencomply-${random_string.suffix.result}"
   cluster_version                = "1.31"
   cluster_endpoint_public_access = true
 
@@ -158,7 +158,7 @@ module "eks" {
   }
 
   eks_managed_node_groups = {
-    opengovernance-main = {
+    opencomply-main = {
       instance_types = var.eks_instance_types
       min_size       = var.high_availability ? 3 : 1
       max_size       = var.high_availability ? 9 : 5
@@ -205,7 +205,7 @@ module "ebs_csi_driver_irsa" {
 }
 
 ################################################################################
-# EKS Blueprints Addons (Excluding OpenGovernance)
+# EKS Blueprints Addons (Excluding opencomply)
 ################################################################################
 
 module "eks_blueprints_addons" {
@@ -235,7 +235,7 @@ module "eks_blueprints_addons" {
     chart_version = "1.6.0"
   }
 
-  # Removed opengovernance from helm_releases to avoid cyclic dependency
+  # Removed opencomply from helm_releases to avoid cyclic dependency
   helm_releases = {}
 
   tags = local.tags
