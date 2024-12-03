@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploys OpenGovernance Platform to AWS Organization
+Description: Deploys OpenComply Platform to AWS Organization
 
 Parameters:
   IAMUsernameInOrganizationAccount:
     Type: String
-    Default: OpenGovernanceIAMUser
+    Default: OpenComplyIAMUser
     Description: IAM User to create
   RoleNameInAccount:
     Type: String
-    Default: OpenGovernanceReadOnly
+    Default: OpenComplyReadOnly
     Description: The name of the role that will be assumed in each member account.
   AccountList:
     Type: String
@@ -40,7 +40,7 @@ Resources:
               - 'sts:AssumeRole'
               - 'sts:TagSession'
       Policies:
-        - PolicyName: OpenGovernanceRoleAssumption
+        - PolicyName: OpenComplyRoleAssumption
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -72,7 +72,7 @@ Resources:
         - arn:aws:iam::aws:policy/IAMAccessAnalyzerReadOnlyAccess
         - arn:aws:iam::aws:policy/IAMAccessAdvisorReadOnly
       Policies:
-        - PolicyName: OpenGovernanceSSOPermissions
+        - PolicyName: OpenComplySSOPermissions
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -84,7 +84,7 @@ Resources:
                   - 'sso:Search*'
                   - 'sso-directory:DescribeDirectory'
                 Resource: '*'
-        - PolicyName: OpenGovernanceAssumeRolePolicy
+        - PolicyName: OpenComplyAssumeRolePolicy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -97,7 +97,7 @@ Resources:
   MemberAccountRoleStackSet:
     Type: 'AWS::CloudFormation::StackSet'
     Properties:
-      StackSetName: OpenGovernanceMemberAccountRollout
+      StackSetName: OpenComplyMemberAccountRollout
       Description: Stack Set that will roll out to member accounts
       Capabilities:
         - CAPABILITY_NAMED_IAM
@@ -137,10 +137,10 @@ Resources:
               }
           },
           "Resources": {
-              "OpenGovernance": {
+              "OpenComply": {
                   "Type": "AWS::IAM::ManagedPolicy",
                   "Properties": {
-                      "ManagedPolicyName": "OpenGovernancePolicy",
+                      "ManagedPolicyName": "OpenComplyPolicy",
                       "Description": "A Limited policy to allow cloudquery to do its job",
                       "PolicyDocument": {
                           "Version": "2012-10-17",
@@ -178,7 +178,7 @@ Resources:
                       "Description": "Read Only Access to fetch inventory from member accounts",
                       "ManagedPolicyArns": [
                           {
-                              "Ref": "OpenGovernance"
+                              "Ref": "OpenComply"
                           },
                           "arn:aws:iam::aws:policy/ReadOnlyAccess",
                           "arn:aws:iam::aws:policy/SecurityAudit",
