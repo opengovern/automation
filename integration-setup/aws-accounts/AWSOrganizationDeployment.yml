@@ -99,10 +99,10 @@ Resources:
       Description: Stack Set that will roll out to member accounts within specified Organizational Units
       Capabilities:
         - CAPABILITY_NAMED_IAM
+      PermissionModel: SERVICE_MANAGED
       AutoDeployment:
         Enabled: true
         RetainStacksOnAccountRemoval: false
-      PermissionModel: SERVICE_MANAGED
       ManagedExecution:
         Active: true
       StackInstancesGroup:
@@ -110,9 +110,6 @@ Resources:
             OrganizationalUnitIds: !Ref OrganizationUnitList
           Regions: 
             - !Ref AWS::Region
-          OperationPreferences:
-            MaxConcurrentCount: 50            # Deploy to 50 accounts at a time
-            FailureTolerancePercentage: 10    # Tolerate failures in up to 10% of accounts per batch
       Parameters: 
         - ParameterKey: OrganizationIAMUserArn
           ParameterValue: !Sub "arn:aws:iam::${AWS::AccountId}:user/${IAMUsernameInOrganizationAccount}"
