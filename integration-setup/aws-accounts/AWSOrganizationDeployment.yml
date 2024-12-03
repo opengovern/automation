@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploys OpenComply Platform to AWS Organization
+Description: Deploys OpenComply Platform to AWS Organization, targeting only Organizational Units (OUs)
 
 Parameters:
   IAMUsernameInOrganizationAccount:
@@ -12,21 +12,14 @@ Parameters:
     Default: OpenComplyReadOnly
     Description: The name of the role that will be assumed in each member account.
 
-  AccountList:
-    Type: String
-    Default: ""
-    Description: Comma-separated list of 12-digit AWS Account IDs to deploy the stackset to.
-    AllowedPattern: '^[0-9]{12}(,[0-9]{12})*$'
-    ConstraintDescription: Must be a comma-separated list of exactly 12-digit AWS Account IDs without spaces.
-
   OrganizationUnitList:
-    Type: String
-    Default: ""
-    Description: Comma-separated list of Organizational Unit (OU) IDs to deploy the stackset to.
+    Type: CommaDelimitedList
+    Description: >
+      List of Organizational Unit (OU) IDs to deploy the stackset to.
+      Enter each OU ID without spaces.
 
 Conditions:
-  OUs: !Not [ !Equals [ !Ref OrganizationUnitList, '' ] ]
-  Accounts: !Not [ !Equals [ !Ref AccountList, '' ] ]
+  HasOUs: !Not [ !Equals [ !Join ["", !Ref OrganizationUnitList ], "" ] ]
 
 Resources:
   # IAM Role in the Management Account
@@ -34,7 +27,7 @@ Resources:
     Type: 'AWS::IAM::Role'
     Properties:
       RoleName: !Ref RoleNameInAccount
-      Description: Allows the platform to gather inventory of the organization and member accounts
+      Description: Allows the OpenComply platform to gather inventory of the organization and member accounts
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -98,12 +91,12 @@ Resources:
                   - 'sts:AssumeRole'
                 Resource: !Sub 'arn:aws:iam::*:role/${RoleNameInAccount}'
 
-  # StackSet to Deploy Roles to Member Accounts
+  # StackSet to Deploy Roles to Member Accounts (Organizational Units Only)
   MemberAccountRoleStackSet:
     Type: 'AWS::CloudFormation::StackSet'
     Properties:
       StackSetName: OpenComplyMemberAccountRollout
-      Description: Stack Set that will roll out to member accounts
+      Description: Stack Set that will roll out to member accounts within specified Organizational Units
       Capabilities:
         - CAPABILITY_NAMED_IAM
       AutoDeployment:
@@ -116,14 +109,7 @@ Resources:
         FailureTolerancePercentage: 100
       StackInstancesGroup:
         - DeploymentTargets: 
-            Accounts: !If 
-              - Accounts 
-              - !Split [ ",", !Ref AccountList ]
-              - !Ref AWS::NoValue
-            OrganizationalUnitIds: !If 
-              - OUs 
-              - !Split [ ",", !Ref OrganizationUnitList ]
-              - !Ref AWS::NoValue
+            OrganizationalUnitIds: !Ref OrganizationUnitList
           Regions: 
             - !Ref AWS::Region
       ManagedExecution:
