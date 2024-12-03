@@ -6,18 +6,23 @@ Parameters:
     Type: String
     Default: OpenComplyIAMUser
     Description: IAM User to create
+
   RoleNameInAccount:
     Type: String
     Default: OpenComplyReadOnly
     Description: The name of the role that will be assumed in each member account.
+
   AccountList:
     Type: String
     Default: ""
-    Description: Comma-separated list of Accounts to deploy the stackset to.
+    Description: Comma-separated list of 12-digit AWS Account IDs to deploy the stackset to.
+    AllowedPattern: '^[0-9]{12}(,[0-9]{12})*$'
+    ConstraintDescription: Must be a comma-separated list of exactly 12-digit AWS Account IDs without spaces.
+
   OrganizationUnitList:
     Type: String
     Default: ""
-    Description: Comma-separated list of OUs to deploy the stackset to.
+    Description: Comma-separated list of Organizational Unit (OU) IDs to deploy the stackset to.
 
 Conditions:
   OUs: !Not [ !Equals [ !Ref OrganizationUnitList, '' ] ]
@@ -111,8 +116,14 @@ Resources:
         FailureTolerancePercentage: 100
       StackInstancesGroup:
         - DeploymentTargets: 
-            Accounts: !If [Accounts, !Split [ ",", !Ref AccountList ], !Ref AWS::NoValue]
-            OrganizationalUnitIds: !If [OUs, !Split [ ",", !Ref OrganizationUnitList ], !Ref AWS::NoValue]
+            Accounts: !If 
+              - Accounts 
+              - !Split [ ",", !Ref AccountList ]
+              - !Ref AWS::NoValue
+            OrganizationalUnitIds: !If 
+              - OUs 
+              - !Split [ ",", !Ref OrganizationUnitList ]
+              - !Ref AWS::NoValue
           Regions: 
             - !Ref AWS::Region
       ManagedExecution:
