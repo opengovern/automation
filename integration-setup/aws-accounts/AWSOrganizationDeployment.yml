@@ -103,17 +103,16 @@ Resources:
         Enabled: true
         RetainStacksOnAccountRemoval: false
       PermissionModel: SERVICE_MANAGED
-      OperationPreferences:
-        ConcurrencyMode: SOFT_FAILURE_TOLERANCE
-        MaxConcurrentCount: 15
-        FailureTolerancePercentage: 100
+      ManagedExecution:
+        Active: true
       StackInstancesGroup:
         - DeploymentTargets: 
             OrganizationalUnitIds: !Ref OrganizationUnitList
           Regions: 
             - !Ref AWS::Region
-      ManagedExecution:
-        Active: true
+          OperationPreferences:
+            MaxConcurrentCount: 50            # Deploy to 50 accounts at a time
+            FailureTolerancePercentage: 10    # Tolerate failures in up to 10% of accounts per batch
       Parameters: 
         - ParameterKey: OrganizationIAMUserArn
           ParameterValue: !Sub "arn:aws:iam::${AWS::AccountId}:user/${IAMUsernameInOrganizationAccount}"
